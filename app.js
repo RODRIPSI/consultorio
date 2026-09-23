@@ -1,9 +1,10 @@
 'use strict';
-/* CONSULTÓRIO — versão 2: pacientes, ficha, sessões, busca, retorno e backup cifrado. */
+/* CONSULTÓRIO — versão 5: pacientes, ficha, sessões, busca, retorno, backup cifrado,
+   mensagens pelo WhatsApp, documentos recebidos e declarações em PDF. */
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 4';
+const VERSAO = 'versão 5';
 
 let pacientes = [];          // decifrados, só na memória enquanto desbloqueado
 let sessoes = [];            // todas as sessões, idem
@@ -59,7 +60,12 @@ const ICONES = {
   texto: [['path', { d: 'M4 6h16M4 12h16M4 18h10' }]],
   arquivo: [['path', { d: 'M14 3H6v18h12V7z' }], ['path', { d: 'M14 3v4h4M9 13h6M9 17h6' }]],
   tabela: [['rect', { x: 3, y: 4, width: 18, height: 16, rx: 2 }], ['path', { d: 'M3 10h18M3 15h18M9 4v16' }]],
-  colar: [['rect', { x: 6, y: 4, width: 12, height: 17, rx: 2 }], ['path', { d: 'M9 4V3h6v1M9 10h6M9 14h6' }]]
+  colar: [['rect', { x: 6, y: 4, width: 12, height: 17, rx: 2 }], ['path', { d: 'M9 4V3h6v1M9 10h6M9 14h6' }]],
+  mensagem: [['path', { d: 'M20.5 11.5a8.5 8.5 0 0 1-12.4 7.6L3.5 20.5l1.4-4.4A8.5 8.5 0 1 1 20.5 11.5z' }]],
+  telefone: [['path', { d: 'M5 3.5h3.5l2 5-2.4 1.5a11 11 0 0 0 5.4 5.4l1.5-2.4 5 2v3.5a2 2 0 0 1-2 2A16.5 16.5 0 0 1 3 5.5a2 2 0 0 1 2-2z' }]],
+  clipe: [['path', { d: 'M20 11.5l-8.2 8.2a5 5 0 0 1-7.1-7.1l8.8-8.8a3.4 3.4 0 0 1 4.8 4.8l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9' }]],
+  assinar: [['path', { d: 'M4 20h4.5L19.5 9 15 4.5 4 15.5z' }], ['path', { d: 'M13 6.5l4.5 4.5M13 20h7' }]],
+  imagem: [['rect', { x: 3, y: 4, width: 18, height: 16, rx: 2 }], ['circle', { cx: 9, cy: 10, r: 2 }], ['path', { d: 'M21 16l-5-5-10 9' }]]
 };
 function icone(nome) {
   const ns = 'http://www.w3.org/2000/svg';
@@ -202,16 +208,19 @@ async function trancar() {
   await salvarAgora();      // grava o que estava sendo digitado
   Cofre.trancar();
   pacientes = []; sessoes = []; importacao = null; planilha = null;
+  perfil = null; assinatura = null; documentos = []; rascunhoMsg = {}; declaracao = null;
   telaBloqueio();
 }
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && Cofre.aberto() && !ignorarOcultacao) trancar();
+  else if (!document.hidden) verificarInatividade();
 });
 ['pointerdown', 'keydown', 'input', 'scroll'].forEach(ev =>
   document.addEventListener(ev, () => { ultimaAtividade = Date.now(); }, { passive: true, capture: true }));
-setInterval(() => {
+function verificarInatividade() {
   if (Cofre.aberto() && Date.now() - ultimaAtividade > config.bloqueioMin * 60000) trancar();
-}, 10000);
+}
+setInterval(verificarInatividade, 10000);
 
 // ---------- Navegação ----------
 function render(s) {
@@ -221,11 +230,13 @@ function render(s) {
   else if (s.tela === 'config') telaConfig();
   else if (s.tela === 'importar') telaImportar(s.pid);
   else if (s.tela === 'planilha') telaPlanilha();
+  else if (s.tela === 'perfil') telaPerfil();
+  else if (s.tela === 'declaracao') telaDeclaracao(s.pid);
 }
 function ir(estado, empilhar = true) {
   salvarAgora();
   const antes = history.state || {};
-  const mudou = antes.tela !== estado.tela || antes.id !== estado.id || antes.sid !== estado.sid;
+  const mudou = antes.tela !== estado.tela || antes.id !== estado.id || antes.sid !== estado.sid || antes.aba !== estado.aba;
   if (empilhar) history.pushState(estado, ''); else history.replaceState(estado, '');
   render(estado);
   if (mudou) window.scrollTo(0, 0);
@@ -240,6 +251,7 @@ window.addEventListener('popstate', e => {
 async function entrar() {
   ultimaAtividade = Date.now();
   [pacientes, sessoes] = await Promise.all([Cofre.lerTodos('p:'), Cofre.lerTodos('s:')]);
+  await carregarExtras();
   history.replaceState({ tela: 'lista' }, '');
   telaLista();
 }
@@ -384,7 +396,7 @@ async function novoPaciente() {
   const agora = new Date().toISOString();
   const p = {
     id: crypto.randomUUID(), nome: nome.trim(), criadoEm: agora, atualizadoEm: agora, arquivado: false,
-    dados: { nascimento: '', telefone: '', contatoEmergencia: '', inicio: '', frequencia: '' },
+    dados: { nascimento: '', cpf: '', telefone: '', contatoEmergencia: '', inicio: '', frequencia: '' },
     demanda: '', temas: '', observacoes: ''
   };
   await Cofre.salvar('p:' + p.id, p);
@@ -405,11 +417,15 @@ function telaFicha(id, aba) {
   if (p.dados.frequencia) chips.push(p.dados.frequencia);
   chips.push(`${ss.length} ${ss.length === 1 ? 'sessão' : 'sessões'}`);
 
-  const abas = [['retomar', 'Retomar', 'retomar'], ['sessoes', 'Sessões', 'sessoes'], ['ficha', 'Ficha', 'pessoa'], ['buscar', 'Buscar', 'busca']];
+  const abas = [['retomar', 'Retomar', 'retomar'], ['sessoes', 'Sessões', 'sessoes'], ['ficha', 'Ficha', 'pessoa'], ['buscar', 'Buscar', 'busca'],
+    ['mensagem', 'Mensagem', 'mensagem'], ['recebidos', 'Recebidos', 'clipe'], ['emitidos', 'Emitidos', 'assinar']];
   const corpo = aba === 'sessoes' ? abaSessoes(p, ss)
     : aba === 'ficha' ? abaFicha(p)
       : aba === 'buscar' ? abaBuscar(p, ss)
-        : abaRetomar(p, ss);
+        : aba === 'mensagem' ? abaMensagem(p)
+          : aba === 'recebidos' ? abaRecebidos(p)
+            : aba === 'emitidos' ? abaEmitidos(p)
+              : abaRetomar(p, ss);
 
   mostrar(
     cabecalho(p.nome, { voltar: true, status: true, acoes: [botaoIcone('Opções do paciente', 'opcoes', () => opcoesPaciente(p))] }),
@@ -532,7 +548,8 @@ function abaFicha(p) {
       el('div', { class: 'grade' },
         nome,
         campo('Data de nascimento', 'nascimento', 'date'),
-        campo('Telefone', 'telefone', 'tel'),
+        campo('CPF', 'cpf'),
+        campo('Celular (WhatsApp)', 'telefone', 'tel'),
         campo('Início do acompanhamento', 'inicio', 'date'),
         campo('Frequência e horário', 'frequencia'),
         campo('Contato de emergência', 'contatoEmergencia', 'text', true))),
@@ -740,6 +757,8 @@ async function opcoesPaciente(p) {
     });
     if (typeof confirma !== 'string' || confirma.trim().toUpperCase() !== 'EXCLUIR') return;
     for (const s of sessoesDe(p.id)) await Cofre.apagar(chaveSessao(s));
+    for (const d of documentos.filter(x => x.pid === p.id)) { await Cofre.apagar(chaveDoc(d)); await Cofre.apagar(chaveConteudo(d)); }
+    documentos = documentos.filter(x => x.pid !== p.id);
     await Cofre.apagar('p:' + p.id);
     sessoes = sessoes.filter(s => s.pid !== p.id);
     pacientes = pacientes.filter(x => x.id !== p.id);
@@ -763,13 +782,17 @@ async function fazerBackup() {
   const registros = {};
   pacientes.forEach(p => { registros['p:' + p.id] = p; });
   sessoes.forEach(s => { registros[chaveSessao(s)] = s; });
+  documentos.forEach(d => { registros[chaveDoc(d)] = d; });
+  for (const d of documentos) { const c = await Cofre.ler(chaveConteudo(d)); if (c) registros[chaveConteudo(d)] = c; }
+  if (perfil.atualizadoEm) registros['c:perfil'] = perfil;
+  if (assinatura) registros['c:assinatura'] = assinatura;
   const texto = await Cofre.cifrarPacote(s1, { formato: 'consultorio', versao: 1, criadoEm: new Date().toISOString(), registros });
   const nome = `consultorio-backup-${hojeISO()}.cifrado.txt`;
   const arquivo = new File([texto], nome, { type: 'text/plain' });
 
   const destino = await dialogo({
     titulo: 'Backup pronto e cifrado',
-    texto: `${pacientes.length} pacientes e ${sessoes.length} sessões. Fora deste app, o arquivo é ilegível sem a senha. Onde guardar?`,
+    texto: `${pacientes.length} pacientes, ${sessoes.length} sessões e ${documentos.length} documentos. Fora deste app, o arquivo é ilegível sem a senha. Onde guardar?`,
     botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Baixar arquivo', valor: 'baixar' }, { rotulo: 'Enviar ao Drive', valor: 'compartilhar', estilo: 'primario' }]
   });
   let feito = false;
@@ -826,10 +849,26 @@ async function restaurarBackup() {
   }
   await salvarAgora();
   let novos = 0, atualizados = 0, mantidos = 0;
-  for (const [k, o] of Object.entries(pacote.registros || {})) {
-    const lista = k.startsWith('p:') ? pacientes : k.startsWith('s:') ? sessoes : null;
+  const entradas = Object.entries(pacote.registros || {});
+  entradas.sort(([a], [b]) => (a.startsWith('a:') ? 0 : 1) - (b.startsWith('a:') ? 0 : 1)); // arquivos antes das descrições
+  for (const [k, o] of entradas) {
+    if (k.startsWith('a:')) {
+      if (await Cofre.ler(k)) mantidos++; else { await Cofre.salvar(k, o); novos++; }
+      continue;
+    }
+    if (k === 'c:perfil' || k === 'c:assinatura') {
+      const atual = k === 'c:perfil' ? perfil : assinatura;
+      if ((o.atualizadoEm || '') > (atual?.atualizadoEm || '')) {
+        await Cofre.salvar(k, o);
+        if (k === 'c:perfil') perfil = Object.assign(PERFIL_PADRAO(), o); else assinatura = o;
+        atualizados++;
+      } else mantidos++;
+      continue;
+    }
+    const lista = k.startsWith('p:') ? pacientes : k.startsWith('s:') ? sessoes : k.startsWith('d:') ? documentos : null;
     if (!lista) continue;
-    const pos = lista.findIndex(x => (k.startsWith('p:') ? 'p:' + x.id : chaveSessao(x)) === k);
+    const chaveDe = k.startsWith('p:') ? x => 'p:' + x.id : k.startsWith('s:') ? chaveSessao : chaveDoc;
+    const pos = lista.findIndex(x => chaveDe(x) === k);
     if (pos < 0) { await Cofre.salvar(k, o); lista.push(o); novos++; }
     else if ((o.atualizadoEm || '') > (lista[pos].atualizadoEm || '')) { await Cofre.salvar(k, o); lista[pos] = o; atualizados++; }
     else mantidos++;
@@ -1113,6 +1152,7 @@ const CAMPOS_PLANILHA = {
   sessaoTemas: 'Sessão: temas',
   sessaoStatus: 'Sessão: situação (falta, remarcada)',
   nascimento: 'Ficha: data de nascimento',
+  cpf: 'Ficha: CPF',
   telefone: 'Ficha: telefone',
   contatoEmergencia: 'Ficha: contato de emergência',
   inicio: 'Ficha: início do acompanhamento',
@@ -1125,6 +1165,7 @@ const PISTAS_COLUNA = [
   ['nome', /^nome|nome do paciente|^paciente$|^cliente$|^nome completo/],
   ['nascimento', /nasc|aniversario/],
   ['contatoEmergencia', /emergencia|responsavel/],
+  ['cpf', /cpf/],
   ['telefone', /telefone|celular|whats|fone|contato/],
   ['inicio', /inicio|entrada|admissao|desde/],
   ['frequencia', /frequencia|horario|dia da semana/],
@@ -1137,7 +1178,7 @@ const PISTAS_COLUNA = [
   ['sessaoRelato', /relato|sessao|evolucao|anotac|registro|atendimento|conteudo|resumo/],
   ['observacoes', /observ|^obs|nota/]
 ];
-const CAMPOS_DADOS = ['nascimento', 'telefone', 'contatoEmergencia', 'inicio', 'frequencia'];
+const CAMPOS_DADOS = ['nascimento', 'cpf', 'telefone', 'contatoEmergencia', 'inicio', 'frequencia'];
 const CAMPOS_TEXTO = ['demanda', 'temas', 'observacoes'];
 
 function normalizarTabela(linhas) {
@@ -1399,7 +1440,7 @@ async function concluirPlanilha(resumo) {
     let p = g.existente;
     if (!p) {
       p = { id: crypto.randomUUID(), nome: g.nome, criadoEm: agora, atualizadoEm: agora, arquivado: false,
-        dados: { nascimento: '', telefone: '', contatoEmergencia: '', inicio: '', frequencia: '' }, demanda: '', temas: '', observacoes: '' };
+        dados: { nascimento: '', cpf: '', telefone: '', contatoEmergencia: '', inicio: '', frequencia: '' }, demanda: '', temas: '', observacoes: '' };
       pacientes.push(p);
     }
     for (const c of CAMPOS_DADOS) if (g.ficha[c] && !p.dados[c]) p.dados[c] = g.ficha[c];
@@ -1449,6 +1490,10 @@ async function telaConfig() {
         linha('pessoa', 'Biometria', temBio ? 'Ativada neste aparelho.' : 'Desbloqueio pela digital, com a senha mestra como reserva.',
           el('button', { type: 'button', class: 'secundario compacto', text: temBio ? 'Desativar' : 'Ativar', onclick: temBio ? desativarBio : ativarBio })),
         linha('cadeado', 'Senha mestra', null, el('button', { type: 'button', class: 'secundario compacto', text: 'Trocar', onclick: trocarSenha }))),
+      secao('Documentos',
+        linha('assinar', 'Dados profissionais e assinatura',
+          perfil.nome ? `${perfil.nome}${perfil.crp ? ', CRP ' + perfil.crp : ''}${assinatura ? '. Assinatura cadastrada.' : '. Falta a assinatura.'}` : 'Nome, CRP, endereço e a imagem do carimbo com assinatura, usados nas declarações.',
+          el('button', { type: 'button', class: 'secundario compacto', text: 'Editar', onclick: () => ir({ tela: 'perfil' }) }))),
       secao('Backup e transferência',
         linha('escudo', 'Fazer backup cifrado',
           config.ultimoBackup ? `Último: ${dataBR(config.ultimoBackup)}.` : 'Nenhum backup feito ainda.',
@@ -1515,6 +1560,747 @@ async function trocarSenha() {
     await aviso('Senha trocada', 'Use a nova senha a partir de agora. Atualize também a anotação em papel.');
   } catch { await aviso('Senha não trocada', 'A senha atual está incorreta.'); }
 }
+
+// =====================================================================
+// Mensagens, documentos recebidos, documentos emitidos e perfil profissional
+// Tudo guardado cifrado no cofre, como fichas e sessões.
+// =====================================================================
+let perfil = null;       // dados profissionais usados nos documentos
+let assinatura = null;   // carimbo e assinatura: { jpeg (base64), w, h }
+let documentos = [];     // só a descrição dos documentos; o arquivo é lido do cofre quando aberto
+let rascunhoMsg = {};    // rascunho da mensagem por paciente (só na memória)
+let declaracao = null;   // declaração em preparação (só na memória)
+
+const PERFIL_PADRAO = () => ({ tipoRegistro: 'perfil', nome: '', titulo: 'Psicólogo', crp: '', cpf: '', endereco: '', cidade: '', telefone: '', email: '', valorSessao: '', modelos: [] });
+const chaveDoc = d => `d:${d.pid}:${d.id}`;
+const chaveConteudo = d => `a:${d.pid}:${d.id}`;
+function docsDe(pid, tipo) {
+  return documentos.filter(d => d.pid === pid && d.tipo === tipo)
+    .sort((a, b) => (b.data || '').localeCompare(a.data || '') || (b.criadoEm || '').localeCompare(a.criadoEm || ''));
+}
+async function carregarExtras() {
+  const [extras, docs] = await Promise.all([Cofre.lerTodos('c:'), Cofre.lerTodos('d:')]);
+  perfil = Object.assign(PERFIL_PADRAO(), extras.find(x => x.tipoRegistro === 'perfil') || {});
+  assinatura = extras.find(x => x.tipoRegistro === 'assinatura') || null;
+  documentos = docs;
+}
+const salvarPerfil = () => agendarSalvar('c:perfil', perfil);
+const perfilIncompleto = () => !perfil.nome.trim() || !perfil.crp.trim();
+
+function paraBase64(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function deBase64(b64) { const s = atob(b64); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; }
+const tamanhoLegivel = n => n < 1048576 ? Math.max(1, Math.round(n / 1024)) + ' KB' : (n / 1048576).toFixed(1).replace('.', ',') + ' MB';
+const primeiroNome = nome => (nome || '').trim().split(/\s+/)[0] || '';
+const dataExtenso = ymd => paraData(ymd).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' });
+function listaNatural(itens) { return itens.length < 2 ? itens.join('') : itens.slice(0, -1).join(', ') + ' e ' + itens[itens.length - 1]; }
+function valorNum(txt) { const n = Number(String(txt || '').replace(/[^\d,.-]/g, '').replace(/\.(?=\d{3}(\D|$))/g, '').replace(',', '.')); return Number.isFinite(n) ? n : 0; }
+const reais = v => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function porExtenso(n) {
+  const u = ['zero', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove', 'dez', 'onze', 'doze', 'treze', 'catorze', 'quinze', 'dezesseis', 'dezessete', 'dezoito', 'dezenove'];
+  const d = ['', '', 'vinte', 'trinta', 'quarenta', 'cinquenta', 'sessenta', 'setenta', 'oitenta', 'noventa'];
+  const c = ['', 'cento', 'duzentos', 'trezentos', 'quatrocentos', 'quinhentos', 'seiscentos', 'setecentos', 'oitocentos', 'novecentos'];
+  const ate999 = x => {
+    if (x === 100) return 'cem';
+    const p = [];
+    if (x >= 100) { p.push(c[Math.floor(x / 100)]); x %= 100; }
+    if (x >= 20) { p.push(d[Math.floor(x / 10)]); x %= 10; if (x) p.push(u[x]); } else if (x > 0) p.push(u[x]);
+    return p.join(' e ');
+  };
+  if (n === 0) return 'zero';
+  const mil = Math.floor(n / 1000), r = n % 1000;
+  const partes = [];
+  if (mil) partes.push(mil === 1 ? 'mil' : ate999(mil) + ' mil');
+  if (r) partes.push(ate999(r));
+  return partes.join(mil && r && (r < 100 || r % 100 === 0) ? ' e ' : ' ');
+}
+function reaisPorExtenso(v) {
+  const cent = Math.round(v * 100), R = Math.floor(cent / 100), C = cent % 100;
+  let s = R ? porExtenso(R) + (R === 1 ? ' real' : ' reais') : '';
+  if (C) s += (R ? ' e ' : '') + porExtenso(C) + (C === 1 ? ' centavo' : ' centavos');
+  return s || 'zero real';
+}
+
+// Sai do app para outro (WhatsApp, compartilhar) sem trancar, e volta a proteger ao retornar.
+function liberarSaidaTemporaria() {
+  ignorarOcultacao = true;
+  let saiu = false;
+  const aoMudar = () => {
+    if (document.hidden) { saiu = true; return; }
+    document.removeEventListener('visibilitychange', aoMudar);
+    ignorarOcultacao = false;
+    verificarInatividade();
+  };
+  document.addEventListener('visibilitychange', aoMudar);
+  setTimeout(() => { if (!saiu) { document.removeEventListener('visibilitychange', aoMudar); ignorarOcultacao = false; } }, 6000);
+}
+function abrirExterno(url) {
+  liberarSaidaTemporaria();
+  const a = el('a', { href: url, target: '_blank', rel: 'noopener noreferrer' });
+  document.body.append(a); a.click(); a.remove();
+}
+
+// ---------- Aba Mensagem (WhatsApp) ----------
+function numeroWhats(tel) {
+  let d = (tel || '').replace(/\D/g, '');
+  if (d.startsWith('00')) d = d.slice(2);
+  else if (d.startsWith('0')) d = d.replace(/^0+/, '');
+  if (d.length === 10 || d.length === 11) d = '55' + d;
+  return d.length >= 12 && d.length <= 15 ? d : null;
+}
+const MODELOS_MSG = [
+  { nome: 'Confirmar sessão', texto: 'Olá, {nome}! Confirmo nossa sessão de {data}, às {hora}.' },
+  { nome: 'Lembrete', texto: 'Olá, {nome}. Passando para lembrar da nossa sessão de {data}, às {hora}.' },
+  { nome: 'Remarcar', texto: 'Olá, {nome}. Precisarei remarcar nossa sessão de {data}, às {hora}. Você teria disponibilidade em outro horário?' },
+  { nome: 'Não haverá sessão', texto: 'Olá, {nome}. Não poderei atender na {data}. Retomamos no horário habitual da semana seguinte.' },
+  { nome: 'Documento', texto: 'Olá, {nome}. Segue o documento solicitado.' },
+  { nome: 'Livre', texto: 'Olá, {nome}. ' }
+];
+const dataMsg = ymd => ymd ? `${paraData(ymd).toLocaleDateString('pt-BR', { weekday: 'long' })}, ${dataCurta(ymd).slice(0, 5)}` : '[data]';
+const horaMsg = h => { if (!h) return '[hora]'; const [hh, mm] = h.split(':'); return `${Number(hh)}h${mm === '00' ? '' : mm}`; };
+function montarMensagem(modelo, p, r) {
+  return modelo.replaceAll('{nome}', primeiroNome(p.nome)).replaceAll('{data}', dataMsg(r.data)).replaceAll('{hora}', horaMsg(r.hora));
+}
+
+function abaMensagem(p) {
+  const r = rascunhoMsg[p.id] ||= { modelo: 0, data: '', hora: '', texto: null };
+  const modelos = [...MODELOS_MSG, ...(perfil.modelos || []).map(m => ({ ...m, meu: true }))];
+  if (r.modelo >= modelos.length) r.modelo = 0;
+
+  const botao = el('button', { type: 'button', class: 'primario largo com-icone centralizado' }, icone('mensagem'), el('span', { text: 'Abrir no WhatsApp' }));
+  const avisoNum = el('small', { class: 'suave dica-campo' });
+  const tel = el('input', { type: 'tel', inputmode: 'tel', value: p.dados.telefone || '', placeholder: '(21) 99999-9999', 'aria-label': 'Telefone do paciente' });
+  const atualizarNumero = () => {
+    const n = numeroWhats(tel.value);
+    avisoNum.textContent = n ? `Será aberto o WhatsApp de +${n.slice(0, 2)} ${n.slice(2, 4)} ${n.slice(4)}.` : 'Informe o celular com DDD. Ele fica salvo na ficha.';
+    botao.disabled = !n;
+  };
+  tel.addEventListener('input', () => { p.dados.telefone = tel.value; agendarSalvar('p:' + p.id, p); atualizarNumero(); });
+
+  const texto = el('textarea', { rows: '4', 'aria-label': 'Texto da mensagem' });
+  const preencher = () => { texto.value = montarMensagem(modelos[r.modelo].texto, p, r); r.texto = texto.value; r.editado = false; crescer(texto); };
+  texto.addEventListener('input', () => { r.texto = texto.value; r.editado = true; crescer(texto); });
+  const data = el('input', { type: 'date', value: r.data, 'aria-label': 'Data da sessão' });
+  const hora = el('input', { type: 'time', value: r.hora, 'aria-label': 'Horário da sessão' });
+  data.addEventListener('change', () => { r.data = data.value; if (!r.editado) preencher(); });
+  hora.addEventListener('change', () => { r.hora = hora.value; if (!r.editado) preencher(); });
+
+  const chips = el('div', { class: 'chips' });
+  const desenharChips = () => chips.replaceChildren(...modelos.map((m, i) => el('button', {
+    type: 'button', class: 'chip acao' + (i === r.modelo ? ' marcado' : ''), 'aria-pressed': String(i === r.modelo),
+    onclick: () => { r.modelo = i; preencher(); desenharChips(); desenharAcoesModelo(); }
+  }, m.nome)));
+  const acoesModelo = el('div', { class: 'linha-links' });
+  const desenharAcoesModelo = () => acoesModelo.replaceChildren(...[
+    el('button', { type: 'button', class: 'link', text: 'Guardar como meu modelo', onclick: () => guardarModelo(p, r, texto.value) }),
+    modelos[r.modelo].meu && el('button', { type: 'button', class: 'link perigo-texto', text: 'Excluir este modelo', onclick: () => excluirModelo(p, modelos[r.modelo]) })
+  ].filter(Boolean));
+
+  botao.addEventListener('click', () => {
+    const n = numeroWhats(tel.value);
+    if (!n) return;
+    if (/\[(data|hora)\]/.test(texto.value)) {
+      dialogo({
+        titulo: 'Faltam a data ou o horário', texto: 'A mensagem ainda tem [data] ou [hora]. Enviar assim mesmo?',
+        botoes: [{ rotulo: 'Voltar', valor: null }, { rotulo: 'Abrir assim', valor: true, estilo: 'primario' }]
+      }).then(ok => { if (ok) abrirExterno(`https://wa.me/${n}?text=${encodeURIComponent(texto.value)}`); });
+      return;
+    }
+    abrirExterno(`https://wa.me/${n}?text=${encodeURIComponent(texto.value)}`);
+  });
+
+  if (r.texto == null) preencher(); else texto.value = r.texto;
+  desenharChips(); desenharAcoesModelo(); atualizarNumero();
+  requestAnimationFrame(() => crescer(texto));
+
+  return el('div', { class: 'pilha' },
+    cartao('Celular do paciente', 'telefone', tel, avisoNum),
+    cartao('Mensagem', 'mensagem',
+      chips,
+      el('div', { class: 'grade duas' },
+        el('label', { class: 'campo' }, el('span', { text: 'Data da sessão' }), data),
+        el('label', { class: 'campo' }, el('span', { text: 'Horário' }), hora)),
+      texto,
+      botao,
+      acoesModelo),
+    el('p', { class: 'suave pequeno', text: 'O WhatsApp abre com o texto pronto e você confere antes de enviar; nada sai sozinho. A conversa no WhatsApp fica fora do cofre, por isso evite escrever conteúdo clínico nela.' }));
+}
+
+async function guardarModelo(p, r, textoAtual) {
+  const nome = await dialogo({
+    titulo: 'Guardar como meu modelo',
+    texto: 'O nome do paciente, a data e o horário viram campos que o app preenche sozinho da próxima vez.',
+    campos: [{ rotulo: 'Nome do modelo (ex.: Férias)' }],
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Guardar', valor: true, estilo: 'primario' }]
+  });
+  if (!nome || !nome.trim()) return;
+  let t = textoAtual;
+  const pn = primeiroNome(p.nome);
+  if (pn) t = t.split(pn).join('{nome}');
+  if (r.data) t = t.split(dataMsg(r.data)).join('{data}');
+  if (r.hora) t = t.split(horaMsg(r.hora)).join('{hora}');
+  perfil.modelos = [...(perfil.modelos || []), { nome: nome.trim(), texto: t }];
+  salvarPerfil();
+  r.modelo = MODELOS_MSG.length + perfil.modelos.length - 1;
+  r.texto = null;
+  render(history.state);
+}
+async function excluirModelo(p, m) {
+  const ok = await dialogo({ titulo: `Excluir o modelo "${m.nome}"?`, botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Excluir', valor: true, estilo: 'perigo' }] });
+  if (!ok) return;
+  perfil.modelos = perfil.modelos.filter(x => !(x.nome === m.nome && x.texto === m.texto));
+  salvarPerfil();
+  const r = rascunhoMsg[p.id]; r.modelo = 0; r.texto = null;
+  render(history.state);
+}
+
+// ---------- Documentos (recebidos e emitidos) ----------
+async function reduzirImagem(arquivo, lado = 2200, qualidade = 0.85) {
+  try {
+    const bmp = await createImageBitmap(arquivo, { imageOrientation: 'from-image' });
+    const k = Math.min(1, lado / Math.max(bmp.width, bmp.height));
+    const c = el('canvas', { width: String(Math.round(bmp.width * k)), height: String(Math.round(bmp.height * k)) });
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(bmp, 0, 0, c.width, c.height);
+    const blob = await new Promise(ok => c.toBlob(ok, 'image/jpeg', qualidade));
+    return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
+  } catch { return null; }
+}
+
+async function guardarDocumento(p, tipo, { nome, mime, bytes, descricao, data = hojeISO(), texto = null, modelo = null }) {
+  const agora = new Date().toISOString();
+  const d = { id: crypto.randomUUID(), pid: p.id, tipo, nome, descricao, mime, tamanho: bytes.length, data, texto, modelo, criadoEm: agora, atualizadoEm: agora };
+  await Cofre.salvar(chaveConteudo(d), { id: d.id, b64: paraBase64(bytes), atualizadoEm: agora }); // primeiro o arquivo
+  await Cofre.salvar(chaveDoc(d), d);                                                                  // depois a descrição
+  documentos.push(d);
+  return d;
+}
+
+async function adicionarDocumentos(p, tipo) {
+  const arquivos = await escolherArquivos({ multiplo: true, accept: 'image/*,application/pdf,.pdf,.doc,.docx,.odt,.txt' });
+  if (!arquivos.length) return;
+  indicarStatus('Guardando…');
+  let n = 0;
+  for (const f of arquivos) {
+    if (f.size > 25 * 1048576) { await aviso('Arquivo grande demais', `${f.name} tem ${tamanhoLegivel(f.size)}. O limite é 25 MB.`); continue; }
+    let bytes = new Uint8Array(await f.arrayBuffer());
+    let mime = f.type || 'application/octet-stream';
+    let nome = f.name || 'documento';
+    if (/^image\/(jpeg|png|webp|heic|heif)/.test(mime) && f.size > 1.5 * 1048576) {
+      const menor = await reduzirImagem(f);
+      if (menor && menor.length < bytes.length) { bytes = menor; mime = 'image/jpeg'; nome = nome.replace(/\.\w+$/, '') + '.jpg'; }
+    }
+    await guardarDocumento(p, tipo, { nome, mime, bytes, descricao: nome.replace(/\.\w+$/, '') });
+    n++;
+  }
+  indicarStatus(n ? 'Salvo' : '');
+  if (Cofre.aberto()) render(history.state);
+}
+
+const iconeDoc = d => d.modelo ? 'assinar' : d.mime?.startsWith('image/') ? 'imagem' : 'arquivo';
+function itemDocumento(p, d) {
+  return el('button', { type: 'button', class: 'cartao doc-item', onclick: () => abrirDocumento(p, d) },
+    el('span', { class: 'ic-bolha' }, icone(iconeDoc(d))),
+    el('span', { class: 'info' },
+      el('span', { class: 'nome', text: d.descricao || d.nome }),
+      el('span', { class: 'meta', text: `${dataCurta(d.data)}, ${d.mime === 'application/pdf' ? 'PDF' : d.mime?.startsWith('image/') ? 'imagem' : 'arquivo'}, ${tamanhoLegivel(d.tamanho)}` })),
+    icone('seguinte'));
+}
+
+function abaRecebidos(p) {
+  const lista = docsDe(p.id, 'recebido');
+  return el('div', { class: 'pilha' },
+    el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => adicionarDocumentos(p, 'recebido') }, icone('clipe'), el('span', { text: 'Adicionar foto ou arquivo' })),
+    lista.length ? lista.map(d => itemDocumento(p, d))
+      : el('div', { class: 'cartao vazio-cartao' },
+        el('span', { class: 'ic-bolha grande' }, icone('clipe')),
+        el('p', { text: 'Exames, laudos e encaminhamentos que o paciente enviar. Fotos e PDFs ficam guardados aqui, cifrados, junto da ficha.' })));
+}
+
+function abaEmitidos(p) {
+  const lista = docsDe(p.id, 'emitido');
+  return el('div', { class: 'pilha' },
+    el('div', { class: 'botoes-linha' },
+      el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => novaDeclaracao(p) }, icone('assinar'), el('span', { text: 'Nova declaração' })),
+      el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => adicionarDocumentos(p, 'emitido') }, icone('clipe'), el('span', { text: 'Guardar arquivo' }))),
+    perfilIncompleto() && el('div', { class: 'faixa' },
+      el('p', { text: 'Antes da primeira declaração, preencha seus dados profissionais e a imagem do carimbo com assinatura.' }),
+      el('button', { type: 'button', class: 'link', text: 'Preencher agora', onclick: () => ir({ tela: 'perfil' }) })),
+    lista.length ? lista.map(d => itemDocumento(p, d))
+      : el('div', { class: 'cartao vazio-cartao' },
+        el('span', { class: 'ic-bolha grande' }, icone('assinar')),
+        el('p', { text: 'Declarações e recibos emitidos para este paciente ficam guardados aqui.' })));
+}
+
+async function lerConteudo(d) {
+  const c = await Cofre.ler(chaveConteudo(d));
+  if (!c) throw new Error('sem-conteudo');
+  return deBase64(c.b64);
+}
+async function desenharImagem(canvas, bytes, mime, larguraMax = 1400) {
+  const bmp = await createImageBitmap(new Blob([bytes], { type: mime }));
+  const k = Math.min(1, larguraMax / bmp.width);
+  canvas.width = Math.round(bmp.width * k); canvas.height = Math.round(bmp.height * k);
+  canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+}
+
+async function compartilharDocumento(d, bytes) {
+  bytes ||= await lerConteudo(d);
+  const arquivo = new File([bytes], d.nome, { type: d.mime });
+  if (navigator.canShare?.({ files: [arquivo] })) {
+    liberarSaidaTemporaria();
+    try { await navigator.share({ files: [arquivo], title: d.descricao || d.nome }); return true; }
+    catch (e) { if (e.name !== 'AbortError') await aviso('Não foi possível compartilhar', 'Tente de novo. Se persistir, use "Salvar no aparelho".'); return false; }
+  }
+  return salvarNoAparelho(d, bytes);
+}
+async function salvarNoAparelho(d, bytes) {
+  bytes ||= await lerConteudo(d);
+  const url = URL.createObjectURL(new Blob([bytes], { type: d.mime }));
+  const a = el('a', { href: url, download: d.nome });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  return true;
+}
+
+async function abrirDocumento(p, d) {
+  const dlg = el('dialog', { class: 'dialogo largo-dialogo' });
+  const fechar = () => { dlg.close(); dlg.remove(); if (Cofre.aberto()) render(history.state); };
+  dlg.addEventListener('cancel', e => { e.preventDefault(); fechar(); });
+  const salvarMeta = () => agendarSalvar(chaveDoc(d), d);
+  const area = el('div', { class: 'visualizador' }, el('p', { class: 'suave', text: 'Abrindo…' }));
+  dlg.append(
+    el('label', { class: 'campo' }, el('span', { text: 'Descrição' }),
+      el('input', { type: 'text', value: d.descricao || '', oninput: e => { d.descricao = e.target.value; salvarMeta(); } })),
+    el('label', { class: 'campo' }, el('span', { text: 'Data' }),
+      el('input', { type: 'date', value: d.data, onchange: e => { if (e.target.value) { d.data = e.target.value; salvarMeta(); } } })),
+    area,
+    el('p', { class: 'suave pequeno', text: 'Ao compartilhar ou salvar no aparelho, a cópia sai do cofre sem cifra.' }),
+    el('div', { class: 'botoes' },
+      el('button', { type: 'button', class: 'secundario perigo-texto', text: 'Excluir', onclick: () => excluirDocumento(d, dlg) }),
+      el('button', { type: 'button', class: 'secundario', text: 'Salvar no aparelho', onclick: () => salvarNoAparelho(d) }),
+      el('button', { type: 'button', class: 'secundario', text: d.tipo === 'emitido' ? 'Enviar' : 'Compartilhar', onclick: () => compartilharDocumento(d) }),
+      el('button', { type: 'button', class: 'primario', text: 'Fechar', onclick: fechar })));
+  document.body.append(dlg);
+  dlg.showModal();
+  try {
+    if (d.texto) {
+      area.replaceChildren(folhaPrevia(p, d.texto));
+    } else if (d.mime?.startsWith('image/')) {
+      const bytes = await lerConteudo(d);
+      const c = el('canvas', { class: 'imagem-doc', 'aria-label': d.descricao || 'Imagem' });
+      await desenharImagem(c, bytes, d.mime);
+      area.replaceChildren(c);
+    } else {
+      area.replaceChildren(el('p', { class: 'suave', text: `${d.nome}, ${tamanhoLegivel(d.tamanho)}. Para ler, toque em "Compartilhar" e escolha um leitor de PDF ou o Drive.` }));
+    }
+  } catch { area.replaceChildren(el('p', { class: 'erro-msg', text: 'Não foi possível abrir este arquivo.' })); }
+}
+
+async function excluirDocumento(d, dlg) {
+  const ok = await dialogo({
+    titulo: 'Excluir este documento?', texto: 'O arquivo será apagado deste aparelho. Não há como desfazer.',
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Excluir', valor: true, estilo: 'perigo' }]
+  });
+  if (!ok) return;
+  pendentes.delete(chaveDoc(d));
+  await Cofre.apagar(chaveDoc(d));
+  await Cofre.apagar(chaveConteudo(d));
+  documentos = documentos.filter(x => x.id !== d.id);
+  dlg.close(); dlg.remove();
+  render(history.state);
+}
+
+// ---------- Perfil profissional e assinatura ----------
+function telaPerfil() {
+  const campo = (rotulo, chave, { tipo = 'text', dica = '', largo = false, modo = null } = {}) =>
+    el('label', { class: 'campo' + (largo ? ' largo' : '') },
+      el('span', { text: rotulo }),
+      el('input', { type: tipo, value: perfil[chave] || '', placeholder: dica, inputmode: modo, oninput: e => { perfil[chave] = e.target.value; salvarPerfil(); } }));
+  const previa = el('div', { class: 'assinatura-caixa' });
+  const desenharPrevia = async () => {
+    if (!assinatura) { previa.replaceChildren(el('p', { class: 'suave', text: 'Nenhuma imagem ainda.' })); return; }
+    const c = el('canvas', { class: 'assinatura-previa', 'aria-label': 'Carimbo e assinatura' });
+    previa.replaceChildren(c);
+    await desenharImagem(c, deBase64(assinatura.jpeg), 'image/jpeg', 900);
+  };
+  mostrar(
+    cabecalho('Dados profissionais', { voltar: true, status: true }),
+    el('div', { class: 'conteudo pilha' },
+      cartao('Como aparecem nos documentos', 'pessoa',
+        el('div', { class: 'grade' },
+          campo('Nome completo', 'nome', { largo: true }),
+          campo('Profissão', 'titulo', { dica: 'Psicólogo, psicanalista' }),
+          campo('CRP', 'crp', { dica: '05/12345' }),
+          campo('CPF', 'cpf', { modo: 'numeric' }),
+          campo('Cidade', 'cidade', { dica: 'Rio de Janeiro' }),
+          campo('Endereço do consultório', 'endereco', { largo: true }),
+          campo('Telefone', 'telefone', { tipo: 'tel' }),
+          campo('E-mail', 'email', { tipo: 'email' }),
+          campo('Valor da sessão (R$)', 'valorSessao', { modo: 'decimal', dica: '200,00' }))),
+      cartao('Carimbo e assinatura', 'assinar',
+        el('p', { class: 'suave pequeno', text: 'Carimbe e assine uma folha branca, fotografe de perto, com boa luz e sem sombra. O app limpa o fundo, recorta e insere a imagem em toda declaração.' }),
+        previa,
+        el('div', { class: 'botoes-linha' },
+          el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: escolherAssinatura }, icone('imagem'), el('span', { text: assinatura ? 'Trocar imagem' : 'Escolher foto' })),
+          assinatura && el('button', { type: 'button', class: 'secundario perigo-texto', text: 'Remover', onclick: removerAssinatura })))));
+  desenharPrevia();
+}
+
+async function escolherAssinatura() {
+  const [f] = await escolherArquivos({ accept: 'image/*' });
+  if (!f) return;
+  const img = await limparAssinatura(f);
+  if (!img) return aviso('Não foi possível usar a imagem', 'Tente outra foto, em formato JPG ou PNG.');
+  assinatura = { tipoRegistro: 'assinatura', ...img, atualizadoEm: new Date().toISOString() };
+  await Cofre.salvar('c:assinatura', assinatura);
+  telaPerfil();
+}
+async function removerAssinatura() {
+  const ok = await dialogo({ titulo: 'Remover carimbo e assinatura?', botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Remover', valor: true, estilo: 'perigo' }] });
+  if (!ok) return;
+  await Cofre.apagar('c:assinatura');
+  assinatura = null;
+  telaPerfil();
+}
+
+// Clareia o papel, mantém a tinta (inclusive o azul do carimbo) e recorta as margens.
+async function limparAssinatura(arquivo) {
+  try {
+    const bmp = await createImageBitmap(arquivo, { imageOrientation: 'from-image' });
+    const k = Math.min(1, 1400 / Math.max(bmp.width, bmp.height));
+    const w = Math.round(bmp.width * k), h = Math.round(bmp.height * k);
+    const c = el('canvas', { width: String(w), height: String(h) });
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(bmp, 0, 0, w, h);
+    const im = ctx.getImageData(0, 0, w, h), px = im.data;
+    const lum = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) lum[i] = 0.299 * px[i * 4] + 0.587 * px[i * 4 + 1] + 0.114 * px[i * 4 + 2];
+    const amostra = Array.from(lum.filter((_, i) => i % 7 === 0)).sort((a, b) => a - b);
+    const papel = Math.max(90, amostra[Math.floor(amostra.length * 0.9)]); // brilho típico do papel
+    const corte = papel * 0.8;
+    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = y * w + x, j = i * 4;
+      if (lum[i] >= corte) { px[j] = px[j + 1] = px[j + 2] = 255; continue; }
+      const f = 255 / papel; // normaliza o papel para branco e realça a tinta
+      for (let q = 0; q < 3; q++) px[j + q] = Math.max(0, Math.min(255, px[j + q] * f * 0.92));
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    if (x1 < 0) return null;
+    ctx.putImageData(im, 0, 0);
+    const m = 10;
+    x0 = Math.max(0, x0 - m); y0 = Math.max(0, y0 - m); x1 = Math.min(w - 1, x1 + m); y1 = Math.min(h - 1, y1 + m);
+    const cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+    const r = el('canvas', { width: String(cw), height: String(ch) });
+    const rc = r.getContext('2d');
+    rc.fillStyle = '#fff'; rc.fillRect(0, 0, cw, ch);
+    rc.drawImage(c, x0, y0, cw, ch, 0, 0, cw, ch);
+    const blob = await new Promise(ok => r.toBlob(ok, 'image/jpeg', 0.92));
+    return { jpeg: paraBase64(new Uint8Array(await blob.arrayBuffer())), w: cw, h: ch };
+  } catch { return null; }
+}
+
+// ---------- Declarações e recibos ----------
+const MODELOS_DOC = {
+  comparecimento: 'Declaração de comparecimento',
+  acompanhamento: 'Declaração de acompanhamento',
+  recibo: 'Recibo para reembolso'
+};
+function novaDeclaracao(p) {
+  const h = hojeISO();
+  declaracao = { pid: p.id, modelo: 'comparecimento', de: h.slice(0, 8) + '01', ate: h, excluidas: new Set(), valor: perfil.valorSessao || '', pagador: '', cpfPagador: '', emissao: h, texto: '', editado: false };
+  ir({ tela: 'declaracao', pid: p.id });
+}
+function sessoesDeclaracao(p, dc) {
+  return sessoesDe(p.id).filter(s => s.status === 'realizada' && s.data >= dc.de && s.data <= dc.ate);
+}
+function textoDeclaracao(p, dc) {
+  const ss = sessoesDeclaracao(p, dc).filter(s => !dc.excluidas.has(s.id));
+  const datas = ss.map(s => dataCurta(s.data));
+  const cpf = (p.dados.cpf || '').trim();
+  const quem = cpf ? `${p.nome} (CPF ${cpf})` : p.nome;
+  if (dc.modelo === 'acompanhamento') {
+    const inicio = p.dados.inicio || sessoesDe(p.id)[0]?.data;
+    const freq = (p.dados.frequencia || '').trim();
+    return `Declaro, para os devidos fins, que ${quem} está em acompanhamento psicológico comigo${inicio ? ` desde ${dataExtenso(inicio)}` : ''}${freq ? `, com frequência ${freq}` : ''}.`;
+  }
+  if (dc.modelo === 'recibo') {
+    const v = valorNum(dc.valor), n = ss.length, total = v * n;
+    const pag = dc.pagador.trim();
+    const pagador = pag ? (dc.cpfPagador.trim() ? `${pag} (CPF ${dc.cpfPagador.trim()})` : pag) : quem;
+    return `Recebi de ${pagador} a importância de R$ ${reais(total)} (${reaisPorExtenso(total)}), referente a ${n} ${n === 1 ? 'sessão' : 'sessões'} de psicoterapia${pag ? ` de ${quem}` : ''}, no valor de R$ ${reais(v)} cada, ${n === 1 ? 'realizada em' : 'realizadas nas datas'} ${listaNatural(datas) || '[datas]'}.\n\nPara clareza, firmo o presente recibo.`;
+  }
+  return `Declaro, para os devidos fins, que ${quem} compareceu a atendimento psicológico comigo ${datas.length === 1 ? 'em ' + datas[0] : datas.length ? 'nas seguintes datas: ' + listaNatural(datas) : 'em [datas]'}.`;
+}
+
+function telaDeclaracao(pid) {
+  const p = pacientes.find(x => x.id === pid);
+  const dc = declaracao;
+  if (!p || !dc || dc.pid !== pid) { history.back(); return; }
+  const texto = el('textarea', { rows: '6', 'aria-label': 'Texto do documento' });
+  const folha = el('div', { class: 'folha-caixa' });
+  const listaSessoes = el('div', { class: 'lista-marcar' });
+  const refazer = el('button', { type: 'button', class: 'link', text: 'Refazer o texto automático', onclick: () => { dc.editado = false; atualizar(); } });
+  const alertas = el('div', { class: 'pilha-pequena' });
+
+  const atualizar = () => {
+    if (!dc.editado) dc.texto = textoDeclaracao(p, dc);
+    texto.value = dc.texto; crescer(texto);
+    refazer.hidden = !dc.editado;
+    folha.replaceChildren(folhaPrevia(p, dc.texto, dc));
+    const avisos = [];
+    if (!p.dados.cpf) avisos.push('O CPF do paciente não está na ficha. Planos de saúde costumam exigi-lo.');
+    if (dc.modelo !== 'acompanhamento' && !sessoesDeclaracao(p, dc).filter(s => !dc.excluidas.has(s.id)).length) avisos.push('Nenhuma sessão realizada marcada neste período.');
+    if (dc.modelo === 'recibo' && !valorNum(dc.valor)) avisos.push('Informe o valor da sessão.');
+    if (perfilIncompleto()) avisos.push('Faltam seu nome e CRP em Dados profissionais.');
+    alertas.replaceChildren(...avisos.map(a => el('p', { class: 'faixa', text: a })));
+  };
+  const desenharSessoes = () => {
+    const ss = sessoesDeclaracao(p, dc);
+    listaSessoes.replaceChildren(...(ss.length ? ss.map(s => el('label', { class: 'marcar' },
+      el('input', { type: 'checkbox', checked: !dc.excluidas.has(s.id), onchange: e => { if (e.target.checked) dc.excluidas.delete(s.id); else dc.excluidas.add(s.id); atualizar(); } }),
+      el('span', { text: `${dataCurta(s.data)}, ${diaSemana(s.data)}` })))
+      : [el('p', { class: 'suave pequeno', text: 'Nenhuma sessão com situação "realizada" neste período.' })]));
+  };
+  texto.addEventListener('input', () => { dc.texto = texto.value; dc.editado = true; crescer(texto); refazer.hidden = false; folha.replaceChildren(folhaPrevia(p, dc.texto, dc)); });
+
+  const campoData = (rotulo, chave, redesenhar) => el('label', { class: 'campo' }, el('span', { text: rotulo }),
+    el('input', { type: 'date', value: dc[chave], onchange: e => { if (!e.target.value) return; dc[chave] = e.target.value; if (redesenhar) desenharSessoes(); atualizar(); } }));
+  const campoTexto = (rotulo, chave, extra = {}) => el('label', { class: 'campo' }, el('span', { text: rotulo }),
+    el('input', { type: 'text', value: dc[chave], ...extra, oninput: e => { dc[chave] = e.target.value; atualizar(); } }));
+
+  const tipos = el('div', { class: 'segmento tres', role: 'radiogroup', 'aria-label': 'Tipo de documento' },
+    Object.entries(MODELOS_DOC).map(([k, rotulo]) => el('button', {
+      type: 'button', role: 'radio', 'aria-checked': String(dc.modelo === k), class: dc.modelo === k ? 'ativo' : '', text: { comparecimento: 'Comparecimento', acompanhamento: 'Acompanhamento', recibo: 'Recibo' }[k],
+      onclick: () => { dc.modelo = k; dc.editado = false; telaDeclaracao(pid); }
+    })));
+
+  mostrar(
+    cabecalho(MODELOS_DOC[dc.modelo], { voltar: true, sub: p.nome }),
+    el('div', { class: 'conteudo pilha' },
+      tipos,
+      dc.modelo !== 'acompanhamento' && cartao('Sessões incluídas', 'calendario',
+        el('div', { class: 'grade duas' }, campoData('De', 'de', true), campoData('Até', 'ate', true)),
+        listaSessoes),
+      dc.modelo === 'recibo' && cartao('Valores', 'tag',
+        el('div', { class: 'grade' },
+          campoTexto('Valor por sessão (R$)', 'valor', { inputmode: 'decimal', placeholder: '200,00' }),
+          campoTexto('Pago por (se não for o paciente)', 'pagador', { placeholder: 'Nome do responsável' }),
+          campoTexto('CPF de quem pagou', 'cpfPagador', { inputmode: 'numeric' }))),
+      cartao('Texto', 'texto', texto, refazer,
+        el('div', { class: 'grade duas' }, campoData('Data do documento', 'emissao', false))),
+      alertas,
+      cartao('Como vai ficar', 'arquivo', folha),
+      el('p', { class: 'suave pequeno', text: 'Os modelos seguem a Resolução CFP 06/2019: registram comparecimento, acompanhamento e valores, sem diagnóstico nem conteúdo das sessões.' })),
+    el('button', { type: 'button', class: 'fab estendido', onclick: () => emitirDeclaracao(p) }, icone('assinar'), el('span', { text: 'Gerar PDF' })));
+  desenharSessoes();
+  atualizar();
+}
+
+function linhasRodape() {
+  return [perfil.endereco, [perfil.telefone, perfil.email].filter(x => (x || '').trim()).join('   ')].filter(x => (x || '').trim());
+}
+function tituloProfissional() { return [perfil.titulo, perfil.crp && 'CRP ' + perfil.crp].filter(x => (x || '').trim()).join(', '); }
+function localEData(ymd) { return `${perfil.cidade ? perfil.cidade.trim() + ', ' : ''}${dataExtenso(ymd)}.`; }
+
+// Prévia em HTML da folha, no mesmo desenho do PDF.
+function folhaPrevia(p, texto, dc = null) {
+  const modelo = dc ? dc.modelo : null;
+  const titulo = (modelo ? MODELOS_DOC[modelo] : '').replace(' para reembolso', '');
+  const assin = el('div', { class: 'folha-assinatura' });
+  if (assinatura) {
+    const c = el('canvas', { 'aria-label': 'Carimbo e assinatura' });
+    assin.append(c);
+    desenharImagem(c, deBase64(assinatura.jpeg), 'image/jpeg', 700).catch(() => { });
+  }
+  return el('div', { class: 'folha' },
+    el('div', { class: 'folha-topo' }, el('strong', { text: perfil.nome || 'Seu nome' }), el('span', { text: tituloProfissional() })),
+    titulo && el('h4', { text: titulo.toUpperCase() }),
+    (texto || '').split(/\n\s*\n/).map(par => el('p', { text: par.trim() })),
+    dc && el('p', { class: 'folha-data', text: localEData(dc.emissao) }),
+    assin,
+    el('div', { class: 'folha-nome' }, el('span', { text: perfil.nome }), el('span', { text: tituloProfissional() }), perfil.cpf && el('span', { text: 'CPF ' + perfil.cpf })),
+    el('div', { class: 'folha-rodape' }, linhasRodape().map(l => el('span', { text: l }))));
+}
+
+async function emitirDeclaracao(p) {
+  const dc = declaracao;
+  if (perfilIncompleto()) {
+    const ir2 = await dialogo({ titulo: 'Faltam seus dados', texto: 'Preencha ao menos seu nome e CRP para gerar o documento.', botoes: [{ rotulo: 'Agora não', valor: null }, { rotulo: 'Preencher', valor: true, estilo: 'primario' }] });
+    if (ir2) ir({ tela: 'perfil' });
+    return;
+  }
+  if (/\[datas\]/.test(dc.texto)) return aviso('Faltam as datas', 'Marque ao menos uma sessão ou escreva as datas no texto.');
+  if (!assinatura) {
+    const seguir = await dialogo({ titulo: 'Sem carimbo e assinatura', texto: 'O documento sairá sem a imagem do carimbo e da assinatura. Gerar assim mesmo?', botoes: [{ rotulo: 'Voltar', valor: null }, { rotulo: 'Gerar assim', valor: true, estilo: 'primario' }] });
+    if (!seguir) return;
+  }
+  const bytes = gerarPdfDocumento({ titulo: MODELOS_DOC[dc.modelo].replace(' para reembolso', ''), texto: dc.texto, emissao: dc.emissao });
+  const titulo = MODELOS_DOC[dc.modelo];
+  const periodo = dc.modelo === 'acompanhamento' ? '' : (dc.de.slice(0, 7) === dc.ate.slice(0, 7) ? ` (${mesAno(dc.de)})` : ` (${dataCurta(dc.de)} a ${dataCurta(dc.ate)})`);
+  const nomeArq = `${titulo} - ${p.nome} - ${dc.emissao}.pdf`.replace(/[\\/:*?"<>|]/g, '-');
+  const d = await guardarDocumento(p, 'emitido', { nome: nomeArq, mime: 'application/pdf', bytes, descricao: titulo + periodo, data: dc.emissao, texto: dc.texto, modelo: dc.modelo });
+  declaracao = null;
+  const acao = await dialogo({
+    titulo: 'Documento pronto',
+    texto: 'Ficou guardado na aba Emitidos. Para mandar ao paciente, toque em Enviar e escolha o WhatsApp.',
+    botoes: [{ rotulo: 'Fechar', valor: null }, { rotulo: 'Enviar', valor: true, estilo: 'primario' }]
+  });
+  history.back();
+  if (acao) await compartilharDocumento(d, bytes);
+}
+
+// ---------- Gerador de PDF (feito aqui mesmo, sem biblioteca e sem internet) ----------
+const LARG_HELV = [278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,556,556,333,500,278,556,500,722,500,500,500,334,260,334,584,761,556,556,222,556,333,1000,556,556,333,1000,667,333,1000,556,611,556,556,222,222,333,333,350,556,1000,333,1000,500,333,944,556,500,667,278,333,556,556,556,556,260,556,333,737,370,556,584,333,737,333,400,584,333,333,333,556,537,278,333,333,365,556,834,834,834,611,667,667,667,667,667,667,1000,722,667,667,667,667,278,278,278,278,722,722,778,778,778,778,778,584,778,722,722,722,722,667,667,611,556,556,556,556,556,556,889,500,556,556,556,556,278,278,278,278,556,556,556,556,556,556,556,584,611,556,556,556,556,500,556,500];
+const LARG_HELV_B = [278,333,474,556,556,889,722,238,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,333,333,584,584,584,611,975,722,722,722,722,667,611,778,722,278,556,722,611,833,722,778,667,778,722,667,611,722,667,944,667,667,611,333,278,333,584,556,333,556,611,556,611,556,333,611,611,278,278,556,278,889,611,611,611,611,389,556,333,611,556,778,556,556,500,389,280,389,584,761,556,611,278,556,500,1000,556,556,333,1000,667,333,1000,611,611,611,611,278,278,500,500,350,556,1000,333,1000,556,333,944,611,500,667,278,333,556,556,556,556,280,556,333,737,370,556,584,333,737,333,400,584,333,333,333,611,556,278,333,333,365,556,834,834,834,611,722,722,722,722,722,722,1000,722,667,667,667,667,278,278,278,278,722,722,778,778,778,778,778,584,778,722,722,722,722,667,667,611,556,556,556,556,556,556,889,556,556,556,556,556,278,278,278,278,611,611,611,611,611,611,611,584,611,611,611,611,611,556,611,556];
+const ESPECIAIS_1252 = { '€': 0x80, '‚': 0x82, '„': 0x84, '…': 0x85, '‘': 0x91, '’': 0x92, '“': 0x93, '”': 0x94, '•': 0x95, '–': 0x96, '—': 0x97, 'ª': 0xAA, 'º': 0xBA };
+function codigos1252(s) {
+  const out = [];
+  for (const ch of s.normalize('NFC')) {
+    const c = ch.codePointAt(0);
+    if (c >= 32 && c < 127) out.push(c);
+    else if (c >= 160 && c <= 255) out.push(c);
+    else if (ESPECIAIS_1252[ch]) out.push(ESPECIAIS_1252[ch]);
+    else if (ch === '\t') out.push(32);
+    else out.push(63);
+  }
+  return out;
+}
+const largura = (cods, tam, negrito) => cods.reduce((t, c) => t + ((negrito ? LARG_HELV_B : LARG_HELV)[c - 32] || 500), 0) * tam / 1000;
+function literalPdf(cods) {
+  let s = '(';
+  for (const c of cods) s += c === 40 || c === 41 || c === 92 ? '\\' + String.fromCharCode(c) : String.fromCharCode(c);
+  return s + ')';
+}
+function quebrarLinhas(texto, tam, max, negrito = false) {
+  const linhas = [];
+  for (const bruto of texto.split('\n')) {
+    const palavras = bruto.trim().split(/\s+/).filter(Boolean);
+    let atual = [];
+    for (const pal of palavras) {
+      const teste = [...atual, pal].join(' ');
+      if (atual.length && largura(codigos1252(teste), tam, negrito) > max) { linhas.push({ palavras: atual, fim: false }); atual = [pal]; }
+      else atual.push(pal);
+    }
+    linhas.push({ palavras: atual, fim: true });
+  }
+  return linhas;
+}
+
+function gerarPdfDocumento({ titulo, texto, emissao }) {
+  const W = 595.28, H = 841.89, ME = 72, MD = 72, MI = 70, LARG = W - ME - MD;
+  const paginas = [];
+  let ops = [], y = H - 64;
+  const novaPagina = () => { paginas.push(ops); ops = []; y = H - 64; };
+  const cabeca = () => {
+    const nome = codigos1252(perfil.nome), sub = codigos1252(tituloProfissional());
+    ops.push(`BT /F2 13 Tf ${(W - largura(nome, 13, true)) / 2} ${y} Td ${literalPdf(nome)} Tj ET`);
+    y -= 16;
+    if (sub.length) { ops.push(`0.35 g BT /F1 10 Tf ${(W - largura(sub, 10)) / 2} ${y} Td ${literalPdf(sub)} Tj ET 0 g`); y -= 12; }
+    ops.push(`0.6 G 0.6 w ${ME} ${y} m ${W - MD} ${y} l S 0 G`);
+    y -= 52;
+  };
+  const rodape = () => {
+    let yy = 44;
+    for (const l of [...linhasRodape()].reverse()) {
+      const c = codigos1252(l);
+      ops.push(`0.4 g BT /F1 8.5 Tf ${(W - largura(c, 8.5)) / 2} ${yy} Td ${literalPdf(c)} Tj ET 0 g`);
+      yy += 11;
+    }
+  };
+  cabeca();
+  if (titulo) {
+    const t = codigos1252(titulo.toUpperCase());
+    ops.push(`BT /F2 14 Tf ${(W - largura(t, 14, true)) / 2} ${y} Td ${literalPdf(t)} Tj ET`);
+    y -= 44;
+  }
+  const TAM = 11.5, ENTRE = 18;
+  const pars = texto.split(/\n\s*\n/).map(x => x.replace(/\s*\n\s*/g, ' ').trim()).filter(Boolean);
+  for (const par of pars) {
+    for (const ln of quebrarLinhas(par, TAM, LARG)) {
+      if (y < MI + 40) { rodape(); novaPagina(); cabeca(); }
+      const cods = codigos1252(ln.palavras.join(' '));
+      const espacos = ln.palavras.length - 1;
+      const tw = !ln.fim && espacos > 0 ? (LARG - largura(cods, TAM)) / espacos : 0;
+      ops.push(`BT /F1 ${TAM} Tf ${tw.toFixed(3)} Tw ${ME} ${y.toFixed(2)} Td ${literalPdf(cods)} Tj ET`);
+      y -= ENTRE;
+    }
+    y -= 8;
+  }
+  // local e data, alinhados à direita
+  if (y < MI + 190) { rodape(); novaPagina(); cabeca(); }
+  y -= 18;
+  const ld = codigos1252(localEData(emissao));
+  ops.push(`BT /F1 ${TAM} Tf 0 Tw ${(W - MD - largura(ld, TAM)).toFixed(2)} ${y.toFixed(2)} Td ${literalPdf(ld)} Tj ET`);
+  y -= 30;
+  // carimbo e assinatura
+  let imagem = null;
+  if (assinatura) {
+    imagem = { bytes: deBase64(assinatura.jpeg), w: assinatura.w, h: assinatura.h };
+    const k = Math.min(230 / assinatura.w, 95 / assinatura.h);
+    const iw = assinatura.w * k, ih = assinatura.h * k;
+    y -= ih;
+    ops.push(`q ${iw.toFixed(2)} 0 0 ${ih.toFixed(2)} ${((W - iw) / 2).toFixed(2)} ${y.toFixed(2)} cm /Im1 Do Q`);
+    y -= 6;
+  } else y -= 50;
+  ops.push(`0 G 0.5 w ${W / 2 - 110} ${y} m ${W / 2 + 110} ${y} l S`);
+  y -= 14;
+  for (const [l, neg, tam] of [[perfil.nome, true, 10.5], [tituloProfissional(), false, 9.5], [perfil.cpf ? 'CPF ' + perfil.cpf : '', false, 9.5]]) {
+    if (!l) continue;
+    const c = codigos1252(l);
+    ops.push(`BT /${neg ? 'F2' : 'F1'} ${tam} Tf 0 Tw ${((W - largura(c, tam, neg)) / 2).toFixed(2)} ${y.toFixed(2)} Td ${literalPdf(c)} Tj ET`);
+    y -= 13;
+  }
+  rodape();
+  paginas.push(ops);
+  return montarPdf(paginas.map(o => o.join('\n')), imagem, W, H);
+}
+
+function montarPdf(conteudos, imagem, W, H) {
+  const partes = []; let pos = 0; const offs = [];
+  const bin = s => { const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i) & 255; return u; };
+  const add = x => { const b = typeof x === 'string' ? bin(x) : x; partes.push(b); pos += b.length; };
+  const base = imagem ? 6 : 5;
+  const n = conteudos.length;
+  const kids = conteudos.map((_, i) => `${base + i * 2} 0 R`).join(' ');
+  add('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+  const obj = (num, corpo) => { offs[num] = pos; add(`${num} 0 obj\n${corpo}\nendobj\n`); };
+  obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+  obj(2, `<< /Type /Pages /Kids [${kids}] /Count ${n} >>`);
+  obj(3, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+  obj(4, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+  if (imagem) {
+    offs[5] = pos;
+    add(`5 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imagem.w} /Height ${imagem.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${imagem.bytes.length} >>\nstream\n`);
+    add(imagem.bytes);
+    add('\nendstream\nendobj\n');
+  }
+  conteudos.forEach((c, i) => {
+    const idPag = base + i * 2, idCont = idPag + 1;
+    obj(idPag, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>${imagem ? ' /XObject << /Im1 5 0 R >>' : ''} >> /Contents ${idCont} 0 R >>`);
+    const corpo = bin(c);
+    offs[idCont] = pos;
+    add(`${idCont} 0 obj\n<< /Length ${corpo.length} >>\nstream\n`);
+    add(corpo);
+    add('\nendstream\nendobj\n');
+  });
+  const total = base + n * 2;
+  const inicioXref = pos;
+  let xref = `xref\n0 ${total}\n0000000000 65535 f \n`;
+  for (let i = 1; i < total; i++) xref += String(offs[i]).padStart(10, '0') + ' 00000 n \n';
+  add(xref + `trailer\n<< /Size ${total} /Root 1 0 R >>\nstartxref\n${inicioXref}\n%%EOF\n`);
+  const saida = new Uint8Array(pos); let k = 0;
+  for (const p of partes) { saida.set(p, k); k += p.length; }
+  return saida;
+}
+
 
 // ---------- Início ----------
 (async function iniciar() {

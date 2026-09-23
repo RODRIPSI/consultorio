@@ -1,7 +1,7 @@
 /* Guarda os arquivos do app no aparelho para funcionar sem internet.
    Só baixa os próprios arquivos do app; nunca envia dados.
    Ao publicar uma nova versão, mude o número abaixo. */
-const VERSAO = 'consultorio-v4';
+const VERSAO = 'consultorio-v5';
 const ARQUIVOS = ['./', './index.html', './estilo.css', './cofre.js', './app.js',
   './manifest.webmanifest', './icone-192.png', './icone-512.png'];
 
