@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 10';
+const VERSAO = 'versão 11';
 let modo = null;              // 'dono' (senha mestra: tudo) ou 'adm' (senha do administrativo: só a parte administrativa)
 
 let pacientes = [];          // decifrados, só na memória enquanto desbloqueado
@@ -400,10 +400,11 @@ function telaLista() {
     cabecalho(verArquivados ? 'Arquivados' : 'Pacientes', {
       grande: true,
       sub: verArquivados ? null : `${ativos} em acompanhamento`,
-      acoes: [botaoIcone('Buscar em todos os pacientes', 'busca', () => ir({ tela: 'busca' })), botaoIcone('Pagamentos do mês', 'moeda', () => ir({ tela: 'mes' })),
+      acoes: [botaoIcone('Buscar em todos os pacientes', 'busca', () => ir({ tela: 'busca' })), botaoAgenda(), botaoIcone('Pagamentos do mês', 'moeda', () => ir({ tela: 'mes' })),
         botaoIcone('Bloquear agora', 'cadeado', trancar), botaoIcone('Configurações', 'ajustes', () => ir({ tela: 'config' }))]
     }),
     el('div', { class: 'conteudo' },
+      !verArquivados && cartaoAvisosAgenda(),
       !verArquivados && avisoBackup(),
       !verArquivados && cartaoEntrada(),
       !verArquivados && cartaoAniversarios(),
@@ -2784,15 +2785,10 @@ const horariosDe = c => (c?.horarios || []).filter(h => h && h.hora !== undefine
 const somarDias = (ymd, n) => { const d = paraData(ymd); d.setDate(d.getDate() + n); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
 const agoraHHMM = () => new Date().toTimeString().slice(0, 5);
 function proximoHorario(p) {
-  const hs = horariosDe(p).filter(h => h.hora);
-  if (!hs.length) return null;
+  const c = cadastroDe(p.id) || p;
   const hoje = hojeISO(), agora = agoraHHMM();
-  for (let n = 0; n < 15; n++) {
-    const dia = somarDias(hoje, n), sem = paraData(dia).getDay();
-    const cand = hs.filter(h => Number(h.dia) === sem && (n > 0 || h.hora >= agora)).sort((a, b) => a.hora.localeCompare(b.hora));
-    if (cand.length) return { data: dia, hora: cand[0].hora };
-  }
-  return null;
+  const o = ocorrenciasNoPeriodo(c, hoje, somarDias(hoje, 60)).find(x => x.hora && !x.feriado && !x.cancelada && (x.data > hoje || x.hora >= agora));
+  return o ? { data: o.data, hora: o.hora } : null;
 }
 const horaCurta = h => h ? horaMsg(h) : '';
 

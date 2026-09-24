@@ -1,5 +1,5 @@
 'use strict';
-/* ÁREA ADMINISTRATIVA — versão 7
+/* ÁREA ADMINISTRATIVA — versão 7 (agenda com séries e feriados na versão 11)
    Abre com a senha do administrativo (ou com a senha mestra, que abre tudo).
    Aqui ficam: cadastro administrativo dos pacientes (nome, celular, CPF, valor, horários, nota fiscal),
    agenda de atendimentos, pagamentos com comprovante, mensagens, declarações de comparecimento e recibos.
@@ -82,6 +82,9 @@ function renderAdm(s) {
   if (s.tela === 'notaRecebida') { telaNotaRecebida(s); return true; }
   if (s.tela === 'drive') { telaDrive(); return true; }
   if (s.tela === 'driveImportar') { telaImportarDrive(); return true; }
+  if (s.tela === 'agenda') { telaAgenda(s.semana); return true; }
+  if (s.tela === 'agendar') { telaAgendar(s.id); return true; }
+  if (s.tela === 'feriados') { telaFeriados(s.ano); return true; }
   return false;
 }
 
@@ -252,15 +255,6 @@ async function atualizarCopiaAssinatura() {
 }
 
 // ---------- Agenda do dia (tela inicial) ----------
-function agendaDoDia(ymd) {
-  const sem = paraData(ymd).getDay();
-  const itens = [];
-  for (const c of cadastros) {
-    if (c.arquivado) continue;
-    for (const h of horariosDe(c)) if (Number(h.dia) === sem) itens.push({ c, hora: h.hora || '' });
-  }
-  return itens.sort((a, b) => a.hora.localeCompare(b.hora) || a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
-}
 function marcarPresenca(c, data, hora, presenca) {
   let a = atendimentos.find(x => x.pid === c.id && x.data === data);
   if (!a) {
@@ -275,7 +269,7 @@ function marcarPresenca(c, data, hora, presenca) {
   render(history.state);
 }
 function cartaoAgenda() {
-  if (!cadastros.some(c => !c.arquivado && horariosDe(c).length)) return null;
+  if (!cadastros.some(c => !c.arquivado && temAgenda(c))) return null;
   const hoje = hojeISO(), amanha = somarDias(hoje, 1);
   const linha = ({ c, hora }, dia) => {
     const a = atendimentos.find(x => x.pid === c.id && x.data === dia);
@@ -305,10 +299,12 @@ function cartaoAgenda() {
   const titulo = d => `${paraData(d).toLocaleDateString('pt-BR', { weekday: 'long' })}, ${dataCurta(d).slice(0, 5)}`;
   return el('section', { class: 'cartao agenda' },
     el('h3', { class: 'cartao-titulo' }, el('span', { class: 'ic-bolha' }, icone('calendario')), el('span', { text: 'Hoje, ' + titulo(hoje) })),
-    hj.length ? hj.map(i => linha(i, hoje)) : el('p', { class: 'suave pequeno', text: 'Nenhum atendimento fixo hoje.' }),
+    diaSemAtendimento(hoje) && el('p', { class: 'faixa', text: `Hoje: ${diaSemAtendimento(hoje).nome}. Sem atendimentos.` }),
+    hj.length ? hj.map(i => linha(i, hoje)) : !diaSemAtendimento(hoje) && el('p', { class: 'suave pequeno', text: 'Nenhum atendimento hoje.' }),
     am.length > 0 && el('details', { class: 'agenda-amanha' },
       el('summary', { text: `Amanhã: ${am.length} ${am.length === 1 ? 'atendimento' : 'atendimentos'}` }),
-      am.map(i => linha(i, amanha))));
+      am.map(i => linha(i, amanha))),
+    el('button', { type: 'button', class: 'link', text: 'Ver a agenda da semana', onclick: () => ir({ tela: 'agenda' }) }));
 }
 
 // ---------- Aniversários ----------
@@ -398,10 +394,11 @@ function telaInicioAdm() {
   mostrar(
     cabecalho(modo === 'adm' ? 'Consultório' : 'Administrativo', {
       grande: modo === 'adm', voltar: modo === 'dono', sub: modo === 'adm' ? 'Área administrativa' : null,
-      acoes: [botaoIcone('Pagamentos do mês', 'moeda', () => ir({ tela: 'mes' })),
+      acoes: [botaoAgenda(), botaoIcone('Pagamentos do mês', 'moeda', () => ir({ tela: 'mes' })),
         botaoIcone('Bloquear agora', 'cadeado', trancar), botaoIcone('Configurações', 'ajustes', () => ir({ tela: 'config' }))]
     }),
     el('div', { class: 'conteudo' },
+      !verArquivadosAdm && cartaoAvisosAgenda(),
       !verArquivadosAdm && cartaoEntrada(),
       !verArquivadosAdm && cartaoAniversarios(),
       !verArquivadosAdm && cartaoVencidos(),
@@ -490,23 +487,40 @@ function cartaoHorarios(c) {
   const desenhar = () => {
     const hs = c.horarios || (c.horarios = []);
     caixa.replaceChildren(
-      ...hs.map((h, i) => el('div', { class: 'horario-linha' },
-        (() => {
-          const sel = el('select', { 'aria-label': 'Dia da semana' }, [1, 2, 3, 4, 5, 6, 0].map(d => el('option', { value: String(d), text: DIAS[d] })));
-          sel.value = String(h.dia);
-          sel.addEventListener('change', () => { h.dia = Number(sel.value); salvar(); });
-          return sel;
-        })(),
-        el('input', { type: 'time', value: h.hora || '', 'aria-label': 'Horário', onchange: e => { h.hora = e.target.value; salvar(); } }),
-        botaoIcone('Remover horário', 'lixeira', () => { hs.splice(i, 1); salvar(); desenhar(); }))),
-      el('button', { type: 'button', class: 'link com-icone', onclick: () => {
-        hs.push({ dia: hs.length ? hs[hs.length - 1].dia : 1, hora: hs.length ? hs[hs.length - 1].hora : '' });
-        salvar(); desenhar();
-      } }, icone('mais'), el('span', { text: 'Adicionar horário' })));
+      ...hs.map((h, i) => {
+        if (h.hora === undefined) return null;
+        if (h.inicio) { // série criada pela agenda
+          const r = resumoSerie(c, h, i);
+          return el('div', { class: 'pag-linha' },
+            el('span', { class: 'pag-info' }, el('strong', { text: h.fim ? 'Série encerrada' : 'Série' }), el('span', { class: 'suave', text: r.texto })),
+            !h.fim && el('button', { type: 'button', class: 'secundario compacto', text: 'Renovar', onclick: () => renovarSerie(c, h) }),
+            botaoIcone('Remover série', 'lixeira', async () => {
+              const ok = await dialogo({ titulo: 'Remover esta série?', texto: 'Os agendamentos futuros desta série somem da agenda. Atendimentos já registrados continuam.', botoes: [{ rotulo: 'Voltar', valor: null }, { rotulo: 'Remover', valor: true, estilo: 'perigo' }] });
+              if (ok) { hs.splice(i, 1); salvar(); desenhar(); }
+            }));
+        }
+        return el('div', { class: 'horario-linha' },
+          (() => {
+            const sel = el('select', { 'aria-label': 'Dia da semana' }, [1, 2, 3, 4, 5, 6, 0].map(d => el('option', { value: String(d), text: DIAS[d] })));
+            sel.value = String(h.dia);
+            sel.addEventListener('change', () => { h.dia = Number(sel.value); salvar(); });
+            return sel;
+          })(),
+          el('input', { type: 'time', value: h.hora || '', 'aria-label': 'Horário', onchange: e => { h.hora = e.target.value; salvar(); } }),
+          botaoIcone('Remover horário', 'lixeira', () => { hs.splice(i, 1); salvar(); desenhar(); }));
+      }),
+      ...(c.avulsos || []).filter(a => a.data >= hojeISO()).sort((x, y) => x.data.localeCompare(y.data)).map(a => el('div', { class: 'pag-linha' },
+        el('span', { class: 'pag-info' }, el('strong', { text: 'Sessão avulsa' }), el('span', { class: 'suave', text: `${dataComDia(a.data)}${a.hora ? ', ' + horaCurta(a.hora) : ''}` })))),
+      el('div', { class: 'botoes-linha' },
+        el('button', { type: 'button', class: 'primario com-icone', onclick: () => { agendamentoRasc = null; ir({ tela: 'agendar', id: c.id }); } }, icone('calendario'), el('span', { text: 'Agendar sessões' })),
+        el('button', { type: 'button', class: 'link com-icone', onclick: () => {
+          hs.push({ dia: hs.length ? hs[hs.length - 1].dia : 1, hora: '' });
+          salvar(); desenhar();
+        } }, icone('mais'), el('span', { text: 'Horário fixo sem data final' }))));
   };
   desenhar();
-  return cartao('Horários fixos', 'relogio',
-    el('p', { class: 'suave pequeno', text: 'Aparecem na agenda do dia e preenchem a data e a hora das mensagens.' }), caixa);
+  return cartao('Horários e sessões agendadas', 'relogio',
+    el('p', { class: 'suave pequeno', text: 'Use "Agendar sessões" para uma série de até 30 sessões (semanal ou quinzenal) ou uma sessão avulsa. Aparecem na agenda e preenchem a data e a hora das mensagens.' }), caixa);
 }
 
 function abaAtendimentos(c) {
@@ -1122,6 +1136,7 @@ function secaoAdministrativo(linha, secao) {
       el('button', { type: 'button', class: 'secundario compacto', text: perfil.assinaturaNoAdm ? 'Desativar' : 'Ativar', onclick: alternarAssinaturaAdm })),
     linha('arquivo', 'Site da nota fiscal', perfil.nfUrl || 'Não definido.', el('button', { type: 'button', class: 'secundario compacto', text: 'Editar', onclick: editarNota })),
     linha('retomar', 'Google Drive', 'Lê as listas de pacientes, presença e pagamentos do Drive.', el('button', { type: 'button', class: 'secundario compacto', text: 'Abrir', onclick: () => ir({ tela: 'drive' }) })),
+    linha('calendario', 'Feriados e dias sem atendimento', 'Feriados do ano, férias e recessos. Aviso 5 dias antes.', el('button', { type: 'button', class: 'secundario compacto', text: 'Abrir', onclick: () => ir({ tela: 'feriados' }) })),
     linha('retomar', 'Enviar dados ao administrativo', 'Gera um arquivo cifrado com agenda, cadastros e pagamentos, sem nada clínico, para o aparelho do administrativo.',
       el('button', { type: 'button', class: 'secundario compacto', text: 'Enviar', onclick: exportarAdm })),
     linha('clipe', 'Receber dados do administrativo', 'Traz os pagamentos e a agenda que ele registrou.',
@@ -1216,7 +1231,8 @@ async function telaConfigAdm() {
       secao('Documentos e nota fiscal',
         linha('assinar', 'Dados profissionais', perfil.nome ? `${perfil.nome}${perfil.crp ? ', CRP ' + perfil.crp : ''}. ${assinatura ? 'Com assinatura.' : 'Documentos saem sem assinatura.'}` : 'Ainda não recebidos do aparelho do Rodrigo.', null),
         linha('arquivo', 'Site da nota fiscal', perfil.nfUrl || 'Não definido.', el('button', { type: 'button', class: 'secundario compacto', text: 'Editar', onclick: editarNota })),
-        linha('retomar', 'Google Drive', 'Lê as listas de pacientes, presença e pagamentos do Drive.', el('button', { type: 'button', class: 'secundario compacto', text: 'Abrir', onclick: () => ir({ tela: 'drive' }) }))),
+        linha('retomar', 'Google Drive', 'Lê as listas de pacientes, presença e pagamentos do Drive.', el('button', { type: 'button', class: 'secundario compacto', text: 'Abrir', onclick: () => ir({ tela: 'drive' }) })),
+        linha('calendario', 'Feriados e dias sem atendimento', 'Feriados do ano, férias e recessos. Aviso 5 dias antes.', el('button', { type: 'button', class: 'secundario compacto', text: 'Abrir', onclick: () => ir({ tela: 'feriados' }) }))),
       secao('Armazenamento',
         linha('nota', 'Proteção contra limpeza automática',
           persistente ? 'Ativa: o Android não apaga estes dados para liberar espaço.' : 'Inativa: o Android pode apagar os dados se faltar espaço.',
@@ -1849,3 +1865,377 @@ function cartaoVencidos() {
   if (await Cofre.existe()) telaBloqueio();
   else telaCriacao();
 })();
+
+// =====================================================================
+// Versão 11: agenda com séries (até 30 sessões), sessões avulsas, cancelar e remarcar um dia,
+// feriados calculados no próprio aparelho (sem internet) e aviso 5 dias antes.
+// Os horários ficam no cadastro administrativo: horarios[] = { dia, hora, inicio?, sessoes?, freq?, fim? }.
+// Horário sem "inicio" é um horário fixo sem data final (como nas versões anteriores).
+// =====================================================================
+const DIAS_AVISO_FERIADO = 5;
+const MAX_SESSOES_SERIE = 30;
+const DIAS_LONGO = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+const diaDaSemana = ymd => paraData(ymd).getDay();
+const dataComDia = ymd => `${DIAS[diaDaSemana(ymd)]}, ${dataCurta(ymd).slice(0, 5)}`;
+
+function pascoa(ano) { // algoritmo de Meeus/Jones/Butcher
+  const a = ano % 19, b = Math.floor(ano / 100), c = ano % 100, d = Math.floor(b / 4), e = b % 4;
+  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mes = Math.floor((h + l - 7 * m + 114) / 31), dia = ((h + l - 7 * m + 114) % 31) + 1;
+  return `${ano}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+}
+const feriadosCache = new Map();
+function feriadosDoAno(ano) {
+  if (feriadosCache.has(ano)) return feriadosCache.get(ano);
+  const p = pascoa(ano);
+  const fixo = (md, id, nome, tipo, padrao = true) => ({ id, data: `${ano}-${md}`, nome, tipo, padrao });
+  const movel = (n, id, nome, tipo, padrao = true) => ({ id, data: somarDias(p, n), nome, tipo, padrao });
+  const lista = [
+    fixo('01-01', 'ano-novo', 'Confraternização Universal', 'Nacional'),
+    fixo('01-20', 'sao-sebastiao', 'São Sebastião', 'Municipal (Rio)'),
+    movel(-48, 'carnaval-seg', 'Carnaval (segunda-feira)', 'Ponto facultativo'),
+    movel(-47, 'carnaval-ter', 'Carnaval (terça-feira)', 'Ponto facultativo'),
+    movel(-46, 'cinzas', 'Quarta-feira de Cinzas', 'Ponto facultativo', false),
+    movel(-2, 'sexta-santa', 'Sexta-feira Santa', 'Nacional'),
+    fixo('04-21', 'tiradentes', 'Tiradentes', 'Nacional'),
+    fixo('04-23', 'sao-jorge', 'São Jorge', 'Estadual (RJ)'),
+    fixo('05-01', 'trabalho', 'Dia do Trabalho', 'Nacional'),
+    movel(60, 'corpus-christi', 'Corpus Christi', 'Municipal (Rio)'),
+    fixo('09-07', 'independencia', 'Independência do Brasil', 'Nacional'),
+    fixo('10-12', 'aparecida', 'Nossa Senhora Aparecida', 'Nacional'),
+    fixo('11-02', 'finados', 'Finados', 'Nacional'),
+    fixo('11-15', 'republica', 'Proclamação da República', 'Nacional'),
+    fixo('11-20', 'consciencia-negra', 'Zumbi e Consciência Negra', 'Nacional'),
+    fixo('12-25', 'natal', 'Natal', 'Nacional')
+  ].sort((x, y) => x.data.localeCompare(y.data));
+  feriadosCache.set(ano, lista);
+  return lista;
+}
+const cfgAgenda = () => {
+  const a = (perfil.agenda ||= {});
+  a.feriados ||= {}; a.folgas ||= []; a.avisados ||= {};
+  return a;
+};
+const feriadoAtivo = fr => { const v = cfgAgenda().feriados[fr.id]; return v === undefined ? fr.padrao : !!v; };
+function diaSemAtendimento(ymd) {
+  const fr = feriadosDoAno(Number(ymd.slice(0, 4))).find(x => x.data === ymd && feriadoAtivo(x));
+  if (fr) return { nome: fr.nome, feriado: true };
+  const fo = cfgAgenda().folgas.find(f => f.de && ymd >= f.de && ymd <= (f.ate || f.de));
+  return fo ? { nome: fo.nome || 'Sem atendimento', feriado: false } : null;
+}
+function primeiroDiaNaSemana(desde, dia) {
+  let d = desde;
+  for (let i = 0; i < 7 && diaDaSemana(d) !== Number(dia); i++) d = somarDias(d, 1);
+  return d;
+}
+const cancelado = (c, data, hora) => (c.excecoes || []).some(x => x.data === data && (x.hora || '') === (hora || ''));
+
+// Todas as datas de uma série com início. A sessão que cai em feriado ou folga não conta:
+// a série se estende para manter o número de sessões.
+function datasSerie(c, h, hi) {
+  const out = [];
+  if (!h.inicio) return out;
+  const passo = 7 * (Number(h.freq) === 2 ? 2 : 1), total = Math.max(1, Number(h.sessoes) || 1);
+  let d = primeiroDiaNaSemana(h.inicio, h.dia), n = 0, guarda = 0;
+  while (n < total && guarda++ < 300) {
+    if (h.fim && d >= h.fim) break;
+    const sem = diaSemAtendimento(d);
+    out.push({ c, data: d, hora: h.hora || '', hi, feriado: sem?.nome || null, cancelada: cancelado(c, d, h.hora) });
+    if (!sem) n++;
+    d = somarDias(d, passo);
+  }
+  return out;
+}
+// Ocorrências (séries, horários fixos e avulsas) de um paciente num período, em ordem.
+function ocorrenciasNoPeriodo(c, de, ate) {
+  const out = [];
+  horariosDe(c).forEach((h, hi) => {
+    if (h.inicio) { for (const o of datasSerie(c, h, hi)) if (o.data >= de && o.data <= ate) out.push(o); return; }
+    if (h.dia === undefined || h.dia === '') return;
+    for (let d = primeiroDiaNaSemana(de, h.dia); d <= ate; d = somarDias(d, 7)) {
+      if (h.fim && d >= h.fim) break;
+      out.push({ c, data: d, hora: h.hora || '', hi, fixo: true, feriado: diaSemAtendimento(d)?.nome || null, cancelada: cancelado(c, d, h.hora) });
+    }
+  });
+  for (const a of c.avulsos || []) if (a.data >= de && a.data <= ate)
+    out.push({ c, data: a.data, hora: a.hora || '', avulsa: a.id, feriadoAviso: diaSemAtendimento(a.data)?.nome || null, cancelada: false });
+  return out.sort((x, y) => x.data.localeCompare(y.data) || x.hora.localeCompare(y.hora));
+}
+const temAgenda = c => horariosDe(c).length > 0 || (c.avulsos || []).length > 0;
+
+function agendaDoDia(ymd) {
+  const itens = [];
+  for (const c of cadastros) {
+    if (c.arquivado) continue;
+    for (const o of ocorrenciasNoPeriodo(c, ymd, ymd)) if (!o.feriado && !o.cancelada) itens.push({ c, hora: o.hora, o });
+  }
+  return itens.sort((a, b) => a.hora.localeCompare(b.hora) || a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
+}
+
+// Resumo de uma série para o perfil do paciente.
+function resumoSerie(c, h, hi) {
+  const freq = Number(h.freq) === 2 ? 'a cada 15 dias' : 'toda semana';
+  const base = `${DIAS[h.dia]}, ${horaCurta(h.hora) || 'sem horário'}`;
+  if (!h.inicio) return { texto: `${base}, ${freq === 'toda semana' ? 'toda semana' : freq}, sem data final${h.fim ? ` (encerrado em ${dataCurta(h.fim)})` : ''}`, restantes: null };
+  const lista = datasSerie(c, h, hi).filter(o => !o.feriado);
+  const hoje = hojeISO();
+  const futuras = lista.filter(o => o.data >= hoje && !o.cancelada);
+  const ultima = lista[lista.length - 1]?.data;
+  return {
+    texto: `${base}, ${freq}. ${futuras.length} de ${lista.length} ${lista.length === 1 ? 'sessão restante' : 'sessões restantes'}${ultima ? `, até ${dataCurta(ultima)}` : ''}.`,
+    restantes: futuras.length, ultima
+  };
+}
+
+// ---------- Avisos: feriado nos próximos 5 dias e séries terminando ----------
+function feriadosProximos() {
+  const hoje = hojeISO(), cfg = cfgAgenda(), res = [];
+  for (let n = 0; n <= DIAS_AVISO_FERIADO; n++) {
+    const d = somarDias(hoje, n), sem = diaSemAtendimento(d);
+    if (!sem || cfg.avisados[d]) continue;
+    const afetados = [];
+    for (const c of cadastros) {
+      if (c.arquivado) continue;
+      const o = ocorrenciasNoPeriodo(c, d, d).find(x => (x.feriado || x.feriadoAviso) && !x.cancelada);
+      if (o) afetados.push({ c, o });
+    }
+    if (afetados.length) res.push({ data: d, nome: sem.nome, afetados });
+  }
+  return res;
+}
+function seriesTerminando() {
+  const res = [];
+  for (const c of cadastros) {
+    if (c.arquivado) continue;
+    horariosDe(c).forEach((h, hi) => {
+      if (!h.inicio || h.fim || h.renovacaoDispensada) return;
+      const r = resumoSerie(c, h, hi);
+      if (r.restantes !== null && r.restantes > 0 && r.restantes <= 2) res.push({ c, h, hi, r });
+    });
+  }
+  return res;
+}
+const temAvisoAgenda = () => feriadosProximos().length > 0 || seriesTerminando().length > 0;
+
+function mensagemFeriado(c, data, nome) {
+  const prox = ocorrenciasNoPeriodo(c, somarDias(data, 1), somarDias(data, 45)).find(o => !o.feriado && !o.cancelada);
+  const quando = `${DIAS_LONGO[diaDaSemana(data)]}, ${dataCurta(data).slice(0, 5)}`;
+  return `Olá, ${primeiroNome(c.nome)}! Passando para avisar que ${quando}, é feriado (${nome}) e não teremos sessão.` +
+    (prox ? ` Nos vemos ${DIAS_LONGO[diaDaSemana(prox.data)]}, ${dataCurta(prox.data).slice(0, 5)}${prox.hora ? `, às ${horaCurta(prox.hora)}` : ''}.` : '');
+}
+async function avisarFeriado(f) {
+  const itens = f.afetados.map(({ c }) => {
+    const n = numeroWhats(c.telefone);
+    const b = el('button', { type: 'button', class: 'secundario com-icone', disabled: !n }, icone('mensagem'), el('span', { text: n ? `Avisar ${c.nome}` : `${c.nome}: sem celular no cadastro` }));
+    if (n) b.addEventListener('click', () => { b.classList.add('marcado'); b.lastChild.textContent = `Aberto: ${c.nome}`; abrirExterno(`https://wa.me/${n}?text=${encodeURIComponent(mensagemFeriado(c, f.data, f.nome))}`); });
+    return b;
+  });
+  const r = await janela(`Avisar sobre ${dataComDia(f.data)}`,
+    [el('p', { class: 'suave pequeno', text: 'Cada botão abre o WhatsApp com a mensagem pronta. Depois de enviar, volte para o app.' }), el('div', { class: 'pilha-pequena' }, itens)],
+    [{ rotulo: 'Fechar', valor: null }, { rotulo: 'Pronto, todos avisados', valor: true, estilo: 'primario' }]);
+  if (r) marcarAvisado(f.data);
+}
+function marcarAvisado(data) {
+  cfgAgenda().avisados[data] = true;
+  salvarPerfil(); render(history.state);
+}
+async function renovarSerie(c, h) {
+  const r = await dialogo({ titulo: `Renovar a série de ${primeiroNome(c.nome)}`, texto: `Quantas sessões a mais? (1 a ${MAX_SESSOES_SERIE})`,
+    campos: [{ rotulo: 'Número de sessões', tipo: 'number' }], botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Renovar', valor: true, estilo: 'primario' }] });
+  const n = Math.round(Number(r));
+  if (!r || !n || n < 1) return;
+  h.sessoes = (Number(h.sessoes) || 0) + Math.min(n, MAX_SESSOES_SERIE);
+  delete h.renovacaoDispensada;
+  salvarCadastro(c); render(history.state);
+}
+function dispensarRenovacao(c, h) { h.renovacaoDispensada = true; salvarCadastro(c); render(history.state); }
+
+// Faixas de aviso no alto da tela inicial.
+function cartaoAvisosAgenda() {
+  const fs = feriadosProximos(), ss = seriesTerminando();
+  if (!fs.length && !ss.length) return null;
+  const forte = 'border-left:5px solid #c62828';
+  return el('div', { class: 'pilha-pequena' },
+    fs.map(f => el('div', { class: 'faixa', style: forte, role: 'alert' },
+      el('p', {}, el('strong', { text: `⚠️ ${dataComDia(f.data)}: ${f.nome}` })),
+      el('p', { text: `${f.afetados.length} ${f.afetados.length === 1 ? 'paciente seria atendido' : 'pacientes seriam atendidos'} nesse dia: ${listaNatural(f.afetados.map(a => a.c.nome))}. As sessões dessas séries passam para o fim.` }),
+      el('div', { class: 'botoes-linha' },
+        el('button', { type: 'button', class: 'primario compacto', text: 'Avisar pelo WhatsApp', onclick: () => avisarFeriado(f) }),
+        el('button', { type: 'button', class: 'secundario compacto', text: 'Ok, já avisei', onclick: () => marcarAvisado(f.data) })))),
+    ss.map(({ c, h, r }) => el('div', { class: 'faixa' },
+      el('p', {}, el('strong', { text: `Série de ${c.nome} terminando` })),
+      el('p', { text: `${r.restantes === 1 ? 'Falta 1 sessão' : `Faltam ${r.restantes} sessões`} (${DIAS[h.dia]}, ${horaCurta(h.hora)}), a última em ${dataCurta(r.ultima)}.` }),
+      el('div', { class: 'botoes-linha' },
+        el('button', { type: 'button', class: 'primario compacto', text: 'Renovar', onclick: () => renovarSerie(c, h) }),
+        el('button', { type: 'button', class: 'secundario compacto', text: 'Não renovar', onclick: () => dispensarRenovacao(c, h) })))));
+}
+// Ícone da agenda no cabeçalho, com ponto vermelho quando há aviso pendente.
+function botaoAgenda() {
+  const b = botaoIcone('Agenda', 'calendario', () => ir({ tela: 'agenda' }));
+  if (temAvisoAgenda()) {
+    b.style.position = 'relative';
+    b.append(el('span', { 'aria-label': 'Aviso pendente', style: 'position:absolute;top:4px;right:4px;width:10px;height:10px;border-radius:50%;background:#d32f2f;border:2px solid #fff' }));
+  }
+  return b;
+}
+
+// ---------- Tela da agenda (semana) ----------
+const segundaDaSemana = ymd => somarDias(ymd, -((diaDaSemana(ymd) + 6) % 7));
+function telaAgenda(inicio) {
+  const seg = segundaDaSemana(inicio || hojeISO()), hoje = hojeISO(), dom = somarDias(seg, 6);
+  const ocs = cadastros.filter(c => !c.arquivado).flatMap(c => ocorrenciasNoPeriodo(c, seg, dom));
+  const fmt = d => paraData(d).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' });
+  const dias = [0, 1, 2, 3, 4, 5, 6].map(i => somarDias(seg, i));
+  const blocos = dias.map(d => {
+    const sem = diaSemAtendimento(d);
+    const doDia = ocs.filter(o => o.data === d).sort((a, b) => a.hora.localeCompare(b.hora) || a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
+    if (diaDaSemana(d) === 0 && !doDia.length && !sem) return null;
+    return el('section', { class: 'cartao' + (d === hoje ? ' destaque' : '') },
+      el('h3', { class: 'cartao-titulo' }, el('span', { class: 'ic-bolha' }, icone('calendario')),
+        el('span', { text: `${DIAS[diaDaSemana(d)]}, ${dataCurta(d).slice(0, 5)}${d === hoje ? ' (hoje)' : ''}` })),
+      sem && el('p', { class: 'faixa', text: `${sem.feriado ? 'Feriado' : 'Sem atendimento'}: ${sem.nome}` }),
+      doDia.length ? doDia.map(o => {
+        const riscado = o.feriado || o.cancelada;
+        const etiqueta = o.cancelada ? 'Cancelada' : o.feriado ? 'Feriado: vai para o fim da série' : o.avulsa ? 'Avulsa' : o.fixo ? 'Horário fixo' : 'Série';
+        return el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => acoesOcorrencia(o) },
+          el('span', { class: 'pag-info' },
+            el('strong', { style: riscado ? 'text-decoration:line-through;opacity:.6' : null, text: `${horaCurta(o.hora) || '—'}  ${o.c.nome}` }),
+            el('span', { class: 'suave', text: etiqueta + (o.feriadoAviso ? ` · atenção: ${o.feriadoAviso}` : '') })));
+      }) : el('p', { class: 'suave pequeno', text: 'Nenhum atendimento.' }));
+  });
+  mostrar(
+    cabecalho('Agenda', { voltar: true, sub: `${fmt(seg)} a ${fmt(dom)}`, acoes: [botaoIcone('Feriados e dias sem atendimento', 'ajustes', () => ir({ tela: 'feriados' }))] }),
+    el('div', { class: 'conteudo pilha' },
+      cartaoAvisosAgenda(),
+      el('div', { class: 'botoes-linha' },
+        el('button', { type: 'button', class: 'secundario compacto', text: '‹ Semana anterior', onclick: () => ir({ tela: 'agenda', semana: somarDias(seg, -7) }, false) }),
+        el('button', { type: 'button', class: 'secundario compacto', text: 'Hoje', onclick: () => ir({ tela: 'agenda' }, false) }),
+        el('button', { type: 'button', class: 'secundario compacto', text: 'Próxima ›', onclick: () => ir({ tela: 'agenda', semana: somarDias(seg, 7) }, false) })),
+      ...blocos,
+      el('button', { type: 'button', class: 'link', text: 'Feriados e dias sem atendimento', onclick: () => ir({ tela: 'feriados' }) })),
+    el('button', { type: 'button', class: 'fab estendido', onclick: () => { agendamentoRasc = null; ir({ tela: 'agendar' }); } }, icone('mais'), el('span', { text: 'Novo agendamento' })));
+}
+
+async function acoesOcorrencia(o) {
+  const c = o.c, h = o.hi !== undefined ? horariosDe(c)[o.hi] : null;
+  const botoes = [{ rotulo: 'Fechar', valor: null }];
+  if (o.cancelada) botoes.push({ rotulo: 'Desfazer cancelamento', valor: 'desfazer' });
+  else if (!o.feriado) {
+    botoes.push({ rotulo: 'Remarcar este dia', valor: 'remarcar' });
+    botoes.push({ rotulo: o.avulsa ? 'Excluir este agendamento' : 'Cancelar este dia', valor: o.avulsa ? 'excluir' : 'cancelar' });
+  }
+  if (h) botoes.push({ rotulo: 'Encerrar a série a partir daqui', valor: 'encerrar' });
+  botoes.push({ rotulo: 'Abrir paciente', valor: 'abrir', estilo: 'primario' });
+  const info = o.avulsa ? 'Sessão avulsa.' : h ? resumoSerie(c, h, o.hi).texto : '';
+  const r = await janela(c.nome, [el('p', { text: `${dataComDia(o.data)}${o.hora ? ', ' + horaCurta(o.hora) : ''}` }), info && el('p', { class: 'suave pequeno', text: info }),
+    o.feriado && el('p', { class: 'faixa', text: `${o.feriado}: não haverá sessão, e ela passa para o fim da série.` })], botoes);
+  if (!r) return;
+  if (r === 'abrir') return ir(modo === 'dono' ? { tela: 'ficha', id: c.id, aba: 'retomar' } : { tela: 'adm', id: c.id, aba: 'atendimentos' });
+  if (r === 'cancelar') { (c.excecoes ||= []).push({ data: o.data, hora: o.hora }); }
+  if (r === 'desfazer') { c.excecoes = (c.excecoes || []).filter(x => !(x.data === o.data && (x.hora || '') === (o.hora || ''))); }
+  if (r === 'excluir') { c.avulsos = (c.avulsos || []).filter(a => a.id !== o.avulsa); }
+  if (r === 'encerrar') {
+    const ok = await dialogo({ titulo: 'Encerrar a série?', texto: `As sessões de ${primeiroNome(c.nome)} deixam de aparecer a partir de ${dataCurta(o.data)}, inclusive. As anteriores ficam como estão.`,
+      botoes: [{ rotulo: 'Voltar', valor: null }, { rotulo: 'Encerrar', valor: true, estilo: 'perigo' }] });
+    if (!ok) return;
+    h.fim = o.data;
+  }
+  if (r === 'remarcar') {
+    const v = await dialogo({ titulo: 'Remarcar este dia', texto: `Nova data e horário para a sessão de ${dataComDia(o.data)}.`,
+      campos: [{ rotulo: 'Nova data', tipo: 'date' }, { rotulo: 'Novo horário', tipo: 'time' }], botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Remarcar', valor: true, estilo: 'primario' }] });
+    if (!v || !v[0]) return;
+    if (o.avulsa) c.avulsos = (c.avulsos || []).filter(a => a.id !== o.avulsa);
+    else (c.excecoes ||= []).push({ data: o.data, hora: o.hora });
+    (c.avulsos ||= []).push({ id: crypto.randomUUID(), data: v[0], hora: v[1] || o.hora, remarcadaDe: o.data });
+  }
+  salvarCadastro(c); render(history.state);
+}
+
+// ---------- Novo agendamento ----------
+let agendamentoRasc = null;
+function telaAgendar(pid) {
+  const r = agendamentoRasc ||= { pid: pid || '', data: hojeISO(), hora: '', repetir: 'semanal', sessoes: String(MAX_SESSOES_SERIE) };
+  if (pid && !r.pid) r.pid = pid;
+  const ativos = cadastros.filter(c => !c.arquivado).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  const previa = el('p', { class: 'suave' });
+  const desenharPrevia = () => {
+    const c = cadastroDe(r.pid);
+    if (!c || !r.data) { previa.textContent = 'Escolha o paciente e a data.'; return; }
+    if (r.repetir === 'nao') { previa.textContent = `Sessão avulsa em ${dataComDia(r.data)}${r.hora ? ', ' + horaCurta(r.hora) : ''}.` + (diaSemAtendimento(r.data) ? ` Atenção: ${diaSemAtendimento(r.data).nome}.` : ''); return; }
+    const n = Math.min(MAX_SESSOES_SERIE, Math.max(1, Math.round(Number(r.sessoes)) || 1));
+    const h = { dia: diaDaSemana(r.data), hora: r.hora, inicio: r.data, sessoes: n, freq: r.repetir === 'quinzenal' ? 2 : 1 };
+    const lista = datasSerie(c, h, -1), puladas = lista.filter(o => o.feriado);
+    const ultima = lista.filter(o => !o.feriado).pop()?.data;
+    previa.textContent = `${n} ${n === 1 ? 'sessão' : 'sessões'}, ${DIAS[h.dia].toLowerCase()}${r.hora ? ' às ' + horaCurta(r.hora) : ''}, ${h.freq === 2 ? 'a cada 15 dias' : 'toda semana'}, de ${dataCurta(r.data)} até ${ultima ? dataCurta(ultima) : '—'}.` +
+      (puladas.length ? ` ${puladas.length === 1 ? 'Um feriado foi pulado' : `${puladas.length} feriados foram pulados`} (${puladas.map(o => dataCurta(o.data).slice(0, 5)).join(', ')}); a série foi estendida.` : '');
+  };
+  const sel = el('select', { 'aria-label': 'Paciente' }, el('option', { value: '', text: 'Escolha o paciente' }), ativos.map(c => el('option', { value: c.id, text: c.nome })));
+  sel.value = r.pid;
+  sel.addEventListener('change', () => { r.pid = sel.value; desenharPrevia(); });
+  const campoSessoes = el('label', { class: 'campo', hidden: r.repetir === 'nao' }, el('span', { text: `Número de sessões (1 a ${MAX_SESSOES_SERIE})` }),
+    el('input', { type: 'number', min: '1', max: String(MAX_SESSOES_SERIE), inputmode: 'numeric', value: r.sessoes, oninput: e => { r.sessoes = e.target.value; desenharPrevia(); } }));
+  const repetir = segmentoEscolha({ nao: 'Não repetir', semanal: 'Toda semana', quinzenal: 'A cada 15 dias' }, r.repetir, k => { r.repetir = k; campoSessoes.hidden = k === 'nao'; desenharPrevia(); }, 'tres');
+  mostrar(
+    cabecalho('Novo agendamento', { voltar: true }),
+    el('div', { class: 'conteudo pilha' },
+      cartao('Paciente', 'pessoa', el('label', { class: 'campo' }, el('span', { text: 'Paciente' }), sel),
+        !ativos.length && el('p', { class: 'suave pequeno', text: 'Cadastre o paciente primeiro, pelo botão + da tela inicial.' })),
+      cartao('Quando', 'calendario', el('div', { class: 'grade duas' },
+        el('label', { class: 'campo' }, el('span', { text: 'Primeira sessão' }), el('input', { type: 'date', value: r.data, onchange: e => { r.data = e.target.value; desenharPrevia(); } })),
+        el('label', { class: 'campo' }, el('span', { text: 'Horário' }), el('input', { type: 'time', value: r.hora, onchange: e => { r.hora = e.target.value; desenharPrevia(); } })))),
+      cartao('Repetir', 'retomar', repetir, campoSessoes),
+      cartao('Resumo', 'texto', previa)),
+    el('button', { type: 'button', class: 'fab estendido', onclick: salvarAgendamento }, icone('calendario'), el('span', { text: 'Agendar' })));
+  desenharPrevia();
+}
+async function salvarAgendamento() {
+  const r = agendamentoRasc, c = r && cadastroDe(r.pid);
+  if (!c) return aviso('Falta o paciente', 'Escolha o paciente.');
+  if (!r.data) return aviso('Falta a data', 'Escolha a data da primeira sessão.');
+  if (!r.hora) return aviso('Falta o horário', 'Escolha o horário da sessão.');
+  if (r.repetir === 'nao') (c.avulsos ||= []).push({ id: crypto.randomUUID(), data: r.data, hora: r.hora });
+  else {
+    const n = Math.min(MAX_SESSOES_SERIE, Math.max(1, Math.round(Number(r.sessoes)) || 1));
+    (c.horarios ||= []).push({ dia: diaDaSemana(r.data), hora: r.hora, inicio: r.data, sessoes: n, freq: r.repetir === 'quinzenal' ? 2 : 1 });
+  }
+  salvarCadastro(c); await salvarAgora();
+  agendamentoRasc = null;
+  history.back();
+}
+
+// ---------- Feriados e dias sem atendimento ----------
+function telaFeriados(ano) {
+  ano = Number(ano) || Number(hojeISO().slice(0, 4));
+  const cfg = cfgAgenda();
+  const lista = feriadosDoAno(ano).map(fr => el('label', { class: 'marcar largo' },
+    el('input', { type: 'checkbox', checked: feriadoAtivo(fr), onchange: e => { cfg.feriados[fr.id] = e.target.checked; salvarPerfil(); } }),
+    el('span', { text: `${dataCurta(fr.data).slice(0, 5)} (${diaSemana(fr.data)}) · ${fr.nome} · ${fr.tipo}` })));
+  const nova = { de: '', ate: '', nome: '' };
+  const folgas = cfg.folgas.slice().sort((a, b) => (a.de || '').localeCompare(b.de || '')).map(f => el('div', { class: 'pag-linha' },
+    el('span', { class: 'pag-info' }, el('strong', { text: f.nome || 'Sem atendimento' }),
+      el('span', { class: 'suave', text: f.ate && f.ate !== f.de ? `${dataCurta(f.de)} a ${dataCurta(f.ate)}` : dataCurta(f.de) })),
+    botaoIcone('Remover', 'lixeira', () => { cfg.folgas = cfg.folgas.filter(x => x !== f); salvarPerfil(); telaFeriados(ano); })));
+  mostrar(
+    cabecalho('Feriados e dias sem atendimento', { voltar: true }),
+    el('div', { class: 'conteudo pilha' },
+      el('div', { class: 'botoes-linha' },
+        el('button', { type: 'button', class: 'secundario compacto', text: `‹ ${ano - 1}`, onclick: () => telaFeriados(ano - 1) }),
+        el('strong', { text: String(ano) }),
+        el('button', { type: 'button', class: 'secundario compacto', text: `${ano + 1} ›`, onclick: () => telaFeriados(ano + 1) })),
+      cartao(`Feriados de ${ano}`, 'calendario',
+        el('p', { class: 'suave pequeno', text: 'Marcados: não há sessão, e a sessão da série passa para o fim. As datas são calculadas no próprio aparelho. Para conferir, as fontes oficiais são a portaria anual do governo federal e o decreto da Prefeitura do Rio.' }),
+        el('div', { class: 'grade' }, lista)),
+      cartao('Suas datas (férias, recesso, congressos)', 'pessoa',
+        folgas.length ? folgas : el('p', { class: 'suave pequeno', text: 'Nenhuma data cadastrada.' }),
+        el('div', { class: 'grade duas' },
+          el('label', { class: 'campo' }, el('span', { text: 'De' }), el('input', { type: 'date', onchange: e => { nova.de = e.target.value; } })),
+          el('label', { class: 'campo' }, el('span', { text: 'Até (opcional)' }), el('input', { type: 'date', onchange: e => { nova.ate = e.target.value; } }))),
+        el('label', { class: 'campo' }, el('span', { text: 'Descrição' }), el('input', { type: 'text', placeholder: 'Ex.: férias', oninput: e => { nova.nome = e.target.value; } })),
+        el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => {
+          if (!nova.de) return aviso('Falta a data', 'Escolha ao menos a data inicial.');
+          cfg.folgas.push({ id: crypto.randomUUID(), de: nova.de, ate: nova.ate && nova.ate >= nova.de ? nova.ate : nova.de, nome: nova.nome.trim() });
+          salvarPerfil(); telaFeriados(ano);
+        } }, icone('mais'), el('span', { text: 'Adicionar' }))),
+      el('p', { class: 'suave pequeno', text: `O aviso aparece na tela inicial ${DIAS_AVISO_FERIADO} dias antes de cada feriado ou data sem atendimento em que haja pacientes agendados.` })));
+}
