@@ -314,3 +314,103 @@ mark { background: var(--granada-suave); color: var(--granada); font-weight: 600
 .folha-rodape { margin-top: auto; padding-top: 1.4rem; display: flex; flex-direction: column; align-items: center; font-size: 10px; color: #666; }
 .grade.duas > .campo { min-width: 0; }
 .grade.duas input { min-width: 0; width: 100%; padding-left: .6rem; padding-right: .5rem; }
+.atalhos { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; margin-top: 1.2rem; }
+.atalho { display: flex; align-items: center; gap: .7rem; padding: .8rem .9rem; border-radius: var(--raio); background: var(--cartao); border: 1px solid var(--linha); box-shadow: var(--sombra); font-weight: 500; text-align: left; }
+.atalho:active { transform: scale(.98); }
+.vazio .primario { margin-top: 1rem; display: inline-flex; }
+/* Versão 6: agenda, pagamentos e busca geral */
+.abas { grid-template-columns: repeat(4, 1fr); }
+@media (min-width: 600px) { .abas { grid-template-columns: repeat(8, 1fr); } }
+.agenda { margin-bottom: .9rem; }
+.agenda-linha { display: flex; align-items: center; gap: .6rem; padding: .5rem 0; border-top: 1px solid var(--linha); }
+.agenda .cartao-titulo + .agenda-linha { border-top: 0; }
+.agenda-hora { width: 3.4rem; flex: none; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--granada); }
+.agenda-nome { flex: 1; min-width: 0; display: flex; align-items: center; gap: .6rem; border: 0; background: none; padding: 0; text-align: left; }
+.agenda-nome span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.agenda-nome .avatar { width: 34px; height: 34px; font-size: .8rem; }
+.agenda-amanha { margin-top: .5rem; }
+.agenda-amanha summary { cursor: pointer; padding: .5rem 0; color: var(--granada); font-weight: 500; font-size: .92rem; }
+.horarios { display: flex; flex-direction: column; gap: .5rem; margin-top: .6rem; }
+.horario-linha { display: flex; gap: .5rem; align-items: center; }
+.horario-linha select { flex: 1; min-width: 0; }
+.horario-linha input { width: 8.2rem; flex: none; }
+.resumo-fin { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
+.cartao.numero { display: flex; flex-direction: column; gap: .1rem; padding: .9rem 1rem; }
+.cartao.numero small { color: var(--suave); font-size: .84rem; }
+.cartao.numero strong { font: 600 1.35rem/1.25 var(--serifa); font-variant-numeric: tabular-nums; }
+.pag-linha { display: flex; align-items: center; gap: .7rem; padding: .55rem 0; border-top: 1px solid var(--linha); }
+.cartao-titulo + .pag-linha { border-top: 0; }
+.pag-info { flex: 1; min-width: 0; display: flex; flex-direction: column; border: 0; background: none; padding: 0; text-align: left; }
+.pag-info .suave { font-size: .88rem; }
+.selo.pago { background: #E3F0E6; color: #2F6B3D; }
+.selo.areceber { background: var(--ocre-suave); color: var(--ocre); }
+.segmento .ativo.pago { color: #2F6B3D; }
+.segmento .ativo.areceber { color: var(--ocre); }
+.espaco-cima { margin-top: .8rem; }
+.valor-lista { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.grupo-busca { display: flex; flex-direction: column; gap: .5rem; }
+.grupo-topo { display: flex; align-items: center; gap: .7rem; border: 0; background: none; padding: 0; text-align: left; }
+.grupo-topo .nome { flex: 1; min-width: 0; font: 600 1.05rem/1.3 var(--serifa); }
+.grupo-topo .avatar { width: 38px; height: 38px; font-size: .85rem; }
+.resultado-mini { border: 0; background: var(--campo); border-radius: 12px; padding: .55rem .75rem; text-align: left; display: flex; flex-direction: column; gap: .15rem; }
+.resultado-mini .trecho { font-size: .92rem; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .selo.pago { background: #22362A; color: #9FD3AE; } :root:not([data-theme="light"]) .segmento .ativo.pago { color: #9FD3AE; } }
+:root[data-theme="dark"] .selo.pago { background: #22362A; color: #9FD3AE; }
+:root[data-theme="dark"] .segmento .ativo.pago { color: #9FD3AE; }
+
+/* Versão 7: área administrativa, comprovantes, nota fiscal e aniversários */
+.abas.seis, .abas.cinco { grid-template-columns: repeat(3, 1fr); }
+@media (min-width: 600px) { .abas.seis { grid-template-columns: repeat(6, 1fr); } .abas.cinco { grid-template-columns: repeat(5, 1fr); } }
+.segmento.dois { grid-template-columns: 1fr 1fr; }
+.atalho-largo { display: flex; align-items: center; gap: .85rem; width: 100%; text-align: left; }
+.atalho-largo .info, .resumo-botao .info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .1rem; }
+.atalho-largo > .ic, .resumo-botao > .ic { color: var(--suave); width: 18px; height: 18px; }
+.resumo-botao { display: flex; align-items: center; gap: .85rem; width: 100%; text-align: left; margin-bottom: .9rem; }
+.resumo-botao strong { font: 600 1.1rem/1.3 var(--serifa); font-variant-numeric: tabular-nums; }
+.linha-botao { width: 100%; background: none; border-left: 0; border-right: 0; border-bottom: 0; text-align: left; }
+.cartao-titulo + .linha-botao { border-top: 0; }
+.rotulo-campo { font-size: .84rem; color: var(--suave); margin: .7rem 0 .35rem !important; }
+.selo.parcial { background: var(--ocre-suave); color: var(--ocre); }
+.selo.nota { background: var(--granada-suave); color: var(--granada); }
+.selo.naocobrar { background: var(--campo); color: var(--suave); }
+.paciente .selo { flex: none; }
+.meta .selo { font-size: .72rem; }
+.total-clinica { display: flex; flex-direction: column; gap: .15rem; padding: 1.1rem 1.2rem; }
+.total-clinica small { opacity: .85; font-size: .88rem; }
+.total-clinica strong { font: 600 2rem/1.15 var(--serifa); font-variant-numeric: tabular-nums; }
+.total-clinica span { opacity: .85; font-size: .88rem; }
+.navega strong { font-size: 1rem; }
+.linha-copiar { display: flex; align-items: center; gap: .7rem; padding: .55rem 0; border-top: 1px solid var(--linha); }
+.linha-copiar .linha-texto p { margin: 0; color: var(--tinta); overflow-wrap: anywhere; }
+.botoes-mini { display: flex; gap: .4rem; flex: none; }
+.aviso-entrada { border-color: var(--granada); }
+.aviso-entrada .ic-bolha { color: var(--granada); }
+.aniversarios .ic-bolha { color: var(--ocre); }
+.agenda-linha .chips { flex-wrap: nowrap; }
+.link.centro { align-self: center; }
+.cartao > select { width: 100%; }
+.vencidos .ic-bolha { color: var(--ocre); }
+/* Letra T da data de nascimento */
+.letra-t { display: grid; grid-template-columns: repeat(3, 4.4rem); grid-template-rows: repeat(3, 4.4rem); gap: 4px; justify-content: center; margin: .2rem 0 .6rem;
+  grid-template-areas: ". topo ." "esquerda meio direita" ". base ."; }
+.letra-t-casa { display: flex; align-items: center; justify-content: center; border-radius: 12px; background: var(--granada-suave); color: var(--granada); }
+.letra-t-casa strong { font: 600 1.6rem/1 var(--serifa); font-variant-numeric: tabular-nums; }
+.letra-t-casa.topo { grid-area: topo; } .letra-t-casa.base { grid-area: base; } .letra-t-casa.esquerda { grid-area: esquerda; } .letra-t-casa.direita { grid-area: direita; }
+.letra-t-casa.meio { grid-area: meio; background: var(--granada); color: var(--granada-tinta); }
+.casas-t { list-style: none; margin: .4rem 0 .2rem; padding: 0; }
+.casas-t li { display: flex; justify-content: space-between; gap: 1rem; padding: .45rem 0; border-top: 1px solid var(--linha); }
+.casas-t strong { font: 600 1.05rem/1.2 var(--serifa); font-variant-numeric: tabular-nums; color: var(--granada); }
+.passos-t { margin: .3rem 0 0; padding-left: 1.1rem; font-size: .88rem; color: var(--suave); }
+.passos-t li { margin: .2rem 0; }
+.retrato-bloco { padding: .55rem 0; border-top: 1px solid var(--linha); }
+.retrato-bloco:first-of-type { border-top: 0; }
+.retrato-bloco.dominante { border-left: 3px solid var(--granada); padding-left: .6rem; }
+.retrato-origem { margin: 0 0 .25rem; }
+.tracos { margin: 0; padding-left: 1.1rem; }
+.tracos li { margin: .15rem 0; }
+.numero-editar summary { display: flex; align-items: center; gap: .8rem; cursor: pointer; list-style: none; }
+.numero-editar summary::-webkit-details-marker { display: none; }
+.numero-grande { font: 600 1.4rem/1 var(--serifa); color: var(--granada); min-width: 2ch; text-align: right; font-variant-numeric: tabular-nums; }
+.numero-editar[open] summary { margin-bottom: .6rem; }
+.numero-editar .campo { margin-top: .5rem; }
+.sem-nota .ic-bolha { color: var(--granada); }

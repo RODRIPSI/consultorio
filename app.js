@@ -1,10 +1,12 @@
 'use strict';
-/* CONSULTÓRIO — versão 5: pacientes, ficha, sessões, busca, retorno, backup cifrado,
-   mensagens pelo WhatsApp, documentos recebidos e declarações em PDF. */
+/* CONSULTÓRIO — versão 7: área clínica (senha mestra) e área administrativa (senha própria).
+   Clínica: pacientes, ficha, sessões, busca, retorno, documentos recebidos, backup cifrado.
+   Administrativa (admin.js): agenda, atendimentos, pagamentos, comprovantes, nota fiscal, mensagens e declarações. */
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 5';
+const VERSAO = 'versão 9';
+let modo = null;              // 'dono' (senha mestra: tudo) ou 'adm' (senha do administrativo: só a parte administrativa)
 
 let pacientes = [];          // decifrados, só na memória enquanto desbloqueado
 let sessoes = [];            // todas as sessões, idem
@@ -65,7 +67,11 @@ const ICONES = {
   telefone: [['path', { d: 'M5 3.5h3.5l2 5-2.4 1.5a11 11 0 0 0 5.4 5.4l1.5-2.4 5 2v3.5a2 2 0 0 1-2 2A16.5 16.5 0 0 1 3 5.5a2 2 0 0 1 2-2z' }]],
   clipe: [['path', { d: 'M20 11.5l-8.2 8.2a5 5 0 0 1-7.1-7.1l8.8-8.8a3.4 3.4 0 0 1 4.8 4.8l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9' }]],
   assinar: [['path', { d: 'M4 20h4.5L19.5 9 15 4.5 4 15.5z' }], ['path', { d: 'M13 6.5l4.5 4.5M13 20h7' }]],
-  imagem: [['rect', { x: 3, y: 4, width: 18, height: 16, rx: 2 }], ['circle', { cx: 9, cy: 10, r: 2 }], ['path', { d: 'M21 16l-5-5-10 9' }]]
+  caixa: [['rect', { x: 3, y: 4, width: 18, height: 5, rx: 1.5 }], ['path', { d: 'M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4' }]],
+  imagem: [['rect', { x: 3, y: 4, width: 18, height: 16, rx: 2 }], ['circle', { cx: 9, cy: 10, r: 2 }], ['path', { d: 'M21 16l-5-5-10 9' }]],
+  bolo: [['path', { d: 'M4 21h16M5 21v-7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v7' }], ['path', { d: 'M5 16c1.5 1 2.5 1 3.5 0s2-1 3.5 0 2.5 1 3.5 0 2-1 3.5 0' }], ['path', { d: 'M12 12V8M12 5.5c-.8-.8-.8-1.7 0-2.5.8.8.8 1.7 0 2.5z' }]],
+  triangulo: [['path', { d: 'M12 4L21 19.5H3z' }]],
+  moeda: [['circle', { cx: 12, cy: 12, r: 9 }], ['path', { d: 'M15 9.4c-.5-.9-1.6-1.4-3-1.4-1.8 0-3 .9-3 2.1 0 2.8 6 1.5 6 4.3 0 1.2-1.2 2.1-3 2.1-1.5 0-2.6-.6-3.1-1.6M12 6.3V8M12 16.3V18' }]]
 };
 function icone(nome) {
   const ns = 'http://www.w3.org/2000/svg';
@@ -208,7 +214,8 @@ async function trancar() {
   await salvarAgora();      // grava o que estava sendo digitado
   Cofre.trancar();
   pacientes = []; sessoes = []; importacao = null; planilha = null;
-  perfil = null; assinatura = null; documentos = []; rascunhoMsg = {}; declaracao = null;
+  perfil = null; assinatura = null; documentos = []; rascunhoMsg = {}; declaracao = null; senhaBackup = null; termoGeral = ''; numeros = null;
+  limparAdm(); modo = null;
   telaBloqueio();
 }
 document.addEventListener('visibilitychange', () => {
@@ -223,15 +230,21 @@ function verificarInatividade() {
 setInterval(verificarInatividade, 10000);
 
 // ---------- Navegação ----------
+const TELAS_CLINICAS = ['ficha', 'sessao', 'importar', 'planilha', 'busca', 'perfil', 'letrat', 'numeros'];
 function render(s) {
+  if (modo === 'adm' && (!s || s.tela === 'lista' || TELAS_CLINICAS.includes(s.tela))) { telaInicioAdm(); return; }
+  if (s && renderAdm(s)) return;
   if (!s || s.tela === 'lista') telaLista();
   else if (s.tela === 'ficha') telaFicha(s.id, s.aba || 'retomar');
   else if (s.tela === 'sessao') telaSessao(s.pid, s.sid);
-  else if (s.tela === 'config') telaConfig();
+  else if (s.tela === 'config') (modo === 'adm' ? telaConfigAdm() : telaConfig());
   else if (s.tela === 'importar') telaImportar(s.pid);
   else if (s.tela === 'planilha') telaPlanilha();
   else if (s.tela === 'perfil') telaPerfil();
   else if (s.tela === 'declaracao') telaDeclaracao(s.pid);
+  else if (s.tela === 'busca') telaBuscaGeral();
+  else if (s.tela === 'letrat') telaLetraT(s.id);
+  else if (s.tela === 'numeros') telaNumeros();
 }
 function ir(estado, empilhar = true) {
   salvarAgora();
@@ -250,10 +263,18 @@ window.addEventListener('popstate', e => {
 
 async function entrar() {
   ultimaAtividade = Date.now();
+  modo = 'dono';
+  await Cofre.garantirChaveAdm();
+  await Cofre.garantirChavesEntrada();
   [pacientes, sessoes] = await Promise.all([Cofre.lerTodos('p:'), Cofre.lerTodos('s:')]);
   await carregarExtras();
+  await carregarAdm();
+  await migrarParaV7();
+  await sincronizarCadastros();
+  await sincronizarAtendimentos();
+  await salvarAgora();
   history.replaceState({ tela: 'lista' }, '');
-  telaLista();
+  if (!(await abrirEntradaSePendente())) telaLista();
 }
 
 // ---------- Telas de entrada ----------
@@ -284,22 +305,29 @@ function telaCriacao() {
     el('p', { class: 'suave centro', text: 'Crie a senha mestra que protege todos os registros deste aparelho.' }),
     s1, s2, msg, botao,
     el('p', { class: 'nota-alerta', text: 'Não existe recuperação de senha. Se ela for esquecida, os registros ficam inacessíveis. Anote-a em papel e guarde em local seguro.' }),
-    el('p', { class: 'suave pequeno centro', text: 'Vai trazer registros de outro aparelho? Crie a senha e depois use Configurações → Restaurar backup.' })
+    el('p', { class: 'suave pequeno centro', text: 'Vai trazer registros de outro aparelho? Crie a senha e depois use Configurações → Restaurar backup.' }),
+    el('button', { type: 'button', class: 'link centro', text: 'Este aparelho é do administrativo', onclick: telaCriacaoAdm })
   ));
   s1.focus();
 }
 
 async function telaBloqueio() {
   app.replaceChildren();
-  const campo = el('input', { type: 'password', autocomplete: 'current-password', placeholder: 'Senha mestra', 'aria-label': 'Senha mestra' });
+  const duas = await Cofre.temSenhaAdm() && await Cofre.temClinica();
+  const soAdm = !(await Cofre.temClinica());
+  const rotuloSenha = soAdm ? 'Senha do administrativo' : 'Senha';
+  const campo = el('input', { type: 'password', autocomplete: 'current-password', placeholder: rotuloSenha, 'aria-label': rotuloSenha });
   const msg = el('p', { class: 'erro-msg', role: 'alert' });
-  const botao = el('button', { type: 'button', class: 'primario', text: 'Desbloquear' });
+  const botao = el('button', { type: 'button', class: 'primario', text: 'Entrar' });
   const tentarSenha = async () => {
     if (!campo.value) return;
     botao.disabled = true;
     msg.textContent = '';
-    try { await Cofre.abrirComSenha(campo.value); campo.value = ''; await entrar(); }
-    catch { msg.textContent = 'Senha incorreta.'; botao.disabled = false; campo.select(); }
+    let qual;
+    try { qual = await Cofre.abrirComSenha(campo.value); }
+    catch { msg.textContent = 'Senha incorreta.'; botao.disabled = false; campo.select(); return; }
+    campo.value = '';
+    if (qual === 'dono') await entrar(); else await entrarAdm();
   };
   botao.addEventListener('click', tentarSenha);
   campo.addEventListener('keydown', e => { if (e.key === 'Enter') tentarSenha(); });
@@ -316,7 +344,9 @@ async function telaBloqueio() {
     });
   }
   if (Cofre.aberto()) return;
-  mostrar(porta(campo, msg, botao, botaoBio));
+  mostrar(porta(campo, msg, botao, botaoBio,
+    duas && el('p', { class: 'suave pequeno centro', text: 'A senha mestra abre tudo. A senha do administrativo abre agenda, pagamentos, mensagens e declarações, sem acesso às fichas e sessões.' }),
+    new URLSearchParams(location.search).has('recebido') && el('p', { class: 'faixa', text: 'Comprovante recebido e guardado cifrado. Entre para escolher o paciente.' })));
   if (!botaoBio) campo.focus();
 }
 
@@ -359,8 +389,9 @@ function telaLista() {
     }));
     if (!itens.length) {
       const texto = q ? 'Nenhum nome encontrado.'
-        : verArquivados ? 'Nenhum paciente arquivado.' : 'Toque em + para cadastrar o primeiro paciente.';
-      lista.append(el('div', { class: 'vazio', text: texto }));
+        : verArquivados ? 'Nenhum paciente arquivado.' : 'Nenhum paciente cadastrado ainda.';
+      lista.append(el('div', { class: 'vazio' }, el('p', { text: texto }),
+        !q && !verArquivados && el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: novoPaciente }, icone('mais'), el('span', { text: 'Cadastrar paciente' }))));
     }
   };
   busca.addEventListener('input', desenhar);
@@ -369,18 +400,25 @@ function telaLista() {
     cabecalho(verArquivados ? 'Arquivados' : 'Pacientes', {
       grande: true,
       sub: verArquivados ? null : `${ativos} em acompanhamento`,
-      acoes: [botaoIcone('Bloquear agora', 'cadeado', trancar), botaoIcone('Configurações', 'ajustes', () => ir({ tela: 'config' }))]
+      acoes: [botaoIcone('Buscar em todos os pacientes', 'busca', () => ir({ tela: 'busca' })), botaoIcone('Pagamentos do mês', 'moeda', () => ir({ tela: 'mes' })),
+        botaoIcone('Bloquear agora', 'cadeado', trancar), botaoIcone('Configurações', 'ajustes', () => ir({ tela: 'config' }))]
     }),
     el('div', { class: 'conteudo' },
       !verArquivados && avisoBackup(),
+      !verArquivados && cartaoEntrada(),
+      !verArquivados && cartaoAniversarios(),
+      !verArquivados && cartaoAgenda(),
       el('label', { class: 'campo-busca' }, icone('busca'), busca),
       lista,
-      el('button', {
-        type: 'button', class: 'link',
-        text: verArquivados ? 'Mostrar pacientes ativos' : 'Mostrar arquivados',
-        onclick: () => { verArquivados = !verArquivados; telaLista(); }
-      }),
-      !verArquivados && el('button', { type: 'button', class: 'link com-icone', onclick: abrirPlanilha }, icone('tabela'), el('span', { text: 'Importar planilha com vários pacientes' }))),
+      el('div', { class: 'atalhos' },
+        el('button', {
+          type: 'button', class: 'atalho', onclick: () => { verArquivados = !verArquivados; telaLista(); }
+        }, el('span', { class: 'ic-bolha' }, icone(verArquivados ? 'pessoa' : 'caixa')),
+        el('span', { text: verArquivados ? 'Pacientes ativos' : 'Arquivados' })),
+        !verArquivados && el('button', { type: 'button', class: 'atalho', onclick: () => ir({ tela: 'admInicio' }) },
+          el('span', { class: 'ic-bolha' }, icone('moeda')), el('span', { text: 'Administrativo' })),
+        !verArquivados && el('button', { type: 'button', class: 'atalho', onclick: abrirPlanilha },
+          el('span', { class: 'ic-bolha' }, icone('tabela')), el('span', { text: 'Importar planilha' })))),
     !verArquivados && el('button', { type: 'button', class: 'fab', 'aria-label': 'Novo paciente', title: 'Novo paciente', onclick: novoPaciente }, icone('mais'))
   );
   desenhar();
@@ -401,6 +439,7 @@ async function novoPaciente() {
   };
   await Cofre.salvar('p:' + p.id, p);
   pacientes.push(p);
+  await criarCadastro({ id: p.id, nome: p.nome });
   ir({ tela: 'ficha', id: p.id, aba: 'ficha' });
 }
 
@@ -417,25 +456,28 @@ function telaFicha(id, aba) {
   if (p.dados.frequencia) chips.push(p.dados.frequencia);
   chips.push(`${ss.length} ${ss.length === 1 ? 'sessão' : 'sessões'}`);
 
+  if (aba === 'mensagem' || aba === 'pagamentos') { ir({ tela: 'adm', id, aba: aba === 'mensagem' ? 'mensagem' : 'pagamentos' }, false); return; }
   const abas = [['retomar', 'Retomar', 'retomar'], ['sessoes', 'Sessões', 'sessoes'], ['ficha', 'Ficha', 'pessoa'], ['buscar', 'Buscar', 'busca'],
-    ['mensagem', 'Mensagem', 'mensagem'], ['recebidos', 'Recebidos', 'clipe'], ['emitidos', 'Emitidos', 'assinar']];
+    ['recebidos', 'Recebidos', 'clipe'], ['emitidos', 'Emitidos', 'assinar']];
   const corpo = aba === 'sessoes' ? abaSessoes(p, ss)
     : aba === 'ficha' ? abaFicha(p)
       : aba === 'buscar' ? abaBuscar(p, ss)
-        : aba === 'mensagem' ? abaMensagem(p)
-          : aba === 'recebidos' ? abaRecebidos(p)
-            : aba === 'emitidos' ? abaEmitidos(p)
-              : abaRetomar(p, ss);
+        : aba === 'recebidos' ? abaRecebidos(p)
+          : aba === 'emitidos' ? abaEmitidos(p)
+            : abaRetomar(p, ss);
 
   mostrar(
-    cabecalho(p.nome, { voltar: true, status: true, acoes: [botaoIcone('Opções do paciente', 'opcoes', () => opcoesPaciente(p))] }),
+    cabecalho(p.nome, { voltar: true, status: true, acoes: [
+      botaoIcone('Letra T', 'triangulo', () => ir({ tela: 'letrat', id: p.id })),
+      botaoIcone('Agenda, pagamentos e mensagens', 'moeda', () => ir({ tela: 'adm', id: p.id, aba: 'atendimentos' })),
+      botaoIcone('Opções do paciente', 'opcoes', () => opcoesPaciente(p))] }),
     el('div', { class: 'conteudo' },
       p.arquivado && el('p', { class: 'faixa', text: 'Paciente arquivado. Os registros continuam guardados.' }),
       el('section', { class: 'hero' }, avatar(p, true),
         el('div', { class: 'hero-texto' },
           el('h2', { id: 'nome-hero', text: p.nome }),
           el('div', { class: 'chips' }, chips.map(c => el('span', { class: 'chip', text: c }))))),
-      el('nav', { class: 'abas', role: 'tablist' }, abas.map(([k, rotulo, ic]) => el('button', {
+      el('nav', { class: 'abas seis', role: 'tablist' }, abas.map(([k, rotulo, ic]) => el('button', {
         type: 'button', role: 'tab', 'aria-selected': String(k === aba), class: 'aba' + (k === aba ? ' ativa' : ''),
         onclick: () => ir({ tela: 'ficha', id, aba: k }, false)
       }, icone(ic), el('span', { text: rotulo })))),
@@ -484,7 +526,7 @@ function abaRetomar(p, ss) {
           el('span', { class: 'data-mini', text: dataCurta(s.data) }),
           el('p', { text: s.retomar }))))
         : el('p', { class: 'suave', text: 'Nenhuma nota "para retomar" nas últimas três sessões.' })),
-    top.length && cartao('Temas em evidência', 'tag',
+    top.length > 0 && cartao('Temas em evidência', 'tag',
       el('p', { class: 'suave pequeno', text: 'Das últimas seis sessões. Toque para buscar.' }),
       el('div', { class: 'chips' }, top.map(({ t, n }) => el('button', {
         type: 'button', class: 'chip acao',
@@ -503,7 +545,7 @@ function itemSessao(p, s, ss, compacto = false) {
       el('span', { class: 'suave', text: `${dataCurta(s.data)}, ${diaSemana(s.data)}` }),
       s.status !== 'realizada' && selo(s.status)),
     el('p', { class: 'trecho' + (s.relato ? '' : ' suave'), text: s.relato ? trecho(s.relato, compacto ? 140 : 220) : 'Sem relato.' }),
-    !compacto && temas.length && el('div', { class: 'chips' }, temas.map(t => el('span', { class: 'chip', text: t }))));
+    !compacto && temas.length > 0 && el('div', { class: 'chips' }, temas.map(t => el('span', { class: 'chip', text: t }))));
 }
 
 function abaSessoes(p, ss) {
@@ -524,7 +566,7 @@ function abaFicha(p) {
   const campo = (rotulo, chave, tipo = 'text', largo = false) =>
     el('label', { class: 'campo' + (largo ? ' largo' : '') },
       el('span', { text: rotulo }),
-      el('input', { type: tipo, value: p.dados[chave] || '', oninput: e => { p.dados[chave] = e.target.value; salvar(); } }));
+      el('input', { type: tipo, value: p.dados[chave] || '', oninput: e => { p.dados[chave] = e.target.value; salvar(); if (chave === 'cpf' || chave === 'telefone' || chave === 'nascimento') copiarParaCadastro(p) } }));
   const nome = el('label', { class: 'campo largo' },
     el('span', { text: 'Nome' }),
     el('input', {
@@ -534,7 +576,7 @@ function abaFicha(p) {
         p.nome = e.target.value.trim();
         document.getElementById('titulo-tela').textContent = p.nome;
         document.getElementById('nome-hero').textContent = p.nome;
-        salvar();
+        salvar(); copiarParaCadastro(p);
       },
       onblur: e => { if (!e.target.value.trim()) e.target.value = p.nome; }
     }));
@@ -553,9 +595,160 @@ function abaFicha(p) {
         campo('Início do acompanhamento', 'inicio', 'date'),
         campo('Frequência e horário', 'frequencia'),
         campo('Contato de emergência', 'contatoEmergencia', 'text', true))),
+    el('button', { type: 'button', class: 'cartao atalho-largo', onclick: () => ir({ tela: 'adm', id: p.id, aba: 'cadastro' }) },
+      el('span', { class: 'ic-bolha' }, icone('moeda')),
+      el('span', { class: 'info' }, el('strong', { text: 'Horários, valor e nota fiscal' }), el('small', { class: 'suave', text: 'Ficam no cadastro administrativo deste paciente.' })),
+      icone('seguinte')),
     topico('Demanda inicial', 'alvo', 'demanda', 'O que motivou a procura, nas palavras do paciente'),
     topico('Temas recorrentes', 'repetir', 'temas', 'Significantes, cenas e questões que retornam'),
     topico('Observações', 'nota', 'observacoes', 'Anotações gerais'));
+}
+
+// ---------- Letra T da data de nascimento (organização pessoal de Rodrigo, sem pretensão científica) ----------
+// Data como DD/MM/AAAA: D1 D2 / M1 M2 / A1 A2 A3 A4.
+// Topo = A3 + A1 + M1 + D1. Base = A4 + A2 + M2 + D2 (acima de 16, soma os algarismos).
+// Direita = topo + base (acima de 16, soma os algarismos). Esquerda = direita se 1–9; se 10–16, soma os dois algarismos.
+// Meio = topo + base + direita + esquerda (acima de 16, soma os algarismos).
+const somaAlgarismos = n => String(n).split('').reduce((t, d) => t + Number(d), 0);
+function reduzir16(n, passos, rotulo) {
+  let r = n;
+  while (r > 16) { const antes = r; r = somaAlgarismos(r); passos.push(`${rotulo}: ${antes} passa de 16, então ${String(antes).split('').join(' + ')} = ${r}`); }
+  return r;
+}
+function letraT(ymd) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd || '')) return null;
+  const [a, m, d] = ymd.split('-');
+  const [D1, D2] = d.split('').map(Number), [M1, M2] = m.split('').map(Number), [A1, A2, A3, A4] = a.split('').map(Number);
+  const passos = [];
+  let topo = A3 + A1 + M1 + D1;
+  passos.push(`Topo: ${A3} + ${A1} + ${M1} + ${D1} = ${topo}`);
+  topo = reduzir16(topo, passos, 'Topo');
+  let base = A4 + A2 + M2 + D2;
+  passos.push(`Base: ${A4} + ${A2} + ${M2} + ${D2} = ${base}`);
+  base = reduzir16(base, passos, 'Base');
+  let direita = topo + base;
+  passos.push(`Lateral direita: ${topo} + ${base} = ${direita}`);
+  direita = reduzir16(direita, passos, 'Lateral direita');
+  const esquerda = direita >= 10 ? somaAlgarismos(direita) : direita;
+  passos.push(direita >= 10 ? `Lateral esquerda: ${String(direita).split('').join(' + ')} = ${esquerda}` : `Lateral esquerda: repete a direita, ${esquerda}`);
+  let meio = topo + base + direita + esquerda;
+  passos.push(`Meio: ${topo} + ${base} + ${direita} + ${esquerda} = ${meio}`);
+  meio = reduzir16(meio, passos, 'Meio');
+  return { topo, base, direita, esquerda, meio, passos };
+}
+
+// Dicionário dos números: vale para todos os pacientes, editável, guardado cifrado na área clínica.
+const NUMEROS_PADRAO = {
+  1: ['O movimento', 'iniciativa; faro para negócios; começa coisas do zero; sedução fácil; energia que movimenta o ambiente', 'inconstância; agitação que vira tumulto; dificuldade com regras e com a palavra dada; desconfiança'],
+  2: ['A amizade', 'facilidade de fazer amigos; se liga bem a dois; talento para parcerias; sorte que vem pelos vínculos', 'dependência do par; dificuldade de decidir sozinho; vida que balança quando a relação balança'],
+  3: ['A melancolia', 'coragem; uso forte da razão; sustenta projetos grandes', 'melancolia; impaciência diante da dificuldade; propensão a brigas; decepção fácil'],
+  4: ['A calúnia', 'audácia; decisão; generosidade; sinceridade; intuição; habilidade manual e para vendas; conquista pelo esforço', 'dificuldade de guardar segredos; cólera; autoritarismo; teimosia; indecisão nas horas sérias; projetos pela metade; alvo de calúnias'],
+  5: ['A companhia', 'engenhosidade; intuição forte e confiável; perseverança; ambição; recupera o que perdeu', 'não suporta ficar só; influenciável; pode ser falso; chora quando contrariado e guarda vingança; impulsivo; complicado no amor'],
+  6: ['O dinheiro', 'força de vontade; senso de justiça; alegria; gosto pelas tradições; grandes ideais; se recupera com facilidade', 'pensamento sempre no dinheiro; orgulho; mania de grandeza; deslealdade; fala demais dos planos; não sabe por onde começar'],
+  7: ['A sorte passageira', 'influência em todos os meios; bom gosto; boa aparência; capacidade de conquista; sorte', 'sorte que não dura; ambição que vira devaneio; sonha com melhora repentina; busca intensa de prazeres; tropeços no amor'],
+  8: ['A independência', 'autossuficiência; determinação; vontade de saber; calma que acalma os outros; delicadeza; honestidade; dedicação aos amigos', 'teimosia; ações impensadas; fúria descontrolada; vingança; paixões excessivas; imaginação que se descontrola'],
+  9: ['A liderança', 'liderança natural; inteligência; simpatia; responsabilidade; bom caráter; grandes projetos', 'cercado de falsos amigos sem perceber; desespero quando os projetos não se realizam'],
+  10: ['A prosperidade', 'caridade; paciência; humanidade; compreende os problemas alheios; liderança de ajuda; realização a partir da meia-idade', 'avareza; obsessão em acumular; teimosia; perda de respeito quando se desvia'],
+  11: ['O entusiasmo', 'generosidade; entusiasmo; atração; nobreza de atitudes; nenhum obstáculo parece intransponível', 'excesso em tudo; dominação; conquistas lentas e sacrificadas; vingança oculta; sensação de nunca ter o que deseja'],
+  12: ['A criança', 'alegria; gosto pelo belo; riso fácil; bondade; prestatividade; inteligência; senso de justiça; superação pelo esforço', 'agonia; inquietude; rancor; arrogância; mão fechada; desconfia da própria sombra'],
+  13: ['A vida e a morte', 'olhar que percebe o estado do outro; astúcia; eloquência; poder de convencer; intuição correta; fidelidade; neutralidade diante de brigas', 'fantasia e ilusão; amores impossíveis; resignação a tudo; indecisão; pensamento voltado à destruição'],
+  14: ['A sabedoria', 'desejo de saber; juventude permanente; coragem diante dos problemas; domina situações tumultuadas; novo despertar; conquista amorosa', 'olhar malicioso; pensamentos intensos; revolta; investidas que trazem arrependimento; instabilidade'],
+  15: ['A briga', 'dinamismo; influência; respeito; domínio da situação; bom gosto para escolher relações', 'violência; discussões; ciúmes; cólera incontrolável; egoísmo; indisciplina; falta de juízo; tendência a dizer não'],
+  16: ['As duas caras', 'sinceridade no amor; vocação artística; calma; de bem com a vida; acolhimento afetuoso; triunfo', 'caráter dúbio; falta de palavra; dificuldade de dizer não; instintos atropelando a razão']
+};
+let numeros = null; // { tipoRegistro: 'numeros', itens: { 1: { titulo, positivo, negativo } }, atualizadoEm }
+function numerosPadrao() {
+  const itens = {};
+  for (const [n, [titulo, positivo, negativo]] of Object.entries(NUMEROS_PADRAO)) itens[n] = { titulo, positivo, negativo };
+  return { tipoRegistro: 'numeros', itens, atualizadoEm: new Date().toISOString() };
+}
+const dicionario = () => numeros || numerosPadrao();
+const tracos = txt => (txt || '').split(/[;\n]+/).map(t => t.trim()).filter(Boolean);
+const CASAS_T = [['meio', 'Meio'], ['topo', 'Topo'], ['base', 'Base'], ['direita', 'Lateral direita'], ['esquerda', 'Lateral esquerda']];
+
+// Junta os números das cinco casas. Número que aparece em mais de uma casa vem primeiro, como dominante.
+function compiladoT(t) {
+  const grupos = new Map();
+  for (const [k, rot] of CASAS_T) {
+    const n = t[k];
+    if (!grupos.has(n)) grupos.set(n, { n, casas: [] });
+    grupos.get(n).casas.push(rot.toLowerCase());
+  }
+  return [...grupos.values()].sort((a, b) => b.casas.length - a.casas.length);
+}
+
+function telaLetraT(id) {
+  const p = pacientes.find(x => x.id === id);
+  if (!p) { telaLista(); return; }
+  const t = letraT(p.dados.nascimento);
+  if (!t) {
+    mostrar(cabecalho('Letra T', { voltar: true }),
+      el('div', { class: 'conteudo pilha' },
+        el('div', { class: 'cartao vazio-cartao' },
+          el('span', { class: 'ic-bolha grande' }, icone('triangulo')),
+          el('p', { text: `Falta a data de nascimento de ${primeiroNome(p.nome)}.` }),
+          el('button', { type: 'button', class: 'primario', text: 'Preencher na ficha', onclick: () => ir({ tela: 'ficha', id, aba: 'ficha' }, false) }))));
+    return;
+  }
+  const dic = dicionario().itens;
+  const casa = (area, n) => el('div', { class: 'letra-t-casa ' + area }, el('strong', { text: String(n) }));
+  const grupos = compiladoT(t);
+  const retrato = (lado, titulo, ic) => cartao(titulo, ic,
+    grupos.map(g => {
+      const item = dic[g.n] || {};
+      const lista = tracos(item[lado]);
+      return el('div', { class: 'retrato-bloco' + (g.casas.length > 1 ? ' dominante' : '') },
+        el('p', { class: 'retrato-origem' },
+          el('strong', { text: `${g.n} · ${item.titulo || 'sem título'}` }),
+          el('small', { class: 'suave', text: ' — ' + listaNatural(g.casas) + (g.casas.length > 1 ? ' (dominante)' : '') })),
+        lista.length ? el('ul', { class: 'tracos' }, lista.map(x => el('li', { text: x }))) : el('p', { class: 'suave pequeno', text: 'Nada escrito ainda para este número.' }));
+    }));
+  mostrar(
+    cabecalho('Letra T', { voltar: true, sub: p.nome, acoes: [botaoIcone('Editar os números', 'assinar', () => ir({ tela: 'numeros' }))] }),
+    el('div', { class: 'conteudo pilha' },
+      el('section', { class: 'cartao' },
+        el('div', { class: 'letra-t', 'aria-hidden': 'true' },
+          casa('topo', t.topo), casa('esquerda', t.esquerda), casa('meio', t.meio), casa('direita', t.direita), casa('base', t.base)),
+        el('p', { class: 'suave pequeno centro', text: dataExtenso(p.dados.nascimento) }),
+        el('ul', { class: 'casas-t' }, CASAS_T.map(([k, rot]) => el('li', {},
+          el('span', { text: rot + (k === 'direita' ? ' (Desejo do Outro)' : '') }), el('strong', { text: String(t[k]) })))),
+        el('details', {}, el('summary', { class: 'link', text: 'Como foi calculado' }),
+          el('ul', { class: 'passos-t' }, t.passos.map(x => el('li', { text: x }))))),
+      retrato('positivo', 'Retrato positivo', 'escudo'),
+      retrato('negativo', 'Retrato negativo', 'alvo'),
+      el('p', { class: 'suave pequeno', text: 'Organização pessoal e experimental. Os traços de cada número são os mesmos para todos os pacientes e podem ser editados no botão de lápis, acima.' })));
+}
+
+function telaNumeros() {
+  const dic = dicionario();
+  let pendente = null;
+  const salvarNumeros = () => {
+    dic.atualizadoEm = new Date().toISOString();
+    numeros = dic;
+    clearTimeout(pendente);
+    pendente = setTimeout(async () => { await Cofre.salvar('c:numeros', numeros); indicarStatus('Salvo'); }, 600);
+  };
+  const area = (n, lado, dica) => el('textarea', {
+    rows: '3', 'aria-label': `Número ${n}, ${lado}`, placeholder: dica, value: dic.itens[n]?.[lado] || '',
+    oninput: e => { dic.itens[n] ||= {}; dic.itens[n][lado] = e.target.value; crescer(e.target); salvarNumeros(); }
+  });
+  const blocos = Array.from({ length: 16 }, (_, i) => i + 1).map(n => el('details', { class: 'cartao numero-editar' },
+    el('summary', {}, el('strong', { class: 'numero-grande', text: String(n) }), el('span', { text: dic.itens[n]?.titulo || 'Sem título' })),
+    el('label', { class: 'campo largo' }, el('span', { text: 'Título' }),
+      el('input', { type: 'text', value: dic.itens[n]?.titulo || '', oninput: e => { dic.itens[n] ||= {}; dic.itens[n].titulo = e.target.value; salvarNumeros(); } })),
+    el('label', { class: 'campo largo' }, el('span', { text: 'Positivo' }), area(n, 'positivo', 'Traços separados por ponto e vírgula')),
+    el('label', { class: 'campo largo' }, el('span', { text: 'Negativo' }), area(n, 'negativo', 'Traços separados por ponto e vírgula'))));
+  mostrar(
+    cabecalho('Os dezesseis números', { voltar: true, status: true }),
+    el('div', { class: 'conteudo pilha' },
+      el('p', { class: 'suave pequeno', text: 'Separe os traços com ponto e vírgula ou em linhas. Vale para todos os pacientes e fica guardado cifrado.' }),
+      blocos,
+      el('button', { type: 'button', class: 'link perigo-texto centro', text: 'Voltar ao texto original', onclick: async () => {
+        const ok = await dialogo({ titulo: 'Voltar ao texto original?', texto: 'Suas edições nos dezesseis números serão substituídas pelo rascunho inicial.', botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Voltar ao original', valor: true, estilo: 'perigo' }] });
+        if (!ok) return;
+        numeros = numerosPadrao(); await Cofre.salvar('c:numeros', numeros); telaNumeros();
+      } })));
+  app.querySelectorAll('textarea').forEach(crescer);
 }
 
 // ---------- Busca dentro do paciente ----------
@@ -638,6 +831,7 @@ async function novaSessao(p) {
   const s = { id: crypto.randomUUID(), pid: p.id, data: hojeISO(), status: 'realizada', relato: '', retomar: '', temas: '', criadoEm: agora, atualizadoEm: agora };
   await Cofre.salvar(chaveSessao(s), s);
   sessoes.push(s);
+  vincularSessao(s, true);
   ir({ tela: 'sessao', pid: p.id, sid: s.id });
   app.querySelector('textarea')?.focus();
 }
@@ -652,13 +846,13 @@ function telaSessao(pid, sid) {
   const irPara = alvo => ir({ tela: 'sessao', pid, sid: alvo.id }, false);
 
   const data = el('input', { type: 'date', value: s.data, 'aria-label': 'Data da sessão' });
-  data.addEventListener('change', () => { if (!data.value) return; s.data = data.value; salvar(); telaSessao(pid, sid); });
+  data.addEventListener('change', () => { if (!data.value) return; s.data = data.value; salvar(); vincularSessao(s); telaSessao(pid, sid); });
 
   const segmento = el('div', { class: 'segmento', role: 'radiogroup', 'aria-label': 'Situação' },
     Object.entries(STATUS).map(([k, rotulo]) => el('button', {
       type: 'button', role: 'radio', 'aria-checked': String(s.status === k), class: s.status === k ? 'ativo ' + k : '',
       text: rotulo,
-      onclick: () => { s.status = k; salvar(); telaSessao(pid, sid); }
+      onclick: () => { s.status = k; salvar(); vincularSessao(s); telaSessao(pid, sid); }
     })));
 
   const previa = el('div', { class: 'chips' });
@@ -692,7 +886,8 @@ function telaSessao(pid, sid) {
             type: 'text', value: s.temas, placeholder: 'Separe por vírgulas: pai, trabalho, sonho da escada', 'aria-label': 'Temas da sessão',
             oninput: e => { s.temas = e.target.value; desenharPrevia(); salvar(); }
           }),
-          previa)))
+          previa),
+        cartaoAtendimentoSessao(p, s)))
   );
   app.querySelectorAll('textarea').forEach(crescer);
 }
@@ -707,6 +902,7 @@ async function excluirSessao(s) {
   pendentes.delete(chaveSessao(s));
   await Cofre.apagar(chaveSessao(s));
   sessoes = sessoes.filter(x => x !== s);
+  await desvincularSessao(s);
   history.back();
 }
 
@@ -733,6 +929,7 @@ async function opcoesPaciente(p) {
     if (!ok) return;
     p.arquivado = true;
     await salvarJa();
+    await arquivarCadastro(p.id, true);
     history.back();
     return;
   }
@@ -747,6 +944,7 @@ async function opcoesPaciente(p) {
   if (escolha === 'desarquivar') {
     p.arquivado = false;
     await salvarJa();
+    await arquivarCadastro(p.id, false);
     history.back();
   } else if (escolha === 'excluir') {
     const confirma = await dialogo({
@@ -760,6 +958,7 @@ async function opcoesPaciente(p) {
     for (const d of documentos.filter(x => x.pid === p.id)) { await Cofre.apagar(chaveDoc(d)); await Cofre.apagar(chaveConteudo(d)); }
     documentos = documentos.filter(x => x.pid !== p.id);
     await Cofre.apagar('p:' + p.id);
+    await excluirAdmDe(p.id);
     sessoes = sessoes.filter(s => s.pid !== p.id);
     pacientes = pacientes.filter(x => x.id !== p.id);
     history.back();
@@ -768,31 +967,36 @@ async function opcoesPaciente(p) {
 
 // ---------- Backup cifrado ----------
 async function fazerBackup() {
-  const r = await dialogo({
-    titulo: 'Fazer backup cifrado',
-    texto: 'Escolha uma senha para este arquivo. Ela será pedida para restaurar, inclusive no outro aparelho. Pode ser a própria senha mestra.',
-    campos: [{ rotulo: 'Senha do backup', tipo: 'password', autocomplete: 'new-password' }, { rotulo: 'Repita a senha', tipo: 'password', autocomplete: 'new-password' }],
-    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Gerar backup', valor: true, estilo: 'primario' }]
-  });
-  if (!r) return;
-  const [s1, s2] = r;
-  if (s1.length < 8) return aviso('Backup não gerado', 'A senha precisa ter pelo menos 8 caracteres.');
-  if (s1 !== s2) return aviso('Backup não gerado', 'As duas senhas estão diferentes.');
+  let senha = senhaBackup, novaSenha = false;
+  if (!senha) {
+    const r = await dialogo({
+      titulo: 'Fazer backup cifrado',
+      texto: 'Escolha uma senha para este arquivo. Ela será pedida para restaurar, inclusive no outro aparelho. Pode ser a própria senha mestra.',
+      campos: [{ rotulo: 'Senha do backup', tipo: 'password', autocomplete: 'new-password' }, { rotulo: 'Repita a senha', tipo: 'password', autocomplete: 'new-password' }],
+      botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Gerar backup', valor: true, estilo: 'primario' }]
+    });
+    if (!r) return;
+    const [s1, s2] = r;
+    if (s1.length < 8) return aviso('Backup não gerado', 'A senha precisa ter pelo menos 8 caracteres.');
+    if (s1 !== s2) return aviso('Backup não gerado', 'As duas senhas estão diferentes.');
+    senha = s1; novaSenha = true;
+  }
   await salvarAgora();
   const registros = {};
   pacientes.forEach(p => { registros['p:' + p.id] = p; });
   sessoes.forEach(s => { registros[chaveSessao(s)] = s; });
   documentos.forEach(d => { registros[chaveDoc(d)] = d; });
   for (const d of documentos) { const c = await Cofre.ler(chaveConteudo(d)); if (c) registros[chaveConteudo(d)] = c; }
-  if (perfil.atualizadoEm) registros['c:perfil'] = perfil;
   if (assinatura) registros['c:assinatura'] = assinatura;
-  const texto = await Cofre.cifrarPacote(s1, { formato: 'consultorio', versao: 1, criadoEm: new Date().toISOString(), registros });
+  if (numeros) registros['c:numeros'] = numeros;
+  Object.assign(registros, await registrosAdm(true));
+  const texto = await Cofre.cifrarPacote(senha, { formato: 'consultorio', versao: 1, criadoEm: new Date().toISOString(), registros });
   const nome = `consultorio-backup-${hojeISO()}.cifrado.txt`;
   const arquivo = new File([texto], nome, { type: 'text/plain' });
 
   const destino = await dialogo({
     titulo: 'Backup pronto e cifrado',
-    texto: `${pacientes.length} pacientes, ${sessoes.length} sessões e ${documentos.length} documentos. Fora deste app, o arquivo é ilegível sem a senha. Onde guardar?`,
+    texto: `${pacientes.length} pacientes, ${sessoes.length} sessões, ${atendimentos.length} atendimentos da agenda, ${pagamentos.length} pagamentos e ${documentos.length} documentos. Fora deste app, o arquivo é ilegível sem a senha. Onde guardar?`,
     botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Baixar arquivo', valor: 'baixar' }, { rotulo: 'Enviar ao Drive', valor: 'compartilhar', estilo: 'primario' }]
   });
   let feito = false;
@@ -815,7 +1019,14 @@ async function fazerBackup() {
   if (feito) {
     config.ultimoBackup = new Date().toISOString();
     await Cofre.salvarConfig(config);
-    await aviso('Backup feito', 'Guarde a senha do backup junto com a senha mestra.');
+    if (novaSenha) {
+      const guardar = await dialogo({
+        titulo: 'Backup feito',
+        texto: 'Guarde a senha do backup junto com a senha mestra. Quer que este aparelho lembre a senha? Ela fica dentro do cofre, cifrada, e os próximos backups ficam a um toque.',
+        botoes: [{ rotulo: 'Não', valor: null }, { rotulo: 'Lembrar a senha', valor: true, estilo: 'primario' }]
+      });
+      if (guardar) await lembrarSenhaBackup(senha);
+    } else await aviso('Backup feito', 'Cifrado com a senha do backup guardada neste aparelho.');
     if (history.state?.tela === 'config') telaConfig(); else render(history.state);
   }
 }
@@ -848,32 +1059,9 @@ async function restaurarBackup() {
     return aviso('Não foi possível restaurar', e.message === 'senha-incorreta' ? 'Senha do backup incorreta.' : 'Este arquivo não é um backup do Consultório.');
   }
   await salvarAgora();
-  let novos = 0, atualizados = 0, mantidos = 0;
-  const entradas = Object.entries(pacote.registros || {});
-  entradas.sort(([a], [b]) => (a.startsWith('a:') ? 0 : 1) - (b.startsWith('a:') ? 0 : 1)); // arquivos antes das descrições
-  for (const [k, o] of entradas) {
-    if (k.startsWith('a:')) {
-      if (await Cofre.ler(k)) mantidos++; else { await Cofre.salvar(k, o); novos++; }
-      continue;
-    }
-    if (k === 'c:perfil' || k === 'c:assinatura') {
-      const atual = k === 'c:perfil' ? perfil : assinatura;
-      if ((o.atualizadoEm || '') > (atual?.atualizadoEm || '')) {
-        await Cofre.salvar(k, o);
-        if (k === 'c:perfil') perfil = Object.assign(PERFIL_PADRAO(), o); else assinatura = o;
-        atualizados++;
-      } else mantidos++;
-      continue;
-    }
-    const lista = k.startsWith('p:') ? pacientes : k.startsWith('s:') ? sessoes : k.startsWith('d:') ? documentos : null;
-    if (!lista) continue;
-    const chaveDe = k.startsWith('p:') ? x => 'p:' + x.id : k.startsWith('s:') ? chaveSessao : chaveDoc;
-    const pos = lista.findIndex(x => chaveDe(x) === k);
-    if (pos < 0) { await Cofre.salvar(k, o); lista.push(o); novos++; }
-    else if ((o.atualizadoEm || '') > (lista[pos].atualizadoEm || '')) { await Cofre.salvar(k, o); lista[pos] = o; atualizados++; }
-    else mantidos++;
-  }
-  await aviso('Backup restaurado', `${novos} registros novos, ${atualizados} atualizados e ${mantidos} mantidos porque a versão deste aparelho era igual ou mais recente.`);
+  const r = await mesclarRegistros(pacote.registros || {}, modo === 'adm' ? k => k.startsWith('x:') : () => true);
+  await recarregarTudo();
+  await aviso('Backup restaurado', `${r.novos} registros novos, ${r.atualizados} atualizados e ${r.mantidos} mantidos porque a versão deste aparelho era igual ou mais recente.`);
   telaConfig();
 }
 
@@ -1098,7 +1286,7 @@ function telaImportar(pid) {
           el('button', { type: 'button', class: 'primario compacto com-icone', onclick: escolherParaImportar }, icone('arquivo'), el('span', { text: 'Escolher arquivos' })),
           el('button', { type: 'button', class: 'secundario compacto com-icone', onclick: () => { importacao.colando = true; telaImportar(pid); } }, icone('colar'), el('span', { text: 'Colar texto' })))),
       blocoColar,
-      importacao.avisos.length && el('div', { class: 'aviso-backup' },
+      importacao.avisos.length > 0 && el('div', { class: 'aviso-backup' },
         el('span', { class: 'ic-bolha' }, icone('nota')),
         el('div', {}, importacao.avisos.map(t => el('small', { text: t })))),
       importacao.fontes.map(f => el('section', { class: 'fonte' },
@@ -1136,6 +1324,7 @@ async function concluirImportacao(p) {
     await Cofre.salvar('p:' + p.id, p);
   }
   importacao = null;
+  await sincronizarAtendimentos();
   await aviso('Importação concluída', `${novasSessoes.length} ${novasSessoes.length === 1 ? 'sessão importada' : 'sessões importadas'}` + (trechos.length ? ` e ${trechos.length} ${trechos.length === 1 ? 'trecho' : 'trechos'} na ficha` : '') + '. Dá para editar tudo normalmente.');
   history.replaceState({ tela: 'ficha', id: p.id, aba: 'sessoes' }, '');
   render(history.state);
@@ -1459,6 +1648,8 @@ async function concluirPlanilha(resumo) {
     }
   }
   planilha = null;
+  await sincronizarCadastros();
+  await sincronizarAtendimentos();
   await aviso('Importação concluída', `${grupos.length} ${grupos.length === 1 ? 'paciente' : 'pacientes'} e ${totalSes} ${totalSes === 1 ? 'sessão' : 'sessões'} no cofre. Se quiser, apague agora a planilha do Drive: a decisão é sua.`);
   history.replaceState({ tela: 'lista' }, '');
   verArquivados = false;
@@ -1490,14 +1681,19 @@ async function telaConfig() {
         linha('pessoa', 'Biometria', temBio ? 'Ativada neste aparelho.' : 'Desbloqueio pela digital, com a senha mestra como reserva.',
           el('button', { type: 'button', class: 'secundario compacto', text: temBio ? 'Desativar' : 'Ativar', onclick: temBio ? desativarBio : ativarBio })),
         linha('cadeado', 'Senha mestra', null, el('button', { type: 'button', class: 'secundario compacto', text: 'Trocar', onclick: trocarSenha }))),
+      secaoAdministrativo(linha, secao),
       secao('Documentos',
         linha('assinar', 'Dados profissionais e assinatura',
           perfil.nome ? `${perfil.nome}${perfil.crp ? ', CRP ' + perfil.crp : ''}${assinatura ? '. Assinatura cadastrada.' : '. Falta a assinatura.'}` : 'Nome, CRP, endereço e a imagem do carimbo com assinatura, usados nas declarações.',
-          el('button', { type: 'button', class: 'secundario compacto', text: 'Editar', onclick: () => ir({ tela: 'perfil' }) }))),
+          el('button', { type: 'button', class: 'secundario compacto', text: 'Editar', onclick: () => ir({ tela: 'perfil' }) })),
+        linha('triangulo', 'Os dezesseis números da letra T', 'Traços positivos e negativos de cada número, iguais para todos os pacientes.',
+          el('button', { type: 'button', class: 'secundario compacto', text: 'Editar', onclick: () => ir({ tela: 'numeros' }) }))),
       secao('Backup e transferência',
         linha('escudo', 'Fazer backup cifrado',
           config.ultimoBackup ? `Último: ${dataBR(config.ultimoBackup)}.` : 'Nenhum backup feito ainda.',
           el('button', { type: 'button', class: 'primario compacto', text: 'Fazer', onclick: fazerBackup })),
+        senhaBackup && linha('cadeado', 'Senha do backup lembrada', 'Backups em um toque neste aparelho.',
+          el('button', { type: 'button', class: 'secundario compacto', text: 'Esquecer', onclick: esquecerSenhaBackup })),
         linha('tabela', 'Importar planilha', 'Traz vários pacientes e sessões de uma planilha (Google Planilhas, Excel ou CSV).',
           el('button', { type: 'button', class: 'secundario compacto', text: 'Importar', onclick: abrirPlanilha })),
         linha('retomar', 'Restaurar backup', 'Também serve para passar os registros do celular para o tablet e vice-versa.',
@@ -1506,7 +1702,7 @@ async function telaConfig() {
         linha('nota', 'Proteção contra limpeza automática',
           persistente ? 'Ativa: o Android não apaga estes dados para liberar espaço.' : 'Inativa: o Android pode apagar os dados se faltar espaço.',
           !persistente && el('button', { type: 'button', class: 'secundario compacto', text: 'Ativar', onclick: async () => { await navigator.storage?.persist?.(); telaConfig(); } }))),
-      el('p', { class: 'suave pequeno centro', text: `Consultório, ${VERSAO}. Este app não se conecta a nenhum servidor: a única atividade de rede é baixar as próprias atualizações.` }))
+      el('p', { class: 'suave pequeno centro', text: `Consultório, ${VERSAO}. O app só se conecta ao Google Drive, e só quando você toca em "Atualizar do Drive"; fora isso, a única atividade de rede é baixar as próprias atualizações.` }))
   );
 }
 
@@ -1571,20 +1767,25 @@ let documentos = [];     // só a descrição dos documentos; o arquivo é lido 
 let rascunhoMsg = {};    // rascunho da mensagem por paciente (só na memória)
 let declaracao = null;   // declaração em preparação (só na memória)
 
-const PERFIL_PADRAO = () => ({ tipoRegistro: 'perfil', nome: '', titulo: 'Psicólogo', crp: '', cpf: '', endereco: '', cidade: '', telefone: '', email: '', valorSessao: '', modelos: [] });
-const chaveDoc = d => `d:${d.pid}:${d.id}`;
-const chaveConteudo = d => `a:${d.pid}:${d.id}`;
+const PERFIL_PADRAO = () => ({ tipoRegistro: 'perfil', nome: '', titulo: 'Psicólogo', crp: '', cpf: '', endereco: '', cidade: '', telefone: '', email: '', valorSessao: '', modelos: [],
+  nfUrl: 'https://www.nfse.gov.br/EmissorNacional', nfDescricao: 'Serviços de psicologia: sessões de psicoterapia realizadas em {datas}.', assinaturaNoAdm: false });
+// Documentos da área administrativa (declarações de comparecimento, recibos, comprovantes) usam chaves "x:".
+const chaveDoc = d => d.adm ? `x:d:${d.pid}:${d.id}` : `d:${d.pid}:${d.id}`;
+const chaveConteudo = d => d.adm ? `x:f:${d.pid}:${d.id}` : `a:${d.pid}:${d.id}`;
 function docsDe(pid, tipo) {
   return documentos.filter(d => d.pid === pid && d.tipo === tipo)
     .sort((a, b) => (b.data || '').localeCompare(a.data || '') || (b.criadoEm || '').localeCompare(a.criadoEm || ''));
 }
 async function carregarExtras() {
   const [extras, docs] = await Promise.all([Cofre.lerTodos('c:'), Cofre.lerTodos('d:')]);
-  perfil = Object.assign(PERFIL_PADRAO(), extras.find(x => x.tipoRegistro === 'perfil') || {});
+  perfilAntigo = extras.find(x => x.tipoRegistro === 'perfil') || null; // até a versão 6, o perfil ficava na área clínica
   assinatura = extras.find(x => x.tipoRegistro === 'assinatura') || null;
+  senhaBackup = extras.find(x => x.tipoRegistro === 'senhabackup')?.senha || null;
+  numeros = extras.find(x => x.tipoRegistro === 'numeros') || null;
   documentos = docs;
 }
-const salvarPerfil = () => agendarSalvar('c:perfil', perfil);
+let perfilAntigo = null;
+const salvarPerfil = () => agendarSalvar('x:perfil', perfil);
 const perfilIncompleto = () => !perfil.nome.trim() || !perfil.crp.trim();
 
 function paraBase64(bytes) {
@@ -1658,6 +1859,8 @@ const MODELOS_MSG = [
   { nome: 'Remarcar', texto: 'Olá, {nome}. Precisarei remarcar nossa sessão de {data}, às {hora}. Você teria disponibilidade em outro horário?' },
   { nome: 'Não haverá sessão', texto: 'Olá, {nome}. Não poderei atender na {data}. Retomamos no horário habitual da semana seguinte.' },
   { nome: 'Documento', texto: 'Olá, {nome}. Segue o documento solicitado.' },
+  { nome: 'Pagamento', texto: 'Olá, {nome}! Passando para lembrar do pagamento deste mês. Qualquer dúvida, estou à disposição.' },
+  { nome: 'Aniversário', texto: 'Olá, {nome}! Feliz aniversário! Desejo a você um novo ano muito bom.' },
   { nome: 'Livre', texto: 'Olá, {nome}. ' }
 ];
 const dataMsg = ymd => ymd ? `${paraData(ymd).toLocaleDateString('pt-BR', { weekday: 'long' })}, ${dataCurta(ymd).slice(0, 5)}` : '[data]';
@@ -1666,20 +1869,20 @@ function montarMensagem(modelo, p, r) {
   return modelo.replaceAll('{nome}', primeiroNome(p.nome)).replaceAll('{data}', dataMsg(r.data)).replaceAll('{hora}', horaMsg(r.hora));
 }
 
-function abaMensagem(p) {
-  const r = rascunhoMsg[p.id] ||= { modelo: 0, data: '', hora: '', texto: null };
+function abaMensagem(p) { // p aqui é o cadastro administrativo do paciente
+  const r = rascunhoMsg[p.id] ||= (() => { const px = proximoHorario(p); return { modelo: 0, data: px?.data || '', hora: px?.hora || '', texto: null }; })();
   const modelos = [...MODELOS_MSG, ...(perfil.modelos || []).map(m => ({ ...m, meu: true }))];
   if (r.modelo >= modelos.length) r.modelo = 0;
 
   const botao = el('button', { type: 'button', class: 'primario largo com-icone centralizado' }, icone('mensagem'), el('span', { text: 'Abrir no WhatsApp' }));
   const avisoNum = el('small', { class: 'suave dica-campo' });
-  const tel = el('input', { type: 'tel', inputmode: 'tel', value: p.dados.telefone || '', placeholder: '(21) 99999-9999', 'aria-label': 'Telefone do paciente' });
+  const tel = el('input', { type: 'tel', inputmode: 'tel', value: p.telefone || '', placeholder: '(21) 99999-9999', 'aria-label': 'Telefone do paciente' });
   const atualizarNumero = () => {
     const n = numeroWhats(tel.value);
-    avisoNum.textContent = n ? `Será aberto o WhatsApp de +${n.slice(0, 2)} ${n.slice(2, 4)} ${n.slice(4)}.` : 'Informe o celular com DDD. Ele fica salvo na ficha.';
+    avisoNum.textContent = n ? `Será aberto o WhatsApp de +${n.slice(0, 2)} ${n.slice(2, 4)} ${n.slice(4)}.` : 'Informe o celular com DDD. Ele fica salvo no cadastro.';
     botao.disabled = !n;
   };
-  tel.addEventListener('input', () => { p.dados.telefone = tel.value; agendarSalvar('p:' + p.id, p); atualizarNumero(); });
+  tel.addEventListener('input', () => { p.telefone = tel.value; salvarCadastro(p); atualizarNumero(); });
 
   const texto = el('textarea', { rows: '4', 'aria-label': 'Texto da mensagem' });
   const preencher = () => { texto.value = montarMensagem(modelos[r.modelo].texto, p, r); r.texto = texto.value; r.editado = false; crescer(texto); };
@@ -1772,9 +1975,9 @@ async function reduzirImagem(arquivo, lado = 2200, qualidade = 0.85) {
   } catch { return null; }
 }
 
-async function guardarDocumento(p, tipo, { nome, mime, bytes, descricao, data = hojeISO(), texto = null, modelo = null }) {
+async function guardarDocumento(p, tipo, { nome, mime, bytes, descricao, data = hojeISO(), texto = null, modelo = null, adm = false }) {
   const agora = new Date().toISOString();
-  const d = { id: crypto.randomUUID(), pid: p.id, tipo, nome, descricao, mime, tamanho: bytes.length, data, texto, modelo, criadoEm: agora, atualizadoEm: agora };
+  const d = { id: crypto.randomUUID(), pid: p.id, tipo, nome, descricao, mime, tamanho: bytes.length, data, texto, modelo, adm, criadoEm: agora, atualizadoEm: agora };
   await Cofre.salvar(chaveConteudo(d), { id: d.id, b64: paraBase64(bytes), atualizadoEm: agora }); // primeiro o arquivo
   await Cofre.salvar(chaveDoc(d), d);                                                                  // depois a descrição
   documentos.push(d);
@@ -1912,6 +2115,7 @@ async function excluirDocumento(d, dlg) {
   await Cofre.apagar(chaveDoc(d));
   await Cofre.apagar(chaveConteudo(d));
   documentos = documentos.filter(x => x.id !== d.id);
+  if (d.tipo === 'comprovante') desligarComprovante(d);
   dlg.close(); dlg.remove();
   render(history.state);
 }
@@ -1959,6 +2163,7 @@ async function escolherAssinatura() {
   if (!img) return aviso('Não foi possível usar a imagem', 'Tente outra foto, em formato JPG ou PNG.');
   assinatura = { tipoRegistro: 'assinatura', ...img, atualizadoEm: new Date().toISOString() };
   await Cofre.salvar('c:assinatura', assinatura);
+  await atualizarCopiaAssinatura();
   telaPerfil();
 }
 async function removerAssinatura() {
@@ -1966,6 +2171,7 @@ async function removerAssinatura() {
   if (!ok) return;
   await Cofre.apagar('c:assinatura');
   assinatura = null;
+  await atualizarCopiaAssinatura();
   telaPerfil();
 }
 
@@ -2013,36 +2219,45 @@ const MODELOS_DOC = {
   acompanhamento: 'Declaração de acompanhamento',
   recibo: 'Recibo para reembolso'
 };
-function novaDeclaracao(p) {
+function novaDeclaracao(p, opcoes = {}) {
   const h = hojeISO();
-  declaracao = { pid: p.id, modelo: 'comparecimento', de: h.slice(0, 8) + '01', ate: h, excluidas: new Set(), valor: perfil.valorSessao || '', pagador: '', cpfPagador: '', emissao: h, texto: '', editado: false };
+  const c = cadastroDe(p.id) || p;
+  const de = opcoes.de || h.slice(0, 8) + '01', ate = opcoes.ate || h;
+  declaracao = { pid: p.id, modelo: opcoes.modelo || 'comparecimento', soPagas: !!opcoes.soPagas, de, ate, excluidas: new Set(), valor: valorPadrao(c), pagador: c.pagador || '', cpfPagador: c.cpfPagador || '', emissao: h, texto: '', editado: false };
   ir({ tela: 'declaracao', pid: p.id });
 }
-function sessoesDeclaracao(p, dc) {
-  return sessoesDe(p.id).filter(s => s.status === 'realizada' && s.data >= dc.de && s.data <= dc.ate);
+function sessoesDeclaracao(c, dc) { // atendimentos da agenda
+  return atendimentosDe(c.id).filter(a => (dc.modelo === 'recibo' && dc.soPagas ? a.pagamento === 'pago' : a.presenca === 'realizada') && a.data >= dc.de && a.data <= dc.ate);
 }
-function textoDeclaracao(p, dc) {
-  const ss = sessoesDeclaracao(p, dc).filter(s => !dc.excluidas.has(s.id));
+function textoDeclaracao(c, dc) {
+  const ss = sessoesDeclaracao(c, dc).filter(s => !dc.excluidas.has(s.id));
   const datas = ss.map(s => dataCurta(s.data));
-  const cpf = (p.dados.cpf || '').trim();
-  const quem = cpf ? `${p.nome} (CPF ${cpf})` : p.nome;
+  const cpf = (c.cpf || '').trim();
+  const quem = cpf ? `${c.nome} (CPF ${cpf})` : c.nome;
   if (dc.modelo === 'acompanhamento') {
-    const inicio = p.dados.inicio || sessoesDe(p.id)[0]?.data;
+    const p = pacientes.find(x => x.id === c.id) || { dados: {} };
+    const inicio = p.dados.inicio || sessoesDe(c.id)[0]?.data;
     const freq = (p.dados.frequencia || '').trim();
     return `Declaro, para os devidos fins, que ${quem} está em acompanhamento psicológico comigo${inicio ? ` desde ${dataExtenso(inicio)}` : ''}${freq ? `, com frequência ${freq}` : ''}.`;
   }
   if (dc.modelo === 'recibo') {
-    const v = valorNum(dc.valor), n = ss.length, total = v * n;
+    const vals = ss.map(s => valorNum(s.valor) || valorNum(dc.valor));
+    const n = ss.length, total = vals.reduce((t, v) => t + v, 0);
+    const iguais = vals.every(v => v === vals[0]);
     const pag = dc.pagador.trim();
     const pagador = pag ? (dc.cpfPagador.trim() ? `${pag} (CPF ${dc.cpfPagador.trim()})` : pag) : quem;
-    return `Recebi de ${pagador} a importância de R$ ${reais(total)} (${reaisPorExtenso(total)}), referente a ${n} ${n === 1 ? 'sessão' : 'sessões'} de psicoterapia${pag ? ` de ${quem}` : ''}, no valor de R$ ${reais(v)} cada, ${n === 1 ? 'realizada em' : 'realizadas nas datas'} ${listaNatural(datas) || '[datas]'}.\n\nPara clareza, firmo o presente recibo.`;
+    const detalhe = !n ? 'realizadas em [datas]'
+      : iguais ? (n === 1 ? `no valor de R$ ${reais(vals[0])}, realizada em ${datas[0]}` : `no valor de R$ ${reais(vals[0])} cada, realizadas nas datas ${listaNatural(datas)}`)
+        : `realizadas em ${listaNatural(ss.map((s, i) => `${dataCurta(s.data)} (R$ ${reais(vals[i])})`))}`;
+    return `Recebi de ${pagador} a importância de R$ ${reais(total)} (${reaisPorExtenso(total)}), referente a ${n} ${n === 1 ? 'sessão' : 'sessões'} de psicoterapia${pag ? ` de ${quem}` : ''}, ${detalhe}.\n\nPara clareza, firmo o presente recibo.`;
   }
   return `Declaro, para os devidos fins, que ${quem} compareceu a atendimento psicológico comigo ${datas.length === 1 ? 'em ' + datas[0] : datas.length ? 'nas seguintes datas: ' + listaNatural(datas) : 'em [datas]'}.`;
 }
 
 function telaDeclaracao(pid) {
-  const p = pacientes.find(x => x.id === pid);
+  const p = cadastroDe(pid);
   const dc = declaracao;
+  if (dc && dc.modelo === 'acompanhamento' && modo !== 'dono') dc.modelo = 'comparecimento';
   if (!p || !dc || dc.pid !== pid) { history.back(); return; }
   const texto = el('textarea', { rows: '6', 'aria-label': 'Texto do documento' });
   const folha = el('div', { class: 'folha-caixa' });
@@ -2056,9 +2271,10 @@ function telaDeclaracao(pid) {
     refazer.hidden = !dc.editado;
     folha.replaceChildren(folhaPrevia(p, dc.texto, dc));
     const avisos = [];
-    if (!p.dados.cpf) avisos.push('O CPF do paciente não está na ficha. Planos de saúde costumam exigi-lo.');
-    if (dc.modelo !== 'acompanhamento' && !sessoesDeclaracao(p, dc).filter(s => !dc.excluidas.has(s.id)).length) avisos.push('Nenhuma sessão realizada marcada neste período.');
-    if (dc.modelo === 'recibo' && !valorNum(dc.valor)) avisos.push('Informe o valor da sessão.');
+    if (!p.cpf) avisos.push('O CPF do paciente não está no cadastro. Planos de saúde costumam exigi-lo.');
+    if (modo === 'adm' && !assinatura) avisos.push('O documento sai sem a imagem da assinatura. Rodrigo assina depois, à mão ou pelo gov.br.');
+    if (dc.modelo !== 'acompanhamento' && !sessoesDeclaracao(p, dc).filter(s => !dc.excluidas.has(s.id)).length) avisos.push('Nenhum atendimento marcado neste período.');
+    if (dc.modelo === 'recibo' && /R\$ 0,00 \(/.test(dc.texto)) avisos.push('Informe o valor da sessão.');
     if (perfilIncompleto()) avisos.push('Faltam seu nome e CRP em Dados profissionais.');
     alertas.replaceChildren(...avisos.map(a => el('p', { class: 'faixa', text: a })));
   };
@@ -2067,7 +2283,7 @@ function telaDeclaracao(pid) {
     listaSessoes.replaceChildren(...(ss.length ? ss.map(s => el('label', { class: 'marcar' },
       el('input', { type: 'checkbox', checked: !dc.excluidas.has(s.id), onchange: e => { if (e.target.checked) dc.excluidas.delete(s.id); else dc.excluidas.add(s.id); atualizar(); } }),
       el('span', { text: `${dataCurta(s.data)}, ${diaSemana(s.data)}` })))
-      : [el('p', { class: 'suave pequeno', text: 'Nenhuma sessão com situação "realizada" neste período.' })]));
+      : [el('p', { class: 'suave pequeno', text: dc.modelo === 'recibo' && dc.soPagas ? 'Nenhum atendimento pago neste período.' : 'Nenhum atendimento com presença registrada neste período.' })]));
   };
   texto.addEventListener('input', () => { dc.texto = texto.value; dc.editado = true; crescer(texto); refazer.hidden = false; folha.replaceChildren(folhaPrevia(p, dc.texto, dc)); });
 
@@ -2076,8 +2292,8 @@ function telaDeclaracao(pid) {
   const campoTexto = (rotulo, chave, extra = {}) => el('label', { class: 'campo' }, el('span', { text: rotulo }),
     el('input', { type: 'text', value: dc[chave], ...extra, oninput: e => { dc[chave] = e.target.value; atualizar(); } }));
 
-  const tipos = el('div', { class: 'segmento tres', role: 'radiogroup', 'aria-label': 'Tipo de documento' },
-    Object.entries(MODELOS_DOC).map(([k, rotulo]) => el('button', {
+  const tipos = el('div', { class: modo === 'dono' ? 'segmento tres' : 'segmento dois', role: 'radiogroup', 'aria-label': 'Tipo de documento' },
+    Object.entries(MODELOS_DOC).filter(([k]) => k !== 'acompanhamento' || modo === 'dono').map(([k, rotulo]) => el('button', {
       type: 'button', role: 'radio', 'aria-checked': String(dc.modelo === k), class: dc.modelo === k ? 'ativo' : '', text: { comparecimento: 'Comparecimento', acompanhamento: 'Acompanhamento', recibo: 'Recibo' }[k],
       onclick: () => { dc.modelo = k; dc.editado = false; telaDeclaracao(pid); }
     })));
@@ -2091,7 +2307,10 @@ function telaDeclaracao(pid) {
         listaSessoes),
       dc.modelo === 'recibo' && cartao('Valores', 'tag',
         el('div', { class: 'grade' },
-          campoTexto('Valor por sessão (R$)', 'valor', { inputmode: 'decimal', placeholder: '200,00' }),
+          el('label', { class: 'marcar largo' },
+            el('input', { type: 'checkbox', checked: dc.soPagas, onchange: e => { dc.soPagas = e.target.checked; dc.excluidas.clear(); desenharSessoes(); atualizar(); } }),
+            el('span', { text: 'Só atendimentos marcados como pagos' })),
+          campoTexto('Valor por sessão (R$), para sessões sem valor próprio', 'valor', { inputmode: 'decimal', placeholder: '200,00' }),
           campoTexto('Pago por (se não for o paciente)', 'pagador', { placeholder: 'Nome do responsável' }),
           campoTexto('CPF de quem pagou', 'cpfPagador', { inputmode: 'numeric' }))),
       cartao('Texto', 'texto', texto, refazer,
@@ -2138,7 +2357,7 @@ async function emitirDeclaracao(p) {
     return;
   }
   if (/\[datas\]/.test(dc.texto)) return aviso('Faltam as datas', 'Marque ao menos uma sessão ou escreva as datas no texto.');
-  if (!assinatura) {
+  if (!assinatura && modo === 'dono') {
     const seguir = await dialogo({ titulo: 'Sem carimbo e assinatura', texto: 'O documento sairá sem a imagem do carimbo e da assinatura. Gerar assim mesmo?', botoes: [{ rotulo: 'Voltar', valor: null }, { rotulo: 'Gerar assim', valor: true, estilo: 'primario' }] });
     if (!seguir) return;
   }
@@ -2146,11 +2365,11 @@ async function emitirDeclaracao(p) {
   const titulo = MODELOS_DOC[dc.modelo];
   const periodo = dc.modelo === 'acompanhamento' ? '' : (dc.de.slice(0, 7) === dc.ate.slice(0, 7) ? ` (${mesAno(dc.de)})` : ` (${dataCurta(dc.de)} a ${dataCurta(dc.ate)})`);
   const nomeArq = `${titulo} - ${p.nome} - ${dc.emissao}.pdf`.replace(/[\\/:*?"<>|]/g, '-');
-  const d = await guardarDocumento(p, 'emitido', { nome: nomeArq, mime: 'application/pdf', bytes, descricao: titulo + periodo, data: dc.emissao, texto: dc.texto, modelo: dc.modelo });
+  const d = await guardarDocumento(p, 'emitido', { nome: nomeArq, mime: 'application/pdf', bytes, descricao: titulo + periodo, data: dc.emissao, texto: dc.texto, modelo: dc.modelo, adm: dc.modelo !== 'acompanhamento' });
   declaracao = null;
   const acao = await dialogo({
     titulo: 'Documento pronto',
-    texto: 'Ficou guardado na aba Emitidos. Para mandar ao paciente, toque em Enviar e escolha o WhatsApp.',
+    texto: 'Ficou guardado em Documentos. Para mandar ao paciente, toque em Enviar e escolha o WhatsApp.',
     botoes: [{ rotulo: 'Fechar', valor: null }, { rotulo: 'Enviar', valor: true, estilo: 'primario' }]
   });
   history.back();
@@ -2302,10 +2521,90 @@ function montarPdf(conteudos, imagem, W, H) {
 }
 
 
-// ---------- Início ----------
-(async function iniciar() {
-  if ('serviceWorker' in navigator && location.protocol === 'https:' && !window.SEM_SW) navigator.serviceWorker.register('sw.js').catch(() => { });
-  Object.assign(config, await Cofre.lerConfig());
-  if (await Cofre.existe()) telaBloqueio();
-  else telaCriacao();
-})();
+// =====================================================================
+// Versão 6: agenda do dia, pagamentos, busca geral e backup em um toque
+// =====================================================================
+let senhaBackup = null; // senha do backup lembrada (guardada cifrada no cofre)
+const DIAS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+const PAGAMENTO = { areceber: 'A receber', pago: 'Pago', naocobrar: 'Não cobrar' };
+const horariosDe = c => (c?.horarios || []).filter(h => h && h.hora !== undefined);
+const somarDias = (ymd, n) => { const d = paraData(ymd); d.setDate(d.getDate() + n); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+const agoraHHMM = () => new Date().toTimeString().slice(0, 5);
+function proximoHorario(p) {
+  const hs = horariosDe(p).filter(h => h.hora);
+  if (!hs.length) return null;
+  const hoje = hojeISO(), agora = agoraHHMM();
+  for (let n = 0; n < 15; n++) {
+    const dia = somarDias(hoje, n), sem = paraData(dia).getDay();
+    const cand = hs.filter(h => Number(h.dia) === sem && (n > 0 || h.hora >= agora)).sort((a, b) => a.hora.localeCompare(b.hora));
+    if (cand.length) return { data: dia, hora: cand[0].hora };
+  }
+  return null;
+}
+const horaCurta = h => h ? horaMsg(h) : '';
+
+// ---------- Busca em todos os pacientes ----------
+let termoGeral = '';
+function telaBuscaGeral() {
+  const entrada = el('input', { type: 'search', placeholder: 'Tema ou palavra', 'aria-label': 'Buscar em todos os pacientes', value: termoGeral });
+  const resultados = el('div', { class: 'pilha' });
+  const desenhar = () => {
+    termoGeral = entrada.value;
+    const q = semAcento(entrada.value.trim());
+    if (q.length < 2) {
+      resultados.replaceChildren(el('div', { class: 'cartao vazio-cartao' }, el('span', { class: 'ic-bolha grande' }, icone('busca')),
+        el('p', { text: 'Digite ao menos duas letras. A busca percorre as fichas e as sessões de todos os pacientes, inclusive arquivados, sem diferenciar acentos.' })));
+      return;
+    }
+    const grupos = [];
+    let total = 0;
+    for (const p of [...pacientes].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))) {
+      const achados = [];
+      const nomeBate = ocorrencias(p.nome, q).length > 0;
+      for (const [rotulo, txt] of [['Demanda inicial', p.demanda], ['Temas recorrentes', p.temas], ['Observações', p.observacoes]]) {
+        const f = ocorrencias(txt, q);
+        if (f.length) achados.push({ rotulo: 'Ficha: ' + rotulo, txt, f, ir: () => ir({ tela: 'ficha', id: p.id, aba: 'ficha' }) });
+      }
+      const ss = sessoesDe(p.id);
+      for (const s of [...ss].reverse()) {
+        for (const [rotulo, txt] of [['Relato', s.relato], ['Para retomar', s.retomar], ['Temas', s.temas]]) {
+          const f = ocorrencias(txt, q);
+          if (f.length) { achados.push({ rotulo: `Sessão ${ss.indexOf(s) + 1}, ${dataCurta(s.data)}`, txt, f, ir: () => ir({ tela: 'sessao', pid: p.id, sid: s.id }) }); break; }
+        }
+      }
+      if (!achados.length && !nomeBate) continue;
+      total += achados.length;
+      grupos.push(el('section', { class: 'cartao grupo-busca' },
+        el('button', { type: 'button', class: 'grupo-topo', onclick: () => { termoBusca = entrada.value; ir({ tela: 'ficha', id: p.id, aba: achados.length ? 'buscar' : 'retomar' }); } },
+          avatar(p), el('span', { class: 'nome', text: p.nome + (p.arquivado ? ' (arquivado)' : '') }),
+          el('span', { class: 'suave pequeno', text: achados.length ? `${achados.length} ${achados.length === 1 ? 'lugar' : 'lugares'}` : 'nome' })),
+        achados.slice(0, 3).map(a => el('button', { type: 'button', class: 'resultado-mini', onclick: a.ir },
+          el('small', { class: 'suave', text: a.rotulo }), trechoMarcado(a.txt, a.f))),
+        achados.length > 3 && el('button', { type: 'button', class: 'link', text: `Ver os ${achados.length} lugares`, onclick: () => { termoBusca = entrada.value; ir({ tela: 'ficha', id: p.id, aba: 'buscar' }); } })));
+    }
+    resultados.replaceChildren(
+      el('p', { class: 'suave pequeno', text: grupos.length ? `${grupos.length} ${grupos.length === 1 ? 'paciente' : 'pacientes'}, ${total} ${total === 1 ? 'lugar' : 'lugares'}` : 'Nada encontrado.' }),
+      ...grupos);
+  };
+  let t = null;
+  entrada.addEventListener('input', () => { clearTimeout(t); t = setTimeout(desenhar, 200); });
+  mostrar(
+    cabecalho('Buscar em tudo', { voltar: true }),
+    el('div', { class: 'conteudo' }, el('label', { class: 'campo-busca' }, icone('busca'), entrada), resultados));
+  desenhar();
+  entrada.focus();
+}
+
+// ---------- Senha do backup lembrada ----------
+async function lembrarSenhaBackup(senha) {
+  senhaBackup = senha;
+  await Cofre.salvar('c:senhabackup', { tipoRegistro: 'senhabackup', senha, atualizadoEm: new Date().toISOString() });
+}
+async function esquecerSenhaBackup() {
+  const ok = await dialogo({ titulo: 'Esquecer a senha do backup?', texto: 'Nos próximos backups, o app vai pedir a senha de novo.', botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Esquecer', valor: true, estilo: 'primario' }] });
+  if (!ok) return;
+  await Cofre.apagar('c:senhabackup');
+  senhaBackup = null;
+  telaConfig();
+}
+

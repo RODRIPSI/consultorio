@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- Política de segurança: connect-src 'none' proíbe o app de enviar ou buscar dados em qualquer servidor. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'self'; worker-src 'self'">
+<!-- Política de segurança: o app só pode falar com o login do Google e com a API do Drive (para ler as listas). Qualquer outro servidor é bloqueado. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' https://accounts.google.com/gsi/style; img-src 'self'; connect-src https://www.googleapis.com https://accounts.google.com/gsi/; frame-src https://accounts.google.com/gsi/; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'self'; worker-src 'self'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#E9ECE6" media="(prefers-color-scheme: light)">
@@ -19,5 +19,6 @@
 <noscript>Este app precisa de JavaScript ativado.</noscript>
 <script src="cofre.js"></script>
 <script src="app.js"></script>
+<script src="admin.js"></script>
 </body>
 </html>
