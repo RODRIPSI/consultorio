@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 9';
+const VERSAO = 'versão 10';
 let modo = null;              // 'dono' (senha mestra: tudo) ou 'adm' (senha do administrativo: só a parte administrativa)
 
 let pacientes = [];          // decifrados, só na memória enquanto desbloqueado
@@ -1767,7 +1767,7 @@ let documentos = [];     // só a descrição dos documentos; o arquivo é lido 
 let rascunhoMsg = {};    // rascunho da mensagem por paciente (só na memória)
 let declaracao = null;   // declaração em preparação (só na memória)
 
-const PERFIL_PADRAO = () => ({ tipoRegistro: 'perfil', nome: '', titulo: 'Psicólogo', crp: '', cpf: '', endereco: '', cidade: '', telefone: '', email: '', valorSessao: '', modelos: [],
+const PERFIL_PADRAO = () => ({ tipoRegistro: 'perfil', nome: '', titulo: 'Psicólogo', crp: '', cpf: '', clinica: '', cnpj: '', logo: null, endereco: '', cidade: '', telefone: '', email: '', valorSessao: '', modelos: [],
   nfUrl: 'https://www.nfse.gov.br/EmissorNacional', nfDescricao: 'Serviços de psicologia: sessões de psicoterapia realizadas em {datas}.', assinaturaNoAdm: false });
 // Documentos da área administrativa (declarações de comparecimento, recibos, comprovantes) usam chaves "x:".
 const chaveDoc = d => d.adm ? `x:d:${d.pid}:${d.id}` : `d:${d.pid}:${d.id}`;
@@ -2030,7 +2030,8 @@ function abaEmitidos(p) {
   return el('div', { class: 'pilha' },
     el('div', { class: 'botoes-linha' },
       el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => novaDeclaracao(p) }, icone('assinar'), el('span', { text: 'Nova declaração' })),
-      el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => adicionarDocumentos(p, 'emitido') }, icone('clipe'), el('span', { text: 'Guardar arquivo' }))),
+      el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => adicionarDocumentos(p, 'emitido') }, icone('clipe'), el('span', { text: 'Guardar arquivo' })),
+      el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: emitirNfse }, icone('moeda'), el('span', { text: 'Emitir NFS-e' }))),
     perfilIncompleto() && el('div', { class: 'faixa' },
       el('p', { text: 'Antes da primeira declaração, preencha seus dados profissionais e a imagem do carimbo com assinatura.' }),
       el('button', { type: 'button', class: 'link', text: 'Preencher agora', onclick: () => ir({ tela: 'perfil' }) })),
@@ -2038,6 +2039,11 @@ function abaEmitidos(p) {
       : el('div', { class: 'cartao vazio-cartao' },
         el('span', { class: 'ic-bolha grande' }, icone('assinar')),
         el('p', { text: 'Declarações e recibos emitidos para este paciente ficam guardados aqui.' })));
+}
+// Abre o site de emissão da nota fiscal (Emissor Nacional). Nenhum dado do paciente é enviado.
+function emitirNfse() {
+  const url = /^https:\/\//.test(perfil.nfUrl || '') ? perfil.nfUrl : 'https://www.nfse.gov.br/EmissorNacional/Login';
+  abrirExterno(url);
 }
 
 async function lerConteudo(d) {
@@ -2133,20 +2139,35 @@ function telaPerfil() {
     previa.replaceChildren(c);
     await desenharImagem(c, deBase64(assinatura.jpeg), 'image/jpeg', 900);
   };
+  const previaLogo = el('div', { class: 'assinatura-caixa' });
+  const desenharLogo = async () => {
+    if (!perfil.logo) { previaLogo.replaceChildren(el('p', { class: 'suave', text: 'Sem logotipo: o topo dos documentos mostra seu nome e profissão.' })); return; }
+    const c = el('canvas', { class: 'assinatura-previa', 'aria-label': 'Logotipo' });
+    previaLogo.replaceChildren(c);
+    await desenharImagem(c, deBase64(perfil.logo.jpeg), 'image/jpeg', 900);
+  };
   mostrar(
     cabecalho('Dados profissionais', { voltar: true, status: true }),
     el('div', { class: 'conteudo pilha' },
       cartao('Como aparecem nos documentos', 'pessoa',
         el('div', { class: 'grade' },
           campo('Nome completo', 'nome', { largo: true }),
-          campo('Profissão', 'titulo', { dica: 'Psicólogo, psicanalista' }),
+          campo('Profissão (sai abaixo da assinatura)', 'titulo', { dica: 'Psicólogo Clínico' }),
           campo('CRP', 'crp', { dica: '05/12345' }),
-          campo('CPF', 'cpf', { modo: 'numeric' }),
+          campo('Nome da clínica', 'clinica', { dica: 'Clínica Psicológica …' }),
+          campo('CNPJ', 'cnpj', { modo: 'numeric' }),
           campo('Cidade', 'cidade', { dica: 'Rio de Janeiro' }),
           campo('Endereço do consultório', 'endereco', { largo: true }),
           campo('Telefone', 'telefone', { tipo: 'tel' }),
           campo('E-mail', 'email', { tipo: 'email' }),
-          campo('Valor da sessão (R$)', 'valorSessao', { modo: 'decimal', dica: '200,00' }))),
+          campo('Valor da sessão (R$)', 'valorSessao', { modo: 'decimal', dica: '200,00' }),
+          campo('Seu CPF (não sai nos documentos; só ajuda a conferir notas fiscais)', 'cpf', { modo: 'numeric', largo: true }))),
+      cartao('Logotipo', 'imagem',
+        el('p', { class: 'suave pequeno', text: 'Aparece no alto de todas as declarações, relatórios e recibos. Use uma imagem com fundo branco.' }),
+        previaLogo,
+        el('div', { class: 'botoes-linha' },
+          el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: escolherLogo }, icone('imagem'), el('span', { text: perfil.logo ? 'Trocar logotipo' : 'Escolher logotipo' })),
+          perfil.logo && el('button', { type: 'button', class: 'secundario perigo-texto', text: 'Remover', onclick: removerLogo }))),
       cartao('Carimbo e assinatura', 'assinar',
         el('p', { class: 'suave pequeno', text: 'Carimbe e assine uma folha branca, fotografe de perto, com boa luz e sem sombra. O app limpa o fundo, recorta e insere a imagem em toda declaração.' }),
         previa,
@@ -2154,8 +2175,54 @@ function telaPerfil() {
           el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: escolherAssinatura }, icone('imagem'), el('span', { text: assinatura ? 'Trocar imagem' : 'Escolher foto' })),
           assinatura && el('button', { type: 'button', class: 'secundario perigo-texto', text: 'Remover', onclick: removerAssinatura })))));
   desenharPrevia();
+  desenharLogo();
 }
 
+// Logotipo: preserva as cores (ex.: dourado), coloca sobre fundo branco e recorta as margens.
+async function prepararLogo(arquivo) {
+  try {
+    const bmp = await createImageBitmap(arquivo, { imageOrientation: 'from-image' });
+    const k = Math.min(1, 900 / Math.max(bmp.width, bmp.height));
+    const w = Math.round(bmp.width * k), h = Math.round(bmp.height * k);
+    const c = el('canvas', { width: String(w), height: String(h) });
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(bmp, 0, 0, w, h);
+    const px = ctx.getImageData(0, 0, w, h).data;
+    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const j = (y * w + x) * 4;
+      if (px[j] > 242 && px[j + 1] > 242 && px[j + 2] > 242) continue;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    if (x1 < 0) return null;
+    const m = 6;
+    x0 = Math.max(0, x0 - m); y0 = Math.max(0, y0 - m); x1 = Math.min(w - 1, x1 + m); y1 = Math.min(h - 1, y1 + m);
+    const cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+    const r = el('canvas', { width: String(cw), height: String(ch) });
+    const rc = r.getContext('2d');
+    rc.fillStyle = '#fff'; rc.fillRect(0, 0, cw, ch);
+    rc.drawImage(c, x0, y0, cw, ch, 0, 0, cw, ch);
+    const blob = await new Promise(ok => r.toBlob(ok, 'image/jpeg', 0.92));
+    return { jpeg: paraBase64(new Uint8Array(await blob.arrayBuffer())), w: cw, h: ch };
+  } catch { return null; }
+}
+async function escolherLogo() {
+  const [f] = await escolherArquivos({ accept: 'image/*' });
+  if (!f) return;
+  const img = await prepararLogo(f);
+  if (!img) return aviso('Não foi possível usar a imagem', 'Tente outra imagem, em formato JPG ou PNG.');
+  perfil.logo = img;
+  salvarPerfil(); await salvarAgora();
+  telaPerfil();
+}
+async function removerLogo() {
+  const ok = await dialogo({ titulo: 'Remover o logotipo?', botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Remover', valor: true, estilo: 'perigo' }] });
+  if (!ok) return;
+  perfil.logo = null;
+  salvarPerfil(); await salvarAgora();
+  telaPerfil();
+}
 async function escolherAssinatura() {
   const [f] = await escolherArquivos({ accept: 'image/*' });
   if (!f) return;
@@ -2213,17 +2280,53 @@ async function limparAssinatura(arquivo) {
   } catch { return null; }
 }
 
-// ---------- Declarações e recibos ----------
+// ---------- Declarações, relatório e recibos ----------
+// Versão 10: seis modelos próprios (redação de Rodrigo, alinhada à Resolução CFP 06/2019),
+// logotipo no topo, rodapé com clínica e CNPJ e assinatura sem CPF.
 const MODELOS_DOC = {
-  comparecimento: 'Declaração de comparecimento',
+  inicio: 'Declaração de início de tratamento',
   acompanhamento: 'Declaração de acompanhamento',
+  horarios: 'Declaração de acompanhamento com dias e horários',
+  comparecimento: 'Declaração de comparecimento',
+  pessoal: 'Declaração de análise ou psicoterapia pessoal',
+  relatorio: 'Relatório psicológico para reembolso',
   recibo: 'Recibo para reembolso'
 };
+const DOC_ADM = ['comparecimento', 'recibo'];                       // os únicos que o administrativo emite e vê
+const DOC_SESSOES = ['comparecimento', 'recibo', 'pessoal', 'relatorio']; // usam os atendimentos do período
+const tituloPdf = k => ({ horarios: 'Declaração de acompanhamento', pessoal: 'Declaração', relatorio: 'Relatório psicológico', recibo: 'Recibo' }[k] || MODELOS_DOC[k] || '');
+const DIAS_FRASE = ['aos domingos', 'às segundas-feiras', 'às terças-feiras', 'às quartas-feiras', 'às quintas-feiras', 'às sextas-feiras', 'aos sábados'];
+
+function diasHorariosDe(c) {
+  const hs = horariosDe(c).filter(h => h.hora !== '' && h.dia !== undefined && h.dia !== '');
+  if (!hs.length) return '';
+  return listaNatural(hs.map(h => `${DIAS_FRASE[Number(h.dia)] || ''}, às ${horaCurta(h.hora)}`.trim()));
+}
+function primeiraPresenca(pid) {
+  return atendimentosDe(pid).filter(a => a.presenca === 'realizada').map(a => a.data).sort()[0] || '';
+}
+
 function novaDeclaracao(p, opcoes = {}) {
   const h = hojeISO();
   const c = cadastroDe(p.id) || p;
+  const pc = pacientes.find(x => x.id === p.id) || { dados: {} };
   const de = opcoes.de || h.slice(0, 8) + '01', ate = opcoes.ate || h;
-  declaracao = { pid: p.id, modelo: opcoes.modelo || 'comparecimento', soPagas: !!opcoes.soPagas, de, ate, excluidas: new Set(), valor: valorPadrao(c), pagador: c.pagador || '', cpfPagador: c.cpfPagador || '', emissao: h, texto: '', editado: false };
+  declaracao = {
+    pid: p.id, modelo: opcoes.modelo || (modo === 'dono' ? 'acompanhamento' : 'comparecimento'), soPagas: !!opcoes.soPagas, de, ate, excluidas: new Set(),
+    valor: valorPadrao(c), pagador: c.pagador || '', cpfPagador: c.cpfPagador || '', emissao: h, texto: '', editado: false,
+    // comuns às declarações
+    incluirCpf: true, finalidade: '',
+    inicio: pc.dados?.inicio || sessoesDe(p.id)[0]?.data || primeiraPresenca(p.id) || '',
+    // dias e horários
+    diasHorarios: diasHorariosDe(c) || pc.dados?.frequencia || '', termino: '',
+    // comparecimento de responsável
+    doResponsavel: false, responsavel: c.pagador || '', cpfResponsavel: c.cpfPagador || '', nomeDependente: false,
+    // análise ou psicoterapia pessoal
+    instituicao: '', processo: 'análise pessoal', emAndamento: true,
+    // relatório
+    finalidadeRel: '', frequenciaRel: 'semanais', duracao: '50', demanda: '', analise: '', conclusao: '', cid: ''
+  };
+  if (modo !== 'dono' && !DOC_ADM.includes(declaracao.modelo)) declaracao.modelo = 'comparecimento';
   ir({ tela: 'declaracao', pid: p.id });
 }
 function sessoesDeclaracao(c, dc) { // atendimentos da agenda
@@ -2233,16 +2336,47 @@ function textoDeclaracao(c, dc) {
   const ss = sessoesDeclaracao(c, dc).filter(s => !dc.excluidas.has(s.id));
   const datas = ss.map(s => dataCurta(s.data));
   const cpf = (c.cpf || '').trim();
-  const quem = cpf ? `${c.nome} (CPF ${cpf})` : c.nome;
-  if (dc.modelo === 'acompanhamento') {
-    const p = pacientes.find(x => x.id === c.id) || { dados: {} };
-    const inicio = p.dados.inicio || sessoesDe(c.id)[0]?.data;
-    const freq = (p.dados.frequencia || '').trim();
-    return `Declaro, para os devidos fins, que ${quem} está em acompanhamento psicológico comigo${inicio ? ` desde ${dataExtenso(inicio)}` : ''}${freq ? `, com frequência ${freq}` : ''}.`;
+  const quem = cpf ? `${c.nome} (CPF ${cpf})` : c.nome; // usado no recibo
+  const id = dc.incluirCpf && cpf ? `${c.nome}, CPF ${cpf},` : c.nome;
+  const ini = dc.inicio ? dataExtenso(dc.inicio) : '[data de início]';
+  const fin = dc.finalidade.trim() ? `\n\nDeclaração emitida a pedido do(a) interessado(a), para fins de ${dc.finalidade.trim().replace(/\.$/, '')}.` : '';
+  const fecho = '\n\nColoco-me à disposição para eventuais esclarecimentos.';
+  const n = ss.length;
+
+  if (dc.modelo === 'inicio')
+    return `Declaro, para os devidos fins, que ${id} iniciou acompanhamento psicológico sob meus cuidados profissionais em ${ini}.${fin}${fecho}`;
+  if (dc.modelo === 'acompanhamento')
+    return `Declaro, para os devidos fins, que ${id} encontra-se em acompanhamento psicológico sob meus cuidados profissionais desde ${ini}.${fin}${fecho}`;
+  if (dc.modelo === 'horarios') {
+    const end = (perfil.endereco || '').trim();
+    const term = dc.termino ? `A previsão de término do acompanhamento é ${dataExtenso(dc.termino)}.` : 'Não há, até o momento, previsão de término do acompanhamento.';
+    return `Declaro, para os devidos fins, que ${id} encontra-se em acompanhamento psicológico sob meus cuidados profissionais desde ${ini}, com sessões realizadas ${dc.diasHorarios.trim() || '[dias e horários]'}${end ? `, no consultório situado à ${end}` : ''}.\n\n${term}${fin}${fecho}`;
+  }
+  if (dc.modelo === 'pessoal') {
+    const inst = dc.instituicao.trim();
+    const qtd = n ? `${n} (${porExtenso(n)}) ${n === 1 ? 'sessão' : 'sessões'}` : '[número de sessões]';
+    const andamento = dc.emAndamento ? '\n\nO processo encontra-se em andamento até a presente data.' : '';
+    return `Declaro, para fins de comprovação${inst ? ` junto a ${inst}` : ''}, que ${id} realizou ${dc.processo} sob meus cuidados profissionais no período de ${dataCurta(dc.de)} a ${dataCurta(dc.ate)}, totalizando ${qtd}.${andamento}${fecho}`;
+  }
+  if (dc.modelo === 'relatorio') {
+    const pc = pacientes.find(x => x.id === c.id) || { dados: {} };
+    const nasc = pc.dados?.nascimento || c.nascimento || '';
+    const qtd = n ? `${n} (${porExtenso(n)}) ${n === 1 ? 'sessão' : 'sessões'}` : '[número de sessões]';
+    const partes = [
+      '## 1. Identificação',
+      `Autor: ${perfil.nome || '[seu nome]'} – CRP ${perfil.crp || '[CRP]'}\nInteressado: ${c.nome}${nasc ? ` – nascimento ${dataCurta(nasc)}` : ''}${dc.incluirCpf && cpf ? ` – CPF ${cpf}` : ''}\nFinalidade: instruir solicitação de reembolso junto a ${dc.finalidadeRel.trim() || '[operadora ou plano]'}`,
+      '## 2. Descrição da demanda', dc.demanda.trim() || '[descreva a demanda]',
+      '## 3. Procedimento',
+      `Atendimento psicológico individual, em sessões ${dc.frequenciaRel.trim() || 'semanais'} de ${dc.duracao.trim() || '50'} minutos, iniciado em ${ini}. No período de ${dataCurta(dc.de)} a ${dataCurta(dc.ate)}, foram realizadas ${qtd}.`,
+      '## 4. Análise', dc.analise.trim() || '[escreva a análise]',
+      '## 5. Conclusão', dc.conclusao.trim() || '[escreva a conclusão]'];
+    if (dc.cid.trim()) partes.push(`CID: ${dc.cid.trim()}`);
+    partes.push('Este relatório tem caráter sigiloso e destina-se exclusivamente à finalidade acima indicada.');
+    return partes.join('\n\n');
   }
   if (dc.modelo === 'recibo') {
     const vals = ss.map(s => valorNum(s.valor) || valorNum(dc.valor));
-    const n = ss.length, total = vals.reduce((t, v) => t + v, 0);
+    const total = vals.reduce((t, v) => t + v, 0);
     const iguais = vals.every(v => v === vals[0]);
     const pag = dc.pagador.trim();
     const pagador = pag ? (dc.cpfPagador.trim() ? `${pag} (CPF ${dc.cpfPagador.trim()})` : pag) : quem;
@@ -2251,14 +2385,24 @@ function textoDeclaracao(c, dc) {
         : `realizadas em ${listaNatural(ss.map((s, i) => `${dataCurta(s.data)} (R$ ${reais(vals[i])})`))}`;
     return `Recebi de ${pagador} a importância de R$ ${reais(total)} (${reaisPorExtenso(total)}), referente a ${n} ${n === 1 ? 'sessão' : 'sessões'} de psicoterapia${pag ? ` de ${quem}` : ''}, ${detalhe}.\n\nPara clareza, firmo o presente recibo.`;
   }
-  return `Declaro, para os devidos fins, que ${quem} compareceu a atendimento psicológico comigo ${datas.length === 1 ? 'em ' + datas[0] : datas.length ? 'nas seguintes datas: ' + listaNatural(datas) : 'em [datas]'}.`;
+  // comparecimento
+  const hora = n === 1 && ss[0].hora ? `, às ${horaCurta(ss[0].hora)}` : '';
+  const quando = n === 1 ? `em ${datas[0]}${hora}` : n ? 'nas seguintes datas: ' + listaNatural(datas) : 'em [datas]';
+  if (dc.doResponsavel) {
+    const resp = dc.responsavel.trim() || '[nome do responsável]';
+    const cpfR = dc.cpfResponsavel.trim();
+    const papel = dc.nomeDependente ? `na condição de responsável por ${c.nome}, em atendimento psicológico sob meus cuidados profissionais` : 'na condição de responsável, acompanhando dependente em atendimento psicológico sob meus cuidados profissionais';
+    return `Declaro, para os devidos fins, que ${resp}${cpfR ? `, CPF ${cpfR},` : ''} compareceu a este consultório ${quando}, ${papel}.${fin}${fecho}`;
+  }
+  return `Declaro, para os devidos fins, que ${id} compareceu a atendimento psicológico sob meus cuidados profissionais ${quando}.${fin}${fecho}`;
 }
 
 function telaDeclaracao(pid) {
   const p = cadastroDe(pid);
   const dc = declaracao;
-  if (dc && dc.modelo === 'acompanhamento' && modo !== 'dono') dc.modelo = 'comparecimento';
   if (!p || !dc || dc.pid !== pid) { history.back(); return; }
+  if (modo !== 'dono' && !DOC_ADM.includes(dc.modelo)) dc.modelo = 'comparecimento';
+  const usaSessoes = DOC_SESSOES.includes(dc.modelo);
   const texto = el('textarea', { rows: '6', 'aria-label': 'Texto do documento' });
   const folha = el('div', { class: 'folha-caixa' });
   const listaSessoes = el('div', { class: 'lista-marcar' });
@@ -2271,10 +2415,11 @@ function telaDeclaracao(pid) {
     refazer.hidden = !dc.editado;
     folha.replaceChildren(folhaPrevia(p, dc.texto, dc));
     const avisos = [];
-    if (!p.cpf) avisos.push('O CPF do paciente não está no cadastro. Planos de saúde costumam exigi-lo.');
+    if (!p.cpf && dc.modelo !== 'relatorio') avisos.push('O CPF do paciente não está no cadastro. Planos de saúde costumam exigi-lo.');
     if (modo === 'adm' && !assinatura) avisos.push('O documento sai sem a imagem da assinatura. Rodrigo assina depois, à mão ou pelo gov.br.');
-    if (dc.modelo !== 'acompanhamento' && !sessoesDeclaracao(p, dc).filter(s => !dc.excluidas.has(s.id)).length) avisos.push('Nenhum atendimento marcado neste período.');
+    if (usaSessoes && !sessoesDeclaracao(p, dc).filter(s => !dc.excluidas.has(s.id)).length) avisos.push('Nenhum atendimento marcado neste período.');
     if (dc.modelo === 'recibo' && /R\$ 0,00 \(/.test(dc.texto)) avisos.push('Informe o valor da sessão.');
+    if (/\[[^\]]+\]/.test(dc.texto)) avisos.push('Há informações entre colchetes para completar.');
     if (perfilIncompleto()) avisos.push('Faltam seu nome e CRP em Dados profissionais.');
     alertas.replaceChildren(...avisos.map(a => el('p', { class: 'faixa', text: a })));
   };
@@ -2287,65 +2432,142 @@ function telaDeclaracao(pid) {
   };
   texto.addEventListener('input', () => { dc.texto = texto.value; dc.editado = true; crescer(texto); refazer.hidden = false; folha.replaceChildren(folhaPrevia(p, dc.texto, dc)); });
 
+  // Mudar um campo refaz o texto automático, a menos que o texto final já tenha sido editado à mão
+  // (nesse caso aparece "Refazer o texto automático").
+  const mudou = () => atualizar();
   const campoData = (rotulo, chave, redesenhar) => el('label', { class: 'campo' }, el('span', { text: rotulo }),
-    el('input', { type: 'date', value: dc[chave], onchange: e => { if (!e.target.value) return; dc[chave] = e.target.value; if (redesenhar) desenharSessoes(); atualizar(); } }));
-  const campoTexto = (rotulo, chave, extra = {}) => el('label', { class: 'campo' }, el('span', { text: rotulo }),
-    el('input', { type: 'text', value: dc[chave], ...extra, oninput: e => { dc[chave] = e.target.value; atualizar(); } }));
+    el('input', { type: 'date', value: dc[chave], onchange: e => { dc[chave] = e.target.value; if (redesenhar) desenharSessoes(); mudou(); } }));
+  const campoTexto = (rotulo, chave, extra = {}) => el('label', { class: 'campo' + (extra.largo ? ' largo' : '') }, el('span', { text: rotulo }),
+    el('input', { type: 'text', value: dc[chave], placeholder: extra.placeholder, inputmode: extra.inputmode, oninput: e => { dc[chave] = e.target.value; mudou(); } }));
+  const caixa = (rotulo, chave, dica) => el('label', { class: 'campo largo' }, el('span', { text: rotulo }),
+    (() => { const t = el('textarea', { rows: '3', placeholder: dica || '' }); t.value = dc[chave]; t.addEventListener('input', () => { dc[chave] = t.value; crescer(t); mudou(); }); setTimeout(() => crescer(t)); return t; })());
+  const marcar = (rotulo, chave, redesenhar = false) => el('label', { class: 'marcar largo' },
+    el('input', { type: 'checkbox', checked: !!dc[chave], onchange: e => { dc[chave] = e.target.checked; if (redesenhar) telaDeclaracao(pid); else mudou(); } }),
+    el('span', { text: rotulo }));
 
-  const tipos = el('div', { class: modo === 'dono' ? 'segmento tres' : 'segmento dois', role: 'radiogroup', 'aria-label': 'Tipo de documento' },
-    Object.entries(MODELOS_DOC).filter(([k]) => k !== 'acompanhamento' || modo === 'dono').map(([k, rotulo]) => el('button', {
-      type: 'button', role: 'radio', 'aria-checked': String(dc.modelo === k), class: dc.modelo === k ? 'ativo' : '', text: { comparecimento: 'Comparecimento', acompanhamento: 'Acompanhamento', recibo: 'Recibo' }[k],
-      onclick: () => { dc.modelo = k; dc.editado = false; telaDeclaracao(pid); }
-    })));
+  const disponiveis = Object.keys(MODELOS_DOC).filter(k => modo === 'dono' || DOC_ADM.includes(k));
+  let tipos;
+  if (disponiveis.length > 2) {
+    const sel = el('select', { 'aria-label': 'Tipo de documento' }, disponiveis.map(k => el('option', { value: k, text: MODELOS_DOC[k] })));
+    sel.value = dc.modelo;
+    sel.addEventListener('change', () => {
+      dc.modelo = sel.value; dc.editado = false;
+      if ((dc.modelo === 'pessoal' || dc.modelo === 'relatorio') && dc.de === hojeISO().slice(0, 8) + '01') {
+        const pr = primeiraPresenca(pid); if (pr) dc.de = pr;
+      }
+      telaDeclaracao(pid);
+    });
+    tipos = el('label', { class: 'campo' }, el('span', { text: 'Tipo de documento' }), sel);
+  } else {
+    tipos = el('div', { class: 'segmento dois', role: 'radiogroup', 'aria-label': 'Tipo de documento' },
+      disponiveis.map(k => el('button', {
+        type: 'button', role: 'radio', 'aria-checked': String(dc.modelo === k), class: dc.modelo === k ? 'ativo' : '', text: { comparecimento: 'Comparecimento', recibo: 'Recibo' }[k] || MODELOS_DOC[k],
+        onclick: () => { dc.modelo = k; dc.editado = false; telaDeclaracao(pid); }
+      })));
+  }
+
+  const ehDeclaracao = !['recibo', 'relatorio'].includes(dc.modelo);
+  const blocosModelo = [];
+  if (['inicio', 'acompanhamento', 'horarios', 'relatorio'].includes(dc.modelo))
+    blocosModelo.push(cartao('Início do acompanhamento', 'calendario', el('div', { class: 'grade duas' }, campoData('Data de início', 'inicio', false))));
+  if (dc.modelo === 'horarios')
+    blocosModelo.push(cartao('Dias e horários', 'calendario', el('div', { class: 'grade' },
+      campoTexto('Dias e horários das sessões', 'diasHorarios', { largo: true, placeholder: 'às terças-feiras, às 18h' }),
+      el('div', { class: 'grade duas' }, campoData('Previsão de término (deixe vazio se não houver)', 'termino', false)))));
+  if (dc.modelo === 'comparecimento')
+    blocosModelo.push(cartao('Quem compareceu', 'pessoa', el('div', { class: 'grade' },
+      marcar('Foi um responsável (pai, mãe, familiar) que acompanhou o paciente', 'doResponsavel', true),
+      dc.doResponsavel && campoTexto('Nome do responsável', 'responsavel', { largo: true }),
+      dc.doResponsavel && campoTexto('CPF do responsável (opcional)', 'cpfResponsavel', { inputmode: 'numeric' }),
+      dc.doResponsavel && marcar('Incluir o nome do paciente (por sigilo, pode ficar de fora)', 'nomeDependente'))));
+  if (dc.modelo === 'pessoal') {
+    const proc = el('select', { 'aria-label': 'Tipo de processo' }, ['análise pessoal', 'psicoterapia individual'].map(v => el('option', { value: v, text: v[0].toUpperCase() + v.slice(1) })));
+    proc.value = dc.processo;
+    proc.addEventListener('change', () => { dc.processo = proc.value; mudou(); });
+    blocosModelo.push(cartao('Análise ou psicoterapia pessoal', 'pessoa', el('div', { class: 'grade' },
+      el('label', { class: 'campo' }, el('span', { text: 'Processo' }), proc),
+      campoTexto('Instituição (opcional)', 'instituicao', { placeholder: 'Ex.: instituição de formação' }),
+      marcar('O processo continua em andamento', 'emAndamento'))));
+  }
+  if (dc.modelo === 'relatorio')
+    blocosModelo.push(cartao('Partes do relatório', 'texto', el('div', { class: 'grade' },
+      campoTexto('Operadora ou plano de saúde', 'finalidadeRel', { largo: true }),
+      campoTexto('Frequência das sessões', 'frequenciaRel', { placeholder: 'semanais' }),
+      campoTexto('Duração (minutos)', 'duracao', { inputmode: 'numeric' }),
+      caixa('Descrição da demanda', 'demanda'),
+      caixa('Análise', 'analise'),
+      caixa('Conclusão', 'conclusao', 'Ex.: indicação de continuidade e número de sessões previstas'),
+      campoTexto('CID (opcional)', 'cid', { largo: true, placeholder: 'Deixe vazio para não incluir' }))));
+  if (dc.modelo !== 'recibo') {
+    const extras = [];
+    if (p.cpf) extras.push(marcar(dc.modelo === 'relatorio' ? 'Incluir o CPF do paciente' : 'Incluir o CPF do paciente no texto', 'incluirCpf'));
+    if (ehDeclaracao) extras.push(campoTexto('Finalidade (opcional)', 'finalidade', { largo: true, placeholder: 'Ex.: apresentação ao empregador' }));
+    if (extras.length) blocosModelo.push(cartao('Opções', 'tag', el('div', { class: 'grade' }, extras)));
+  }
 
   mostrar(
     cabecalho(MODELOS_DOC[dc.modelo], { voltar: true, sub: p.nome }),
     el('div', { class: 'conteudo pilha' },
       tipos,
-      dc.modelo !== 'acompanhamento' && cartao('Sessões incluídas', 'calendario',
+      ...blocosModelo,
+      usaSessoes && cartao(dc.modelo === 'pessoal' || dc.modelo === 'relatorio' ? 'Período e sessões' : 'Sessões incluídas', 'calendario',
         el('div', { class: 'grade duas' }, campoData('De', 'de', true), campoData('Até', 'ate', true)),
         listaSessoes),
       dc.modelo === 'recibo' && cartao('Valores', 'tag',
         el('div', { class: 'grade' },
           el('label', { class: 'marcar largo' },
-            el('input', { type: 'checkbox', checked: dc.soPagas, onchange: e => { dc.soPagas = e.target.checked; dc.excluidas.clear(); desenharSessoes(); atualizar(); } }),
+            el('input', { type: 'checkbox', checked: dc.soPagas, onchange: e => { dc.soPagas = e.target.checked; dc.excluidas.clear(); desenharSessoes(); mudou(); } }),
             el('span', { text: 'Só atendimentos marcados como pagos' })),
           campoTexto('Valor por sessão (R$), para sessões sem valor próprio', 'valor', { inputmode: 'decimal', placeholder: '200,00' }),
           campoTexto('Pago por (se não for o paciente)', 'pagador', { placeholder: 'Nome do responsável' }),
           campoTexto('CPF de quem pagou', 'cpfPagador', { inputmode: 'numeric' }))),
-      cartao('Texto', 'texto', texto, refazer,
+      cartao('Texto final (pode editar à vontade)', 'texto', texto, refazer,
         el('div', { class: 'grade duas' }, campoData('Data do documento', 'emissao', false))),
       alertas,
       cartao('Como vai ficar', 'arquivo', folha),
-      el('p', { class: 'suave pequeno', text: 'Os modelos seguem a Resolução CFP 06/2019: registram comparecimento, acompanhamento e valores, sem diagnóstico nem conteúdo das sessões.' })),
+      el('p', { class: 'suave pequeno', text: dc.modelo === 'relatorio'
+        ? 'O relatório segue as partes previstas na Resolução CFP 06/2019 (identificação, demanda, procedimento, análise e conclusão). Ele fica só na área clínica.'
+        : 'As declarações seguem a Resolução CFP 06/2019: registram comparecimento, acompanhamento e valores, sem diagnóstico nem conteúdo das sessões.' })),
     el('button', { type: 'button', class: 'fab estendido', onclick: () => emitirDeclaracao(p) }, icone('assinar'), el('span', { text: 'Gerar PDF' })));
-  desenharSessoes();
+  if (usaSessoes) desenharSessoes();
   atualizar();
 }
 
 function linhasRodape() {
-  return [perfil.endereco, [perfil.telefone, perfil.email].filter(x => (x || '').trim()).join('   ')].filter(x => (x || '').trim());
+  const junta = (...xs) => xs.filter(x => (x || '').trim()).join(' · ');
+  return [
+    junta(perfil.clinica, perfil.cnpj && 'CNPJ ' + perfil.cnpj),
+    junta(perfil.crp && 'CRP ' + perfil.crp, perfil.telefone, perfil.email),
+    (perfil.endereco || '').trim()
+  ].filter(Boolean);
 }
 function tituloProfissional() { return [perfil.titulo, perfil.crp && 'CRP ' + perfil.crp].filter(x => (x || '').trim()).join(', '); }
 function localEData(ymd) { return `${perfil.cidade ? perfil.cidade.trim() + ', ' : ''}${dataExtenso(ymd)}.`; }
 
 // Prévia em HTML da folha, no mesmo desenho do PDF.
 function folhaPrevia(p, texto, dc = null) {
-  const modelo = dc ? dc.modelo : null;
-  const titulo = (modelo ? MODELOS_DOC[modelo] : '').replace(' para reembolso', '');
+  const titulo = dc ? tituloPdf(dc.modelo) : '';
   const assin = el('div', { class: 'folha-assinatura' });
   if (assinatura) {
     const c = el('canvas', { 'aria-label': 'Carimbo e assinatura' });
     assin.append(c);
     desenharImagem(c, deBase64(assinatura.jpeg), 'image/jpeg', 700).catch(() => { });
   }
+  let topo;
+  if (perfil.logo) {
+    const c = el('canvas', { 'aria-label': 'Logotipo', style: 'max-height:56px;width:auto;max-width:60%;display:block' });
+    desenharImagem(c, deBase64(perfil.logo.jpeg), 'image/jpeg', 600).catch(() => { });
+    topo = el('div', { class: 'folha-topo', style: 'align-items:flex-start;text-align:left' }, c);
+  } else topo = el('div', { class: 'folha-topo' }, el('strong', { text: perfil.nome || 'Seu nome' }), el('span', { text: tituloProfissional() }));
+  const pars = (texto || '').split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
   return el('div', { class: 'folha' },
-    el('div', { class: 'folha-topo' }, el('strong', { text: perfil.nome || 'Seu nome' }), el('span', { text: tituloProfissional() })),
+    topo,
     titulo && el('h4', { text: titulo.toUpperCase() }),
-    (texto || '').split(/\n\s*\n/).map(par => el('p', { text: par.trim() })),
+    dc?.modelo === 'relatorio' && el('p', { class: 'centro', style: 'font-style:italic;margin-top:-6px', text: 'Confidencial' }),
+    pars.map(par => par.startsWith('## ') ? el('p', { style: 'font-weight:700;margin-bottom:2px', text: par.slice(3) }) : el('p', { style: 'white-space:pre-line', text: par })),
     dc && el('p', { class: 'folha-data', text: localEData(dc.emissao) }),
     assin,
-    el('div', { class: 'folha-nome' }, el('span', { text: perfil.nome }), el('span', { text: tituloProfissional() }), perfil.cpf && el('span', { text: 'CPF ' + perfil.cpf })),
+    el('div', { class: 'folha-nome' }, el('span', { text: perfil.nome }), perfil.titulo && el('span', { text: perfil.titulo }), perfil.crp && el('span', { text: 'CRP ' + perfil.crp })),
     el('div', { class: 'folha-rodape' }, linhasRodape().map(l => el('span', { text: l }))));
 }
 
@@ -2357,15 +2579,19 @@ async function emitirDeclaracao(p) {
     return;
   }
   if (/\[datas\]/.test(dc.texto)) return aviso('Faltam as datas', 'Marque ao menos uma sessão ou escreva as datas no texto.');
+  if (/\[[^\]]+\]/.test(dc.texto)) {
+    const seguir = await dialogo({ titulo: 'Há campos por completar', texto: 'O texto ainda tem informações entre colchetes, como [data de início]. Gerar assim mesmo?', botoes: [{ rotulo: 'Voltar', valor: null }, { rotulo: 'Gerar assim', valor: true, estilo: 'primario' }] });
+    if (!seguir) return;
+  }
   if (!assinatura && modo === 'dono') {
     const seguir = await dialogo({ titulo: 'Sem carimbo e assinatura', texto: 'O documento sairá sem a imagem do carimbo e da assinatura. Gerar assim mesmo?', botoes: [{ rotulo: 'Voltar', valor: null }, { rotulo: 'Gerar assim', valor: true, estilo: 'primario' }] });
     if (!seguir) return;
   }
-  const bytes = gerarPdfDocumento({ titulo: MODELOS_DOC[dc.modelo].replace(' para reembolso', ''), texto: dc.texto, emissao: dc.emissao });
+  const bytes = gerarPdfDocumento({ titulo: tituloPdf(dc.modelo), subtitulo: dc.modelo === 'relatorio' ? 'Confidencial' : '', texto: dc.texto, emissao: dc.emissao });
   const titulo = MODELOS_DOC[dc.modelo];
-  const periodo = dc.modelo === 'acompanhamento' ? '' : (dc.de.slice(0, 7) === dc.ate.slice(0, 7) ? ` (${mesAno(dc.de)})` : ` (${dataCurta(dc.de)} a ${dataCurta(dc.ate)})`);
+  const periodo = !DOC_SESSOES.includes(dc.modelo) ? '' : (dc.de.slice(0, 7) === dc.ate.slice(0, 7) ? ` (${mesAno(dc.de)})` : ` (${dataCurta(dc.de)} a ${dataCurta(dc.ate)})`);
   const nomeArq = `${titulo} - ${p.nome} - ${dc.emissao}.pdf`.replace(/[\\/:*?"<>|]/g, '-');
-  const d = await guardarDocumento(p, 'emitido', { nome: nomeArq, mime: 'application/pdf', bytes, descricao: titulo + periodo, data: dc.emissao, texto: dc.texto, modelo: dc.modelo, adm: dc.modelo !== 'acompanhamento' });
+  const d = await guardarDocumento(p, 'emitido', { nome: nomeArq, mime: 'application/pdf', bytes, descricao: titulo + periodo, data: dc.emissao, texto: dc.texto, modelo: dc.modelo, adm: DOC_ADM.includes(dc.modelo) });
   declaracao = null;
   const acao = await dialogo({
     titulo: 'Documento pronto',
@@ -2375,7 +2601,6 @@ async function emitirDeclaracao(p) {
   history.back();
   if (acao) await compartilharDocumento(d, bytes);
 }
-
 // ---------- Gerador de PDF (feito aqui mesmo, sem biblioteca e sem internet) ----------
 const LARG_HELV = [278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,556,556,333,500,278,556,500,722,500,500,500,334,260,334,584,761,556,556,222,556,333,1000,556,556,333,1000,667,333,1000,556,611,556,556,222,222,333,333,350,556,1000,333,1000,500,333,944,556,500,667,278,333,556,556,556,556,260,556,333,737,370,556,584,333,737,333,400,584,333,333,333,556,537,278,333,333,365,556,834,834,834,611,667,667,667,667,667,667,1000,722,667,667,667,667,278,278,278,278,722,722,778,778,778,778,778,584,778,722,722,722,722,667,667,611,556,556,556,556,556,556,889,500,556,556,556,556,278,278,278,278,556,556,556,556,556,556,556,584,611,556,556,556,556,500,556,500];
 const LARG_HELV_B = [278,333,474,556,556,889,722,238,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,333,333,584,584,584,611,975,722,722,722,722,667,611,778,722,278,556,722,611,833,722,778,667,778,722,667,611,722,667,944,667,667,611,333,278,333,584,556,333,556,611,556,611,556,333,611,611,278,278,556,278,889,611,611,611,611,389,556,333,611,556,778,556,556,500,389,280,389,584,761,556,611,278,556,500,1000,556,556,333,1000,667,333,1000,611,611,611,611,278,278,500,500,350,556,1000,333,1000,556,333,944,611,500,667,278,333,556,556,556,556,280,556,333,737,370,556,584,333,737,333,400,584,333,333,333,611,556,278,333,333,365,556,834,834,834,611,722,722,722,722,722,722,1000,722,667,667,667,667,278,278,278,278,722,722,778,778,778,778,778,584,778,722,722,722,722,667,667,611,556,556,556,556,556,556,889,556,556,556,556,556,278,278,278,278,611,611,611,611,611,611,611,584,611,611,611,611,611,556,611,556];
@@ -2413,12 +2638,23 @@ function quebrarLinhas(texto, tam, max, negrito = false) {
   return linhas;
 }
 
-function gerarPdfDocumento({ titulo, texto, emissao }) {
+function gerarPdfDocumento({ titulo, subtitulo = '', texto, emissao }) {
   const W = 595.28, H = 841.89, ME = 72, MD = 72, MI = 70, LARG = W - ME - MD;
   const paginas = [];
+  const imagens = []; // { nome, bytes, w, h }
   let ops = [], y = H - 64;
   const novaPagina = () => { paginas.push(ops); ops = []; y = H - 64; };
+  let nomeLogo = null;
+  if (perfil.logo?.jpeg) { nomeLogo = 'Im' + (imagens.length + 1); imagens.push({ nome: nomeLogo, bytes: deBase64(perfil.logo.jpeg), w: perfil.logo.w, h: perfil.logo.h }); }
   const cabeca = () => {
+    if (nomeLogo) {
+      const k = Math.min(200 / perfil.logo.w, 58 / perfil.logo.h);
+      const iw = perfil.logo.w * k, ih = perfil.logo.h * k;
+      const topo = H - 40;
+      ops.push(`q ${iw.toFixed(2)} 0 0 ${ih.toFixed(2)} ${ME} ${(topo - ih).toFixed(2)} cm /${nomeLogo} Do Q`);
+      y = topo - ih - 40;
+      return;
+    }
     const nome = codigos1252(perfil.nome), sub = codigos1252(tituloProfissional());
     ops.push(`BT /F2 13 Tf ${(W - largura(nome, 13, true)) / 2} ${y} Td ${literalPdf(nome)} Tj ET`);
     y -= 16;
@@ -2427,7 +2663,7 @@ function gerarPdfDocumento({ titulo, texto, emissao }) {
     y -= 52;
   };
   const rodape = () => {
-    let yy = 44;
+    let yy = 40;
     for (const l of [...linhasRodape()].reverse()) {
       const c = codigos1252(l);
       ops.push(`0.4 g BT /F1 8.5 Tf ${(W - largura(c, 8.5)) / 2} ${yy} Td ${literalPdf(c)} Tj ET 0 g`);
@@ -2438,11 +2674,24 @@ function gerarPdfDocumento({ titulo, texto, emissao }) {
   if (titulo) {
     const t = codigos1252(titulo.toUpperCase());
     ops.push(`BT /F2 14 Tf ${(W - largura(t, 14, true)) / 2} ${y} Td ${literalPdf(t)} Tj ET`);
-    y -= 44;
+    y -= subtitulo ? 18 : 44;
+    if (subtitulo) {
+      const s = codigos1252(subtitulo);
+      ops.push(`0.35 g BT /F1 10.5 Tf ${(W - largura(s, 10.5)) / 2} ${y} Td ${literalPdf(s)} Tj ET 0 g`);
+      y -= 34;
+    }
   }
   const TAM = 11.5, ENTRE = 18;
-  const pars = texto.split(/\n\s*\n/).map(x => x.replace(/\s*\n\s*/g, ' ').trim()).filter(Boolean);
+  const pars = texto.split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
   for (const par of pars) {
+    if (par.startsWith('## ')) { // subtítulo de seção (relatório)
+      if (y < MI + 80) { rodape(); novaPagina(); cabeca(); }
+      y -= 4;
+      const c = codigos1252(par.slice(3).trim());
+      ops.push(`BT /F2 ${TAM} Tf 0 Tw ${ME} ${y.toFixed(2)} Td ${literalPdf(c)} Tj ET`);
+      y -= ENTRE;
+      continue;
+    }
     for (const ln of quebrarLinhas(par, TAM, LARG)) {
       if (y < MI + 40) { rodape(); novaPagina(); cabeca(); }
       const cods = codigos1252(ln.palavras.join(' '));
@@ -2453,40 +2702,42 @@ function gerarPdfDocumento({ titulo, texto, emissao }) {
     }
     y -= 8;
   }
-  // local e data, alinhados à direita
-  if (y < MI + 190) { rodape(); novaPagina(); cabeca(); }
+  // local e data, alinhados à direita; a assinatura fica sempre na mesma página que a data
+  if (y < MI + 200) { rodape(); novaPagina(); cabeca(); }
   y -= 18;
   const ld = codigos1252(localEData(emissao));
   ops.push(`BT /F1 ${TAM} Tf 0 Tw ${(W - MD - largura(ld, TAM)).toFixed(2)} ${y.toFixed(2)} Td ${literalPdf(ld)} Tj ET`);
   y -= 30;
   // carimbo e assinatura
-  let imagem = null;
   if (assinatura) {
-    imagem = { bytes: deBase64(assinatura.jpeg), w: assinatura.w, h: assinatura.h };
+    const nome = 'Im' + (imagens.length + 1);
+    imagens.push({ nome, bytes: deBase64(assinatura.jpeg), w: assinatura.w, h: assinatura.h });
     const k = Math.min(230 / assinatura.w, 95 / assinatura.h);
     const iw = assinatura.w * k, ih = assinatura.h * k;
     y -= ih;
-    ops.push(`q ${iw.toFixed(2)} 0 0 ${ih.toFixed(2)} ${((W - iw) / 2).toFixed(2)} ${y.toFixed(2)} cm /Im1 Do Q`);
+    ops.push(`q ${iw.toFixed(2)} 0 0 ${ih.toFixed(2)} ${((W - iw) / 2).toFixed(2)} ${y.toFixed(2)} cm /${nome} Do Q`);
     y -= 6;
   } else y -= 50;
   ops.push(`0 G 0.5 w ${W / 2 - 110} ${y} m ${W / 2 + 110} ${y} l S`);
   y -= 14;
-  for (const [l, neg, tam] of [[perfil.nome, true, 10.5], [tituloProfissional(), false, 9.5], [perfil.cpf ? 'CPF ' + perfil.cpf : '', false, 9.5]]) {
-    if (!l) continue;
+  // Nome, título e CRP. O CPF do profissional não aparece nos documentos.
+  for (const [l, neg, tam] of [[perfil.nome, true, 10.5], [perfil.titulo, false, 9.5], [perfil.crp ? 'CRP ' + perfil.crp : '', false, 9.5]]) {
+    if (!(l || '').trim()) continue;
     const c = codigos1252(l);
     ops.push(`BT /${neg ? 'F2' : 'F1'} ${tam} Tf 0 Tw ${((W - largura(c, tam, neg)) / 2).toFixed(2)} ${y.toFixed(2)} Td ${literalPdf(c)} Tj ET`);
     y -= 13;
   }
   rodape();
   paginas.push(ops);
-  return montarPdf(paginas.map(o => o.join('\n')), imagem, W, H);
+  return montarPdf(paginas.map(o => o.join('\n')), imagens, W, H);
 }
 
-function montarPdf(conteudos, imagem, W, H) {
+function montarPdf(conteudos, imagens, W, H) {
+  imagens = !imagens ? [] : Array.isArray(imagens) ? imagens : [{ nome: 'Im1', ...imagens }];
   const partes = []; let pos = 0; const offs = [];
   const bin = s => { const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i) & 255; return u; };
   const add = x => { const b = typeof x === 'string' ? bin(x) : x; partes.push(b); pos += b.length; };
-  const base = imagem ? 6 : 5;
+  const base = 5 + imagens.length;
   const n = conteudos.length;
   const kids = conteudos.map((_, i) => `${base + i * 2} 0 R`).join(' ');
   add('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
@@ -2495,15 +2746,17 @@ function montarPdf(conteudos, imagem, W, H) {
   obj(2, `<< /Type /Pages /Kids [${kids}] /Count ${n} >>`);
   obj(3, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
   obj(4, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
-  if (imagem) {
-    offs[5] = pos;
-    add(`5 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imagem.w} /Height ${imagem.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${imagem.bytes.length} >>\nstream\n`);
-    add(imagem.bytes);
+  imagens.forEach((im, i) => {
+    const num = 5 + i;
+    offs[num] = pos;
+    add(`${num} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.bytes.length} >>\nstream\n`);
+    add(im.bytes);
     add('\nendstream\nendobj\n');
-  }
+  });
+  const xobj = imagens.length ? ` /XObject << ${imagens.map((im, i) => `/${im.nome} ${5 + i} 0 R`).join(' ')} >>` : '';
   conteudos.forEach((c, i) => {
     const idPag = base + i * 2, idCont = idPag + 1;
-    obj(idPag, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>${imagem ? ' /XObject << /Im1 5 0 R >>' : ''} >> /Contents ${idCont} 0 R >>`);
+    obj(idPag, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>${xobj} >> /Contents ${idCont} 0 R >>`);
     const corpo = bin(c);
     offs[idCont] = pos;
     add(`${idCont} 0 obj\n<< /Length ${corpo.length} >>\nstream\n`);

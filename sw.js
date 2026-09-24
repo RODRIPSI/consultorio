@@ -3,12 +3,13 @@
    Também recebe comprovantes compartilhados de outros apps (WhatsApp, banco)
    e os guarda já cifrados, sem enviá-los a lugar nenhum.
    Ao publicar uma nova versão, mude o número abaixo. */
-const VERSAO = 'consultorio-v12';
+const VERSAO = 'consultorio-v13';
 const ARQUIVOS = ['./', './index.html', './estilo.css', './cofre.js', './app.js', './admin.js',
   './manifest.webmanifest', './icone-192.png', './icone-512.png'];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VERSAO).then(c => c.addAll(ARQUIVOS)).then(() => self.skipWaiting()));
+  // cache: 'reload' busca cada arquivo direto do site, sem usar cópias antigas do navegador.
+  e.waitUntil(caches.open(VERSAO).then(c => c.addAll(ARQUIVOS.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys()
