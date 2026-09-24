@@ -733,6 +733,7 @@ async function dialogoPagamento(c, g) {
       notaDoc ? el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => { fecharDialogos(); abrirDocumento(c, notaDoc); } }, icone('arquivo'), el('span', { text: 'Ver nota' }))
         : el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => { fecharDialogos(); abrirNotaFiscal(c, g); } }, icone('arquivo'), el('span', { text: 'Emitir nota fiscal' }))),
     !notaDoc && el('button', { type: 'button', class: 'link', text: 'Anexar PDF ou XML da nota', onclick: () => { fecharDialogos(); anexarNota(c, g); } }),
+    notaDoc && el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => { fecharDialogos(); enviarNotaWhatsApp(c, notaDoc, g); } }, icone('mensagem'), el('span', { text: `Enviar nota para ${primeiroNome(c.nome)} pelo WhatsApp` })),
     el('label', { class: 'marcar espaco-cima' },
       el('input', { type: 'checkbox', checked: !!g.nf.emitida, onchange: e => { g.nf.emitida = e.target.checked; salvarPag(g); } }),
       el('span', { text: 'Nota fiscal emitida' })),
@@ -1049,6 +1050,9 @@ async function concluirNota() {
   if (r.eid) { await Cofre.apagarEntrada(r.eid); entradaIds = entradaIds.filter(i => i !== r.eid); }
   notaRasc = null;
   indicarStatus('Nota guardada');
+  const enviar = await dialogo({ titulo: 'Nota guardada', texto: `A nota ficou guardada junto do pagamento de ${c.nome}. Quer enviá-la agora pelo WhatsApp?`,
+    botoes: [{ rotulo: 'Agora não', valor: null }, { rotulo: `Enviar para ${primeiroNome(c.nome)}`, valor: true, estilo: 'primario' }] });
+  if (enviar) await enviarNotaWhatsApp(c, d, g);
   if (entradaIds.length) { ir({ tela: 'pagar', eid: entradaIds[0] }, false); return; }
   ir({ tela: 'adm', id: c.id, aba: 'pagamentos' }, false);
 }
@@ -2238,4 +2242,34 @@ function telaFeriados(ano) {
           salvarPerfil(); telaFeriados(ano);
         } }, icone('mais'), el('span', { text: 'Adicionar' }))),
       el('p', { class: 'suave pequeno', text: `O aviso aparece na tela inicial ${DIAS_AVISO_FERIADO} dias antes de cada feriado ou data sem atendimento em que haja pacientes agendados.` })));
+}
+
+// ---------- Versão 12: enviar a nota fiscal ao paciente pelo WhatsApp ----------
+// O Android exige escolher o contato quando se envia um arquivo; a mensagem vai junto e também fica copiada.
+function mensagemNota(c, d, g) {
+  const numero = (g?.nf?.numero || '').trim();
+  const ref = g?.data ? nomeMes(g.data.slice(0, 7)).toLowerCase() : '';
+  return `Olá, ${primeiroNome(c.nome)}! Segue a nota fiscal${numero ? ' nº ' + numero : ''}${ref ? ` referente às sessões de ${ref}` : ''}. Qualquer dúvida, estou à disposição.`;
+}
+async function enviarNotaWhatsApp(c, d, g) {
+  const texto = mensagemNota(c, d, g);
+  try { await navigator.clipboard?.writeText(texto); } catch { }
+  const ok = await dialogo({ titulo: `Enviar para ${c.nome}`,
+    texto: `Vai abrir a lista de compartilhamento: escolha o WhatsApp e depois ${primeiroNome(c.nome)}. A mensagem vai junto; se não aparecer, é só colar, porque ela já está copiada.`,
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Abrir WhatsApp', valor: true, estilo: 'primario' }] });
+  if (!ok) return;
+  let bytes;
+  try { bytes = await lerConteudo(d); } catch { return aviso('Arquivo não encontrado', 'Não consegui abrir a nota guardada.'); }
+  const arquivo = new File([bytes], d.nome || 'nota-fiscal.pdf', { type: d.mime || 'application/pdf' });
+  const dados = { files: [arquivo], text: texto, title: d.descricao || 'Nota fiscal' };
+  const podeComTexto = navigator.canShare?.(dados);
+  if (podeComTexto || navigator.canShare?.({ files: [arquivo] })) {
+    liberarSaidaTemporaria();
+    try { await navigator.share(podeComTexto ? dados : { files: [arquivo], title: dados.title }); return; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  await salvarNoAparelho(d, bytes);
+  const n = numeroWhats(c.telefone);
+  if (n) abrirExterno(`https://wa.me/${n}?text=${encodeURIComponent(texto)}`);
+  aviso('Nota salva no aparelho', 'Não deu para anexar direto. A nota foi salva nos Downloads: no WhatsApp, toque no clipe e anexe o arquivo.');
 }

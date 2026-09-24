@@ -3,7 +3,7 @@
    Também recebe comprovantes compartilhados de outros apps (WhatsApp, banco)
    e os guarda já cifrados, sem enviá-los a lugar nenhum.
    Ao publicar uma nova versão, mude o número abaixo. */
-const VERSAO = 'consultorio-v14';
+const VERSAO = 'consultorio-v15';
 const ARQUIVOS = ['./', './index.html', './estilo.css', './cofre.js', './app.js', './admin.js',
   './manifest.webmanifest', './icone-192.png', './icone-512.png'];
 
@@ -19,8 +19,17 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method === 'POST' && url.pathname.endsWith('/receber')) { e.respondWith(receber(e.request)); return; }
-  if (e.request.method !== 'GET') return;
-  e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(r => r || fetch(e.request)));
+  if (e.request.method !== 'GET' || url.origin !== location.origin) return;
+  // Versão 12: primeiro o site (sempre a versão mais nova); sem internet, a cópia guardada deste app.
+  // A busca na cópia olha só a gaveta do Consultório, nunca a de outros apps do mesmo site (ex.: Bloco Mágico).
+  const chave = url.origin + url.pathname;
+  e.respondWith(fetch(url.href, { cache: 'no-cache', credentials: 'same-origin' })
+    .then(r => {
+      if (r.ok && r.type === 'basic') { const copia = r.clone(); caches.open(VERSAO).then(c => c.put(chave, copia)).catch(() => { }); }
+      return r;
+    })
+    .catch(() => caches.open(VERSAO).then(c => c.match(chave, { ignoreSearch: true }).then(r => r || c.match(e.request, { ignoreSearch: true })))
+      .then(r => r || Response.error())));
 });
 
 // ---------- Comprovantes compartilhados ----------
