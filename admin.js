@@ -83,6 +83,7 @@ function renderAdm(s) {
   if (s.tela === 'drive') { telaDrive(); return true; }
   if (s.tela === 'driveImportar') { telaImportarDrive(); return true; }
   if (s.tela === 'agenda') { telaAgenda(s.semana); return true; }
+  if (s.tela === 'agendaMes') { telaAgendaMes(s.ym); return true; }
   if (s.tela === 'agendar') { telaAgendar(s.id); return true; }
   if (s.tela === 'feriados') { telaFeriados(s.ano); return true; }
   return false;
@@ -2112,6 +2113,7 @@ function telaAgenda(inicio) {
     cabecalho('Agenda', { voltar: true, sub: `${fmt(seg)} a ${fmt(dom)}`, acoes: [botaoIcone('Feriados e dias sem atendimento', 'ajustes', () => ir({ tela: 'feriados' }))] }),
     el('div', { class: 'conteudo pilha' },
       cartaoAvisosAgenda(),
+      segmentoEscolha({ semana: 'Semana', mes: 'Mês' }, 'semana', k => { if (k === 'mes') ir({ tela: 'agendaMes', ym: seg.slice(0, 7) }, false); }, 'dois'),
       el('div', { class: 'botoes-linha' },
         el('button', { type: 'button', class: 'secundario compacto', text: '‹ Semana anterior', onclick: () => ir({ tela: 'agenda', semana: somarDias(seg, -7) }, false) }),
         el('button', { type: 'button', class: 'secundario compacto', text: 'Hoje', onclick: () => ir({ tela: 'agenda' }, false) }),
@@ -2272,4 +2274,51 @@ async function enviarNotaWhatsApp(c, d, g) {
   const n = numeroWhats(c.telefone);
   if (n) abrirExterno(`https://wa.me/${n}?text=${encodeURIComponent(texto)}`);
   aviso('Nota salva no aparelho', 'Não deu para anexar direto. A nota foi salva nos Downloads: no WhatsApp, toque no clipe e anexe o arquivo.');
+}
+
+// ---------- Versão 13: agenda do mês ----------
+function telaAgendaMes(ym) {
+  ym = ym || hojeISO().slice(0, 7);
+  const hoje = hojeISO(), primeiro = ym + '-01';
+  const inicio = segundaDaSemana(primeiro);
+  const ultimoDoMes = somarDias(somarMeses(ym, 1) + '-01', -1);
+  const fim = somarDias(segundaDaSemana(ultimoDoMes), 6);
+  const ocs = cadastros.filter(c => !c.arquivado).flatMap(c => ocorrenciasNoPeriodo(c, inicio, fim));
+  const validas = d => ocs.filter(o => o.data === d && !o.feriado && !o.cancelada).sort((a, b) => a.hora.localeCompare(b.hora) || a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
+  let totalMes = 0, feriadosMes = 0;
+  const celulas = [];
+  for (let d = inicio; d <= fim; d = somarDias(d, 1)) {
+    const doMes = d.slice(0, 7) === ym, sem = diaSemAtendimento(d), lista = validas(d);
+    if (doMes) { totalMes += lista.length; if (sem) feriadosMes++; }
+    const estilo = ['min-height:58px', 'padding:4px 5px', 'border-radius:10px', 'text-align:left', 'display:flex', 'flex-direction:column', 'gap:2px',
+      'border:' + (d === hoje ? '2px solid currentColor' : '1px solid rgba(128,128,128,.25)'),
+      'background:' + (sem ? 'rgba(198,40,40,.12)' : 'transparent'), doMes ? '' : 'opacity:.35'].filter(Boolean).join(';');
+    celulas.push(el('button', { type: 'button', style: estilo, 'aria-label': `${dataComDia(d)}: ${sem ? sem.nome + '. ' : ''}${lista.length} ${lista.length === 1 ? 'sessão' : 'sessões'}`,
+      onclick: () => abrirDiaDoMes(d, lista, sem) },
+      el('span', { style: 'font-weight:600', text: String(Number(d.slice(8))) }),
+      lista.length ? el('span', { style: 'font-size:.8em;font-weight:700', text: `${lista.length} ${lista.length === 1 ? 'sessão' : 'sessões'}` }) : null,
+      sem ? el('span', { style: 'font-size:.7em;line-height:1.1', text: sem.nome }) : null));
+  }
+  const cab = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'].map(t => el('span', { class: 'suave pequeno', style: 'text-align:center', text: t }));
+  mostrar(
+    cabecalho('Agenda', { voltar: true, sub: nomeMes(ym), acoes: [botaoIcone('Feriados e dias sem atendimento', 'ajustes', () => ir({ tela: 'feriados' }))] }),
+    el('div', { class: 'conteudo pilha' },
+      cartaoAvisosAgenda(),
+      segmentoEscolha({ semana: 'Semana', mes: 'Mês' }, 'mes', k => { if (k === 'semana') ir({ tela: 'agenda', semana: ym === hoje.slice(0, 7) ? hoje : primeiro }, false); }, 'dois'),
+      el('div', { class: 'botoes-linha' },
+        el('button', { type: 'button', class: 'secundario compacto', text: '‹ Mês anterior', onclick: () => ir({ tela: 'agendaMes', ym: somarMeses(ym, -1) }, false) }),
+        el('button', { type: 'button', class: 'secundario compacto', text: 'Este mês', onclick: () => ir({ tela: 'agendaMes' }, false) }),
+        el('button', { type: 'button', class: 'secundario compacto', text: 'Próximo ›', onclick: () => ir({ tela: 'agendaMes', ym: somarMeses(ym, 1) }, false) })),
+      el('p', { class: 'suave pequeno', text: `${totalMes} ${totalMes === 1 ? 'sessão agendada' : 'sessões agendadas'} em ${nomeMes(ym).toLowerCase()}${feriadosMes ? ` · ${feriadosMes} ${feriadosMes === 1 ? 'dia sem atendimento' : 'dias sem atendimento'}` : ''}. Toque num dia para ver os horários.` }),
+      el('div', { style: 'display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px' }, cab, celulas)),
+    el('button', { type: 'button', class: 'fab estendido', onclick: () => { agendamentoRasc = null; ir({ tela: 'agendar' }); } }, icone('mais'), el('span', { text: 'Novo agendamento' })));
+}
+async function abrirDiaDoMes(d, lista, sem) {
+  const botoes = lista.map((o, i) => ({ rotulo: `${horaCurta(o.hora) || '—'}  ${o.c.nome}`, valor: String(i) }));
+  botoes.push({ rotulo: 'Ver a semana', valor: 'semana' }, { rotulo: 'Fechar', valor: null, estilo: 'primario' });
+  const r = await janela(dataComDia(d), [
+    sem && el('p', { class: 'faixa', text: `${sem.feriado ? 'Feriado' : 'Sem atendimento'}: ${sem.nome}` }),
+    el('p', { class: 'suave pequeno', text: lista.length ? 'Toque num horário para cancelar, remarcar ou abrir o paciente.' : 'Nenhuma sessão neste dia.' })], botoes);
+  if (r === 'semana') return ir({ tela: 'agenda', semana: d });
+  if (r !== null && r !== undefined && lista[Number(r)]) acoesOcorrencia(lista[Number(r)]);
 }
