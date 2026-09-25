@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 14';
+const VERSAO = 'versão 15';
 let modo = null;              // 'dono' (senha mestra: tudo) ou 'adm' (senha do administrativo: só a parte administrativa)
 
 let pacientes = [];          // decifrados, só na memória enquanto desbloqueado
@@ -401,7 +401,7 @@ function telaLista() {
     cabecalho(verArquivados ? 'Arquivados' : 'Pacientes', {
       grande: true,
       sub: verArquivados ? null : `${ativos} em acompanhamento`,
-      acoes: [botaoIcone('Buscar em todos os pacientes', 'busca', () => ir({ tela: 'busca' })), botaoAgenda(), botaoIcone('Pagamentos do mês', 'moeda', () => ir({ tela: 'mes' })),
+      acoes: [botaoIcone('Buscar em todos os pacientes', 'busca', () => ir({ tela: 'busca' })), botaoSincronizar(), botaoAgenda(), botaoIcone('Pagamentos do mês', 'moeda', () => ir({ tela: 'mes' })),
         botaoIcone('Bloquear agora', 'cadeado', trancar), botaoIcone('Configurações', 'ajustes', () => ir({ tela: 'config' }))]
     }),
     el('div', { class: 'conteudo' },

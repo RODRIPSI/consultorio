@@ -395,7 +395,7 @@ function telaInicioAdm() {
   mostrar(
     cabecalho(modo === 'adm' ? 'Consultório' : 'Administrativo', {
       grande: modo === 'adm', voltar: modo === 'dono', sub: modo === 'adm' ? 'Área administrativa' : null,
-      acoes: [botaoAgenda(), botaoIcone('Pagamentos do mês', 'moeda', () => ir({ tela: 'mes' })),
+      acoes: [botaoSincronizar(), botaoAgenda(), botaoIcone('Pagamentos do mês', 'moeda', () => ir({ tela: 'mes' })),
         botaoIcone('Bloquear agora', 'cadeado', trancar), botaoIcone('Configurações', 'ajustes', () => ir({ tela: 'config' }))]
     }),
     el('div', { class: 'conteudo' },
@@ -1142,6 +1142,8 @@ function secaoAdministrativo(linha, secao) {
     linha('arquivo', 'Site da nota fiscal', perfil.nfUrl || 'Não definido.', el('button', { type: 'button', class: 'secundario compacto', text: 'Editar', onclick: editarNota })),
     linha('retomar', 'Google Drive', 'Lê as listas de pacientes, presença e pagamentos do Drive.', el('button', { type: 'button', class: 'secundario compacto', text: 'Abrir', onclick: () => ir({ tela: 'drive' }) })),
     linha('calendario', 'Feriados e dias sem atendimento', 'Feriados do ano, férias e recessos. Aviso 5 dias antes.', el('button', { type: 'button', class: 'secundario compacto', text: 'Abrir', onclick: () => ir({ tela: 'feriados' }) })),
+    linha('repetir', 'Sincronizar com o administrativo pelo Drive', driveCfg().pastaSync ? 'Pasta definida. Um toque envia e recebe.' : 'Defina a pasta compartilhada em Google Drive.',
+      el('button', { type: 'button', class: 'primario compacto', text: 'Sincronizar', onclick: sincronizarDrive })),
     linha('retomar', 'Enviar dados ao administrativo', 'Gera um arquivo cifrado com agenda, cadastros e pagamentos, sem nada clínico, para o aparelho do administrativo.',
       el('button', { type: 'button', class: 'secundario compacto', text: 'Enviar', onclick: exportarAdm })),
     linha('clipe', 'Receber dados do administrativo', 'Traz os pagamentos e a agenda que ele registrou.',
@@ -1227,6 +1229,8 @@ async function telaConfigAdm() {
         linha('cadeado', 'Senha do administrativo', null, el('button', { type: 'button', class: 'secundario compacto', text: 'Trocar', onclick: trocarSenhaAdmAtual })),
         temClin && linha('pessoa', 'Área clínica', 'Só com a senha mestra do Rodrigo.', el('button', { type: 'button', class: 'secundario compacto', text: 'Entrar', onclick: entrarNaClinica }))),
       secao('Troca de dados com o outro aparelho',
+        linha('repetir', 'Sincronizar pelo Drive', driveCfg().pastaSync ? 'Pasta definida. Um toque envia e recebe.' : 'Defina a pasta compartilhada em Google Drive.',
+          el('button', { type: 'button', class: 'primario compacto', text: 'Sincronizar', onclick: sincronizarDrive })),
         linha('retomar', 'Enviar dados', 'Gera um arquivo cifrado com a agenda, os cadastros e os pagamentos. Serve também de cópia de segurança.',
           el('button', { type: 'button', class: 'primario compacto', text: 'Enviar', onclick: exportarAdm })),
         linha('clipe', 'Receber dados', 'Abre o arquivo enviado pelo outro aparelho e junta com o que já está aqui.',
@@ -1566,15 +1570,17 @@ function carregarGoogle() {
   });
   return carregarGoogle.p;
 }
-function pedirTokenGoogle() {
+function pedirTokenGoogle(escopo = 'https://www.googleapis.com/auth/drive.readonly') {
   // Precisa ser chamado direto no toque do botão, para o Android não bloquear a janela do Google.
+  // A sincronização pede o escopo de escrita; ele também permite ler as listas.
+  const ESCRITA = 'https://www.googleapis.com/auth/drive';
   return new Promise((ok, erro) => {
-    if (tokenGoogle && tokenGoogle.expira > Date.now() + 60000) return ok(tokenGoogle.valor);
+    if (tokenGoogle && tokenGoogle.expira > Date.now() + 60000 && (tokenGoogle.escopo === escopo || tokenGoogle.escopo === ESCRITA)) return ok(tokenGoogle.valor);
     if (!window.google?.accounts?.oauth2) return erro(new Error('carregando'));
     const cliente = google.accounts.oauth2.initTokenClient({
       client_id: driveCfg().clientId.trim(),
-      scope: 'https://www.googleapis.com/auth/drive.readonly',
-      callback: r => { if (r.error || !r.access_token) return erro(new Error(r.error || 'recusado')); tokenGoogle = { valor: r.access_token, expira: Date.now() + (Number(r.expires_in) || 3600) * 1000 }; ok(r.access_token); },
+      scope: escopo,
+      callback: r => { if (r.error || !r.access_token) return erro(new Error(r.error || 'recusado')); tokenGoogle = { valor: r.access_token, expira: Date.now() + (Number(r.expires_in) || 3600) * 1000, escopo }; ok(r.access_token); },
       error_callback: e => erro(new Error(e?.type || 'cancelado'))
     });
     liberarSaidaTemporaria();
@@ -1833,6 +1839,11 @@ function telaDrive() {
           idDoLink(cfg.fontes[k]) ? 'Link definido.' : f.dica,
           el('button', { type: 'button', class: 'secundario compacto', text: idDoLink(cfg.fontes[k]) ? 'Trocar' : 'Colar link', onclick: () => editarFonte(k) }),
           el('button', { type: 'button', class: 'secundario compacto', text: 'Arquivo', title: 'Ler de um arquivo escolhido à mão', onclick: () => importarArquivoManual(k) })))),
+      el('section', { class: 'cartao' }, el('h3', { class: 'secao-titulo', text: 'Sincronização com o outro aparelho' }),
+        linha('repetir', 'Pasta compartilhada', cfg.pastaSync ? 'Pasta definida.' : 'Crie uma pasta no Drive, compartilhe com a conta Google do outro aparelho e cole o link aqui.',
+          el('button', { type: 'button', class: 'secundario compacto', text: cfg.pastaSync ? 'Trocar' : 'Colar link', onclick: editarPastaSync })),
+        el('button', { type: 'button', class: 'primario com-icone centralizado', disabled: !(cfg.clientId && cfg.pastaSync), onclick: sincronizarDrive }, icone('repetir'), el('span', { text: 'Sincronizar agora' })),
+        el('p', { class: 'suave pequeno', text: (() => { let u = null; try { u = localStorage.getItem('consultorio-ultima-sync'); } catch { } return u ? `Última sincronização neste aparelho: ${dataBR(u)}, ${new Date(u).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.` : 'Nenhuma sincronização ainda neste aparelho.'; })() })),
       el('section', { class: 'cartao' }, el('h3', { class: 'secao-titulo', text: 'Conexão' }),
         linha('cadeado', 'Chave de conexão do Google', cfg.clientId ? 'Definida.' : 'Falta criar no Google Cloud (uma vez só).',
           el('button', { type: 'button', class: 'secundario compacto', text: cfg.clientId ? 'Trocar' : 'Colar', onclick: editarChaveGoogle }))),
@@ -2321,4 +2332,92 @@ async function abrirDiaDoMes(d, lista, sem) {
     el('p', { class: 'suave pequeno', text: lista.length ? 'Toque num horário para cancelar, remarcar ou abrir o paciente.' : 'Nenhuma sessão neste dia.' })], botoes);
   if (r === 'semana') return ir({ tela: 'agenda', semana: d });
   if (r !== null && r !== undefined && lista[Number(r)]) acoesOcorrencia(lista[Number(r)]);
+}
+
+// ---------- Versão 15: sincronizar pelo Google Drive (botão nos dois aparelhos) ----------
+// Cada aparelho guarda na pasta compartilhada um arquivo seu, cifrado com a senha dos arquivos,
+// só com a parte administrativa (registros "x:"). Ao sincronizar: lê o do outro, junta, e grava o seu.
+const ARQ_SYNC = { dono: 'consultorio-sync-principal.cifrado.txt', adm: 'consultorio-sync-administrativo.cifrado.txt' };
+const idDaPasta = link => ((link || '').match(/folders\/([\w-]{20,})/) || [])[1] || idDoLink(link);
+function botaoSincronizar() {
+  if (!driveCfg().pastaSync || !driveCfg().clientId) return null;
+  carregarGoogle().catch(() => { });
+  return botaoIcone('Sincronizar com o outro aparelho', 'repetir', sincronizarDrive);
+}
+async function editarPastaSync() {
+  const r = await dialogo({
+    titulo: 'Pasta de sincronização', texto: 'No Drive: crie uma pasta (ex.: "Consultório – sincronização"), toque nos três pontinhos → Compartilhar → adicione a conta Google do outro aparelho como Editor → Copiar link. Cole aqui. Use a mesma pasta nos dois aparelhos.',
+    campos: [{ rotulo: 'https://drive.google.com/drive/folders/…' }], botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }]
+  });
+  if (r === null) return;
+  if (r.trim() && !idDaPasta(r.trim())) return aviso('Link não reconhecido', 'Copie o link da pasta pelo botão Compartilhar do Drive.');
+  driveCfg().pastaSync = r.trim(); salvarPerfil(); await salvarAgora(); render(history.state);
+}
+async function driveApi(url, token, opcoes = {}) {
+  const r = await fetch(url, { ...opcoes, headers: { Authorization: 'Bearer ' + token, ...(opcoes.headers || {}) } });
+  if (!r.ok) throw new Error(r.status === 404 ? 'nao-encontrado' : r.status === 401 || r.status === 403 ? 'sem-permissao' : 'falha');
+  return r;
+}
+let sincronizando = false;
+async function sincronizarDrive() {
+  if (sincronizando) return;
+  const cfg = driveCfg(), pasta = idDaPasta(cfg.pastaSync);
+  if (!cfg.clientId) return aviso('Falta a chave do Google', 'Em Configurações → Google Drive, cole a chave de conexão (ID do cliente).');
+  if (!pasta) return aviso('Falta a pasta', 'Em Configurações → Google Drive, cole o link da pasta compartilhada.');
+  const s = await senhaDosArquivos('A senha dos arquivos, a mesma nos dois aparelhos. Ela cifra tudo antes de ir para o Drive.');
+  if (!s) return;
+  let token;
+  try { await carregarGoogle(); token = await pedirTokenGoogle('https://www.googleapis.com/auth/drive'); }
+  catch (e) { return aviso('Sem conexão com o Google', e.message === 'sem-internet' ? 'Verifique a internet e tente de novo.' : 'O acesso ao Google não foi concedido. Toque em Sincronizar de novo e entre na conta.'); }
+  sincronizando = true; indicarStatus('Sincronizando…');
+  try {
+    const eu = modo === 'dono' ? 'dono' : 'adm', outro = eu === 'dono' ? 'adm' : 'dono';
+    const q = encodeURIComponent(`'${pasta}' in parents and trashed = false`);
+    const lista = await (await driveApi(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&supportsAllDrives=true&includeItemsFromAllDrives=true&pageSize=100`, token)).json();
+    const achar = nome => (lista.files || []).find(f => f.name === nome);
+    let r = { novos: 0, atualizados: 0, mantidos: 0 }, recebeu = false;
+    const doOutro = achar(ARQ_SYNC[outro]);
+    if (doOutro) {
+      const texto = await (await driveApi(`https://www.googleapis.com/drive/v3/files/${doOutro.id}?alt=media&supportsAllDrives=true`, token)).text();
+      let pacote;
+      try { pacote = await Cofre.decifrarPacote(s.senha, texto); }
+      catch (e) { throw new Error(e.message === 'senha-incorreta' ? 'senha-incorreta' : 'arquivo-invalido'); }
+      if (pacote.formato !== 'consultorio-adm') throw new Error('arquivo-invalido');
+      await salvarAgora();
+      r = await mesclarRegistros(pacote.registros || {}, k => k.startsWith('x:'));
+      if (modo === 'adm' && pacote.registros?.['x:perfil'] && !pacote.registros['x:perfil'].assinaturaNoAdm) await Cofre.apagar('x:assinatura');
+      await recarregarTudo();
+      recebeu = true;
+    }
+    await salvarAgora();
+    const registros = await registrosAdm(false);
+    const conteudo = await Cofre.cifrarPacote(s.senha, { formato: 'consultorio-adm', versao: 1, de: modo, criadoEm: agoraISO(), registros });
+    const meu = achar(ARQ_SYNC[eu]);
+    if (meu) await driveApi(`https://www.googleapis.com/upload/drive/v3/files/${meu.id}?uploadType=media&supportsAllDrives=true`, token, { method: 'PATCH', headers: { 'Content-Type': 'text/plain' }, body: conteudo });
+    else {
+      const limite = 'consultorio' + Date.now();
+      const corpo = `--${limite}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name: ARQ_SYNC[eu], parents: [pasta], mimeType: 'text/plain' })}\r\n--${limite}\r\nContent-Type: text/plain\r\n\r\n${conteudo}\r\n--${limite}--`;
+      await driveApi('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true', token, { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + limite }, body: corpo });
+    }
+    try { localStorage.setItem('consultorio-ultima-sync', agoraISO()); } catch { } // fora do perfil, para não sobrescrever dados do outro aparelho
+    await oferecerLembrarSenha(s);
+    indicarStatus('Sincronizado');
+    await aviso('Sincronizado', recebeu
+      ? `Recebidos do outro aparelho: ${r.novos} novos, ${r.atualizados} atualizados. Os seus dados também foram enviados.`
+      : 'Os seus dados foram enviados. O outro aparelho ainda não sincronizou nenhuma vez.');
+  } catch (e) {
+    console.warn('sincronização', e);
+    indicarStatus('');
+    if (e.message === 'sem-permissao') tokenGoogle = null;
+    const msg = {
+      'sem-permissao': 'A conta Google não tem acesso à pasta. Confira se a pasta foi compartilhada com esta conta como Editor.',
+      'nao-encontrado': 'A pasta não foi encontrada. Confira o link em Configurações → Google Drive.',
+      'senha-incorreta': 'A senha dos arquivos está diferente da usada no outro aparelho.',
+      'arquivo-invalido': 'O arquivo do outro aparelho não pôde ser lido.'
+    }[e.message] || 'Não foi possível sincronizar agora. Verifique a internet e tente de novo.';
+    await aviso('Sincronização não concluída', msg);
+  } finally {
+    sincronizando = false;
+    if (Cofre.aberto()) render(history.state);
+  }
 }
