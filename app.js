@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 13';
+const VERSAO = 'versão 14';
 let modo = null;              // 'dono' (senha mestra: tudo) ou 'adm' (senha do administrativo: só a parte administrativa)
 
 let pacientes = [];          // decifrados, só na memória enquanto desbloqueado
@@ -39,6 +39,7 @@ function el(tag, props = {}, ...filhos) {
 }
 
 const ICONES = {
+  sino: [['path', { d: 'M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9' }], ['path', { d: 'M10.3 21a1.94 1.94 0 0 0 3.4 0' }]],
   voltar: [['path', { d: 'M15 18l-6-6 6-6' }]],
   seguinte: [['path', { d: 'M9 18l6-6-6-6' }]],
   cadeado: [['rect', { x: 5, y: 11, width: 14, height: 9, rx: 2 }], ['path', { d: 'M8 11V8a4 4 0 0 1 8 0v3' }]],
@@ -404,6 +405,7 @@ function telaLista() {
         botaoIcone('Bloquear agora', 'cadeado', trancar), botaoIcone('Configurações', 'ajustes', () => ir({ tela: 'config' }))]
     }),
     el('div', { class: 'conteudo' },
+      !verArquivados && cartaoLembretes(),
       !verArquivados && cartaoAvisosAgenda(),
       !verArquivados && avisoBackup(),
       !verArquivados && cartaoEntrada(),
@@ -469,11 +471,13 @@ function telaFicha(id, aba) {
 
   mostrar(
     cabecalho(p.nome, { voltar: true, status: true, acoes: [
+      botaoLembretes(p),
       botaoIcone('Letra T', 'triangulo', () => ir({ tela: 'letrat', id: p.id })),
       botaoIcone('Agenda, pagamentos e mensagens', 'moeda', () => ir({ tela: 'adm', id: p.id, aba: 'atendimentos' })),
       botaoIcone('Opções do paciente', 'opcoes', () => opcoesPaciente(p))] }),
     el('div', { class: 'conteudo' },
       p.arquivado && el('p', { class: 'faixa', text: 'Paciente arquivado. Os registros continuam guardados.' }),
+      lembretesPendentes(p).map(l => el('p', { class: 'faixa', style: 'border-left:5px solid #b26a00', text: '🔔 ' + l.texto })),
       el('section', { class: 'hero' }, avatar(p, true),
         el('div', { class: 'hero-texto' },
           el('h2', { id: 'nome-hero', text: p.nome }),
@@ -2857,3 +2861,65 @@ async function esquecerSenhaBackup() {
   telaConfig();
 }
 
+// ---------- Versão 14: lembretes por paciente (só na área clínica, cifrados com a ficha) ----------
+// Cada lembrete: { id, texto, desde (aaaa-mm-dd), criadoEm }. Aparece na tela inicial a partir da data "desde".
+const lembretesPendentes = p => (p.lembretes || []).filter(l => (l.desde || '') <= hojeISO());
+function telefoneDoPaciente(p) {
+  const c = typeof cadastroDe === 'function' ? cadastroDe(p.id) : null;
+  return c?.telefone || p.dados?.telefone || p.dados?.celular || '';
+}
+function abrirWhatsPaciente(p) {
+  const n = numeroWhats(telefoneDoPaciente(p));
+  if (!n) return aviso('Sem celular', 'Cadastre o celular do paciente em Agenda, pagamentos e mensagens → Cadastro.');
+  abrirExterno(`https://wa.me/${n}`);
+}
+function concluirLembrete(p, l) {
+  p.lembretes = (p.lembretes || []).filter(x => x.id !== l.id);
+  agendarSalvar('p:' + p.id, p);
+}
+function botaoLembretes(p) {
+  const b = botaoIcone('Lembretes e WhatsApp', 'sino', () => janelaLembretes(p));
+  const n = lembretesPendentes(p).length;
+  if (n) {
+    b.style.position = 'relative';
+    b.append(el('span', { 'aria-label': `${n} lembrete(s)`, style: 'position:absolute;top:2px;right:2px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:#d32f2f;color:#fff;font-size:11px;line-height:16px;text-align:center', text: String(n) }));
+  }
+  return b;
+}
+async function janelaLembretes(p) {
+  const lista = el('div', { class: 'pilha-pequena' });
+  const desenhar = () => lista.replaceChildren(...((p.lembretes || []).length ? p.lembretes.slice().sort((a, b) => (a.desde || '').localeCompare(b.desde || '')).map(l => el('div', { class: 'pag-linha' },
+    el('span', { class: 'pag-info' }, el('strong', { text: l.texto }),
+      el('span', { class: 'suave', text: (l.desde || '') > hojeISO() ? `Aparece a partir de ${dataCurta(l.desde)}` : 'Aparecendo na tela inicial' })),
+    el('button', { type: 'button', class: 'secundario compacto', text: 'Feito', onclick: () => { concluirLembrete(p, l); desenhar(); } })))
+    : [el('p', { class: 'suave pequeno', text: 'Nenhum lembrete para este paciente.' })]));
+  desenhar();
+  const texto = el('textarea', { rows: '3', placeholder: 'Ex.: perguntar como foi a consulta médica' });
+  const desde = el('input', { type: 'date', value: hojeISO() });
+  const tel = numeroWhats(telefoneDoPaciente(p));
+  const r = await janela(`Lembretes · ${p.nome}`, [
+    lista,
+    el('label', { class: 'campo' }, el('span', { text: 'Novo lembrete' }), texto),
+    el('label', { class: 'campo' }, el('span', { text: 'Mostrar a partir de' }), desde),
+    el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => abrirWhatsPaciente(p) }, icone('mensagem'),
+      el('span', { text: tel ? `Abrir conversa no WhatsApp` : 'WhatsApp: celular não cadastrado' }))
+  ], [{ rotulo: 'Fechar', valor: null }, { rotulo: 'Salvar lembrete', valor: true, estilo: 'primario' }]);
+  if (r && texto.value.trim()) {
+    (p.lembretes ||= []).push({ id: crypto.randomUUID(), texto: texto.value.trim(), desde: desde.value || hojeISO(), criadoEm: new Date().toISOString() });
+    agendarSalvar('p:' + p.id, p);
+  }
+  render(history.state);
+}
+// Cartão na tela inicial: todos os lembretes do dia, com o nome do paciente.
+function cartaoLembretes() {
+  const itens = pacientes.filter(p => !p.arquivado).flatMap(p => lembretesPendentes(p).map(l => ({ p, l })))
+    .sort((a, b) => (a.l.desde || '').localeCompare(b.l.desde || '') || a.p.nome.localeCompare(b.p.nome, 'pt-BR'));
+  if (!itens.length) return null;
+  return el('section', { class: 'cartao', style: 'border-left:5px solid #b26a00' },
+    el('h3', { class: 'cartao-titulo' }, el('span', { class: 'ic-bolha' }, icone('sino')), el('span', { text: `Lembretes (${itens.length})` })),
+    itens.map(({ p, l }) => el('div', { class: 'pag-linha' },
+      el('button', { type: 'button', class: 'pag-info linha-botao', style: 'text-align:left;background:none;border:0;padding:0', onclick: () => ir({ tela: 'ficha', id: p.id, aba: 'retomar' }) },
+        el('strong', { text: p.nome }), el('span', { text: l.texto })),
+      numeroWhats(telefoneDoPaciente(p)) && botaoIcone(`WhatsApp de ${p.nome}`, 'mensagem', () => abrirWhatsPaciente(p)),
+      el('button', { type: 'button', class: 'secundario compacto', text: 'Feito', onclick: () => { concluirLembrete(p, l); render(history.state); } }))));
+}
