@@ -520,8 +520,12 @@ function cartaoHorarios(c) {
         } }, icone('mais'), el('span', { text: 'Horário fixo sem data final' }))));
   };
   desenhar();
+  const explicacao = el('p', { class: 'suave pequeno', text: FREQ_DICA[freqDe(c)] });
+  const freq = el('select', { 'aria-label': 'Frequência' }, Object.entries(FREQUENCIAS).map(([k, v]) => el('option', { value: k, text: v })));
+  freq.value = freqDe(c);
+  freq.addEventListener('change', () => { c.frequencia = freq.value; salvar(); explicacao.textContent = FREQ_DICA[freq.value]; });
   return cartao('Horários e sessões agendadas', 'relogio',
-    el('p', { class: 'suave pequeno', text: 'Use "Agendar sessões" para uma série de até 30 sessões (semanal ou quinzenal) ou uma sessão avulsa. Aparecem na agenda e preenchem a data e a hora das mensagens.' }), caixa);
+    el('label', { class: 'campo' }, el('span', { text: 'Frequência' }), freq), explicacao, caixa);
 }
 
 function abaAtendimentos(c) {
@@ -2032,7 +2036,7 @@ function seriesTerminando() {
   }
   return res;
 }
-const temAvisoAgenda = () => feriadosProximos().length > 0 || seriesTerminando().length > 0;
+const temAvisoAgenda = () => feriadosProximos().length > 0 || seriesTerminando().length > 0 || combinarPendentes().length > 0;
 
 function mensagemFeriado(c, data, nome) {
   const prox = ocorrenciasNoPeriodo(c, somarDias(data, 1), somarDias(data, 45)).find(o => !o.feriado && !o.cancelada);
@@ -2069,8 +2073,8 @@ function dispensarRenovacao(c, h) { h.renovacaoDispensada = true; salvarCadastro
 
 // Faixas de aviso no alto da tela inicial.
 function cartaoAvisosAgenda() {
-  const fs = feriadosProximos(), ss = seriesTerminando();
-  if (!fs.length && !ss.length) return null;
+  const fs = feriadosProximos(), ss = seriesTerminando(), cs = combinarPendentes();
+  if (!fs.length && !ss.length && !cs.length) return null;
   const forte = 'border-left:5px solid #c62828';
   return el('div', { class: 'pilha-pequena' },
     fs.map(f => el('div', { class: 'faixa', style: forte, role: 'alert' },
@@ -2084,7 +2088,14 @@ function cartaoAvisosAgenda() {
       el('p', { text: `${r.restantes === 1 ? 'Falta 1 sessão' : `Faltam ${r.restantes} sessões`} (${DIAS[h.dia]}, ${horaCurta(h.hora)}), a última em ${dataCurta(r.ultima)}.` }),
       el('div', { class: 'botoes-linha' },
         el('button', { type: 'button', class: 'primario compacto', text: 'Renovar', onclick: () => renovarSerie(c, h) }),
-        el('button', { type: 'button', class: 'secundario compacto', text: 'Não renovar', onclick: () => dispensarRenovacao(c, h) })))));
+        el('button', { type: 'button', class: 'secundario compacto', text: 'Não renovar', onclick: () => dispensarRenovacao(c, h) })))),
+    cs.map(x => el('div', { class: 'faixa', style: 'border-left:5px solid #1565c0' },
+      el('p', {}, el('strong', { text: x.titulo })),
+      el('p', { text: x.texto }),
+      el('div', { class: 'botoes-linha' },
+        el('button', { type: 'button', class: 'primario compacto', text: x.mes ? 'Marcar os dias' : 'Marcar horários', onclick: () => { agendamentoRasc = null; ir({ tela: 'agendar', id: x.c.id }); } }),
+        numeroWhats(x.c.telefone) && el('button', { type: 'button', class: 'secundario compacto', text: 'WhatsApp', onclick: () => abrirExterno(`https://wa.me/${numeroWhats(x.c.telefone)}`) }),
+        el('button', { type: 'button', class: 'secundario compacto', text: 'Já combinei', onclick: () => { (x.c.combinado ||= {})[x.chave] = true; salvarCadastro(x.c); render(history.state); } })))));
 }
 // Ícone da agenda no cabeçalho, com ponto vermelho quando há aviso pendente.
 function botaoAgenda() {
@@ -2113,7 +2124,7 @@ function telaAgenda(inicio) {
       sem && el('p', { class: 'faixa', text: `${sem.feriado ? 'Feriado' : 'Sem atendimento'}: ${sem.nome}` }),
       doDia.length ? doDia.map(o => {
         const riscado = o.feriado || o.cancelada;
-        const etiqueta = o.cancelada ? 'Cancelada' : o.feriado ? 'Feriado: vai para o fim da série' : o.avulsa ? 'Avulsa' : o.fixo ? 'Horário fixo' : 'Série';
+        const etiqueta = o.cancelada ? 'Cancelada' : o.feriado ? 'Feriado: vai para o fim da série' : o.avulsa ? (freqDe(o.c).startsWith('variavel') ? 'Combinado' : 'Avulsa') : o.fixo ? 'Horário fixo' : 'Série';
         return el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => acoesOcorrencia(o) },
           el('span', { class: 'pag-info' },
             el('strong', { style: riscado ? 'text-decoration:line-through;opacity:.6' : null, text: `${horaCurta(o.hora) || '—'}  ${o.c.nome}` }),
@@ -2172,27 +2183,48 @@ async function acoesOcorrencia(o) {
 // ---------- Novo agendamento ----------
 let agendamentoRasc = null;
 function telaAgendar(pid) {
-  const r = agendamentoRasc ||= { pid: pid || '', data: hojeISO(), hora: '', repetir: 'semanal', sessoes: String(MAX_SESSOES_SERIE) };
+  const r = agendamentoRasc ||= { pid: pid || '', data: hojeISO(), hora: '', repetir: 'semanal', sessoes: String(MAX_SESSOES_SERIE), extras: [] };
   if (pid && !r.pid) r.pid = pid;
+  r.extras ||= [];
+  if (!r.ajustado && r.pid) { // o padrão segue a frequência do paciente
+    const f = freqDe(cadastroDe(r.pid) || {});
+    r.repetir = f === 'quinzenal' ? 'quinzenal' : f.startsWith('variavel') ? 'varios' : 'semanal';
+    r.ajustado = true;
+  }
   const ativos = cadastros.filter(c => !c.arquivado).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
   const previa = el('p', { class: 'suave' });
   const desenharPrevia = () => {
     const c = cadastroDe(r.pid);
     if (!c || !r.data) { previa.textContent = 'Escolha o paciente e a data.'; return; }
-    if (r.repetir === 'nao') { previa.textContent = `Sessão avulsa em ${dataComDia(r.data)}${r.hora ? ', ' + horaCurta(r.hora) : ''}.` + (diaSemAtendimento(r.data) ? ` Atenção: ${diaSemAtendimento(r.data).nome}.` : ''); return; }
+    const conf = conflitosDoRascunho(r);
+    const aviso = conf.length ? ` ⚠️ Horário ocupado: ${conf.slice(0, 3).map(o => `${dataCurta(o.data).slice(0, 5)} ${horaCurta(o.hora)} (${o.c.nome})`).join('; ')}${conf.length > 3 ? ` e mais ${conf.length - 3}` : ''}.` : '';
+    if (r.repetir === 'nao' || r.repetir === 'varios') {
+      const ds = datasDoRascunho(r);
+      previa.textContent = (ds.length === 1 ? `Sessão em ${dataComDia(ds[0].data)}${ds[0].hora ? ', ' + horaCurta(ds[0].hora) : ''}.` : `${ds.length} sessões: ${ds.map(d => `${dataCurta(d.data).slice(0, 5)} ${horaCurta(d.hora)}`).join(', ')}.`) +
+        ds.filter(d => diaSemAtendimento(d.data)).map(d => ` Atenção: ${dataCurta(d.data).slice(0, 5)} é ${diaSemAtendimento(d.data).nome}.`).join('') + aviso;
+      return;
+    }
     const n = Math.min(MAX_SESSOES_SERIE, Math.max(1, Math.round(Number(r.sessoes)) || 1));
     const h = { dia: diaDaSemana(r.data), hora: r.hora, inicio: r.data, sessoes: n, freq: r.repetir === 'quinzenal' ? 2 : 1 };
     const lista = datasSerie(c, h, -1), puladas = lista.filter(o => o.feriado);
     const ultima = lista.filter(o => !o.feriado).pop()?.data;
     previa.textContent = `${n} ${n === 1 ? 'sessão' : 'sessões'}, ${DIAS[h.dia].toLowerCase()}${r.hora ? ' às ' + horaCurta(r.hora) : ''}, ${h.freq === 2 ? 'a cada 15 dias' : 'toda semana'}, de ${dataCurta(r.data)} até ${ultima ? dataCurta(ultima) : '—'}.` +
-      (puladas.length ? ` ${puladas.length === 1 ? 'Um feriado foi pulado' : `${puladas.length} feriados foram pulados`} (${puladas.map(o => dataCurta(o.data).slice(0, 5)).join(', ')}); a série foi estendida.` : '');
+      (puladas.length ? ` ${puladas.length === 1 ? 'Um feriado foi pulado' : `${puladas.length} feriados foram pulados`} (${puladas.map(o => dataCurta(o.data).slice(0, 5)).join(', ')}); a série foi estendida.` : '') + aviso;
   };
   const sel = el('select', { 'aria-label': 'Paciente' }, el('option', { value: '', text: 'Escolha o paciente' }), ativos.map(c => el('option', { value: c.id, text: c.nome })));
   sel.value = r.pid;
-  sel.addEventListener('change', () => { r.pid = sel.value; desenharPrevia(); });
-  const campoSessoes = el('label', { class: 'campo', hidden: r.repetir === 'nao' }, el('span', { text: `Número de sessões (1 a ${MAX_SESSOES_SERIE})` }),
+  sel.addEventListener('change', () => { r.pid = sel.value; r.ajustado = false; telaAgendar(); });
+  const campoSessoes = el('label', { class: 'campo', hidden: r.repetir === 'nao' || r.repetir === 'varios' }, el('span', { text: `Número de sessões (1 a ${MAX_SESSOES_SERIE})` }),
     el('input', { type: 'number', min: '1', max: String(MAX_SESSOES_SERIE), inputmode: 'numeric', value: r.sessoes, oninput: e => { r.sessoes = e.target.value; desenharPrevia(); } }));
-  const repetir = segmentoEscolha({ nao: 'Não repetir', semanal: 'Toda semana', quinzenal: 'A cada 15 dias' }, r.repetir, k => { r.repetir = k; campoSessoes.hidden = k === 'nao'; desenharPrevia(); }, 'tres');
+  const listaExtras = el('div', { class: 'pilha-pequena', hidden: r.repetir !== 'varios' });
+  const desenharExtras = () => listaExtras.replaceChildren(
+    ...r.extras.map((x, i) => el('div', { class: 'grade duas' },
+      el('label', { class: 'campo' }, el('span', { text: `Dia ${i + 2}` }), el('input', { type: 'date', value: x.data, onchange: e => { x.data = e.target.value; desenharPrevia(); } })),
+      el('label', { class: 'campo' }, el('span', { text: 'Horário' }), el('input', { type: 'time', value: x.hora, onchange: e => { x.hora = e.target.value; desenharPrevia(); } })))),
+    el('button', { type: 'button', class: 'link com-icone', onclick: () => { const ult = r.extras[r.extras.length - 1] || { data: r.data, hora: r.hora }; r.extras.push({ data: ult.data ? somarDias(ult.data, 7) : '', hora: ult.hora || r.hora }); desenharExtras(); desenharPrevia(); } }, icone('mais'), el('span', { text: 'Adicionar outro dia' })),
+    r.extras.length ? el('button', { type: 'button', class: 'link', text: 'Remover o último dia', onclick: () => { r.extras.pop(); desenharExtras(); desenharPrevia(); } }) : null);
+  desenharExtras();
+  const repetir = segmentoEscolha({ nao: 'Uma vez', varios: 'Vários dias', semanal: 'Semanal', quinzenal: 'Quinzenal' }, r.repetir, k => { r.repetir = k; campoSessoes.hidden = k === 'nao' || k === 'varios'; listaExtras.hidden = k !== 'varios'; desenharPrevia(); }, 'quatro');
   mostrar(
     cabecalho('Novo agendamento', { voltar: true }),
     el('div', { class: 'conteudo pilha' },
@@ -2201,7 +2233,7 @@ function telaAgendar(pid) {
       cartao('Quando', 'calendario', el('div', { class: 'grade duas' },
         el('label', { class: 'campo' }, el('span', { text: 'Primeira sessão' }), el('input', { type: 'date', value: r.data, onchange: e => { r.data = e.target.value; desenharPrevia(); } })),
         el('label', { class: 'campo' }, el('span', { text: 'Horário' }), el('input', { type: 'time', value: r.hora, onchange: e => { r.hora = e.target.value; desenharPrevia(); } })))),
-      cartao('Repetir', 'retomar', repetir, campoSessoes),
+      cartao('Repetir', 'retomar', repetir, campoSessoes, listaExtras),
       cartao('Resumo', 'texto', previa)),
     el('button', { type: 'button', class: 'fab estendido', onclick: salvarAgendamento }, icone('calendario'), el('span', { text: 'Agendar' })));
   desenharPrevia();
@@ -2211,7 +2243,15 @@ async function salvarAgendamento() {
   if (!c) return aviso('Falta o paciente', 'Escolha o paciente.');
   if (!r.data) return aviso('Falta a data', 'Escolha a data da primeira sessão.');
   if (!r.hora) return aviso('Falta o horário', 'Escolha o horário da sessão.');
-  if (r.repetir === 'nao') (c.avulsos ||= []).push({ id: crypto.randomUUID(), data: r.data, hora: r.hora });
+  const conf = conflitosDoRascunho(r);
+  if (conf.length) {
+    const ok = await dialogo({ titulo: 'Horário ocupado', texto: conf.slice(0, 6).map(o => `${dataComDia(o.data)}, ${horaCurta(o.hora)}: ${o.c.nome}`).join('\n') + (conf.length > 6 ? `\n… e mais ${conf.length - 6}.` : ''),
+      botoes: [{ rotulo: 'Voltar', valor: null }, { rotulo: 'Agendar mesmo assim', valor: true, estilo: 'primario' }] });
+    if (!ok) return;
+  }
+  if (r.repetir === 'nao' || r.repetir === 'varios') {
+    for (const d of datasDoRascunho(r)) (c.avulsos ||= []).push({ id: crypto.randomUUID(), data: d.data, hora: d.hora });
+  }
   else {
     const n = Math.min(MAX_SESSOES_SERIE, Math.max(1, Math.round(Number(r.sessoes)) || 1));
     (c.horarios ||= []).push({ dia: diaDaSemana(r.data), hora: r.hora, inicio: r.data, sessoes: n, freq: r.repetir === 'quinzenal' ? 2 : 1 });
@@ -2420,4 +2460,58 @@ async function sincronizarDrive() {
     sincronizando = false;
     if (Cofre.aberto()) render(history.state);
   }
+}
+
+// ---------- Versão 16 (Etapa 1): frequência de cada paciente, avisos para combinar e horários bloqueados ----------
+const FREQUENCIAS = { semanal: 'Semanal', quinzenal: 'Quinzenal', 'variavel-semana': 'Variável: combinado a cada semana', 'variavel-mes': 'Variável: dias do mês marcados no início do mês' };
+const FREQ_DICA = {
+  semanal: 'Mesmo dia e horário toda semana. Use "Agendar sessões" → Semanal.',
+  quinzenal: 'Mesmo dia e horário a cada 15 dias. Use "Agendar sessões" → Quinzenal.',
+  'variavel-semana': 'Os horários são combinados a cada semana. A partir de quinta-feira, o app avisa para combinar a semana seguinte. Use "Agendar sessões" → Vários dias.',
+  'variavel-mes': 'Todos os dias do mês são marcados no início do mês. A partir do dia 25, o app avisa para combinar o mês seguinte. Os dias marcados ficam bloqueados na agenda.'
+};
+const freqDe = c => c.frequencia || (horariosDe(c).some(h => Number(h.freq) === 2) ? 'quinzenal' : 'semanal');
+// Datas escolhidas no rascunho de agendamento ("Uma vez" ou "Vários dias").
+function datasDoRascunho(r) {
+  const ds = [{ data: r.data, hora: r.hora }];
+  if (r.repetir === 'varios') for (const x of r.extras || []) if (x.data) ds.push({ data: x.data, hora: x.hora || r.hora });
+  return ds.filter(d => d.data).sort((a, b) => a.data.localeCompare(b.data));
+}
+// Horário bloqueado: qualquer sessão válida de outro paciente no mesmo dia e hora.
+function ocupadoEm(data, hora, exceto) {
+  if (!hora) return [];
+  return cadastros.filter(c => !c.arquivado && c.id !== exceto)
+    .flatMap(c => ocorrenciasNoPeriodo(c, data, data)).filter(o => !o.feriado && !o.cancelada && o.hora === hora);
+}
+function conflitosDoRascunho(r) {
+  if (!r.data || !r.hora) return [];
+  let datas;
+  if (r.repetir === 'nao' || r.repetir === 'varios') datas = datasDoRascunho(r);
+  else {
+    const n = Math.min(MAX_SESSOES_SERIE, Math.max(1, Math.round(Number(r.sessoes)) || 1));
+    datas = datasSerie({ id: '_' }, { dia: diaDaSemana(r.data), hora: r.hora, inicio: r.data, sessoes: n, freq: r.repetir === 'quinzenal' ? 2 : 1 }, -1).filter(o => !o.feriado);
+  }
+  return datas.flatMap(d => ocupadoEm(d.data, d.hora || r.hora, r.pid));
+}
+// Avisos: "combinar os horários da próxima semana" (a partir de quinta) e "combinar os dias do próximo mês" (a partir do dia 25).
+function semanaChave(ymd) { return 'S' + segundaDaSemana(ymd); }
+function combinarPendentes() {
+  const hoje = hojeISO(), dow = diaDaSemana(hoje), dia = Number(hoje.slice(8)), res = [];
+  const proxSeg = somarDias(segundaDaSemana(hoje), 7), proxDom = somarDias(proxSeg, 6);
+  const proxMes = somarMeses(hoje.slice(0, 7), 1), iniMes = proxMes + '-01', fimMes = somarDias(somarMeses(proxMes, 1) + '-01', -1);
+  for (const c of cadastros) {
+    if (c.arquivado) continue;
+    const f = freqDe(c), feito = c.combinado || {};
+    if (f === 'variavel-semana' && (dow >= 4 || dow === 0)) {
+      const chave = semanaChave(proxSeg);
+      if (!feito[chave] && !ocorrenciasNoPeriodo(c, proxSeg, proxDom).some(o => !o.feriado && !o.cancelada))
+        res.push({ c, chave, titulo: `Combinar a próxima semana com ${c.nome}`, texto: `Semana de ${dataCurta(proxSeg).slice(0, 5)} a ${dataCurta(proxDom).slice(0, 5)}: ainda sem horário marcado.` });
+    }
+    if (f === 'variavel-mes' && dia >= 25) {
+      const chave = 'M' + proxMes;
+      if (!feito[chave] && !ocorrenciasNoPeriodo(c, iniMes, fimMes).some(o => !o.feriado && !o.cancelada))
+        res.push({ c, chave, mes: true, titulo: `Combinar os dias de ${nomeMes(proxMes).toLowerCase()} com ${c.nome}`, texto: 'Marque todos os dias do próximo mês; eles ficam bloqueados na agenda.' });
+    }
+  }
+  return res;
 }
