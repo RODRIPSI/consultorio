@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 16';
+const VERSAO = 'versão 18';
 let modo = null;              // 'dono' (senha mestra: tudo) ou 'adm' (senha do administrativo: só a parte administrativa)
 
 let pacientes = [];          // decifrados, só na memória enquanto desbloqueado
@@ -148,7 +148,7 @@ function dialogo({ titulo, texto = '', campos = [], botoes }) {
   return new Promise(resolve => {
     const d = el('dialog', { class: 'dialogo' });
     const entradas = campos.map(c => el('input', {
-      type: c.tipo || 'text', placeholder: c.rotulo, 'aria-label': c.rotulo, autocomplete: c.autocomplete || 'off'
+      type: c.tipo || 'text', placeholder: c.rotulo, 'aria-label': c.rotulo, autocomplete: c.autocomplete || 'off', value: c.valor || ''
     }));
     const fim = v => { d.close(); d.remove(); resolve(v); };
     const valorCampos = () => entradas.length === 1 ? entradas[0].value : entradas.map(i => i.value);

@@ -84,6 +84,7 @@ function renderAdm(s) {
   if (s.tela === 'driveImportar') { telaImportarDrive(); return true; }
   if (s.tela === 'agenda') { telaAgenda(s.semana); return true; }
   if (s.tela === 'agendaMes') { telaAgendaMes(s.ym); return true; }
+  if (s.tela === 'confirmacoes') { telaConfirmacoes(s.semana); return true; }
   if (s.tela === 'agendar') { telaAgendar(s.id); return true; }
   if (s.tela === 'feriados') { telaFeriados(s.ano); return true; }
   return false;
@@ -305,7 +306,9 @@ function cartaoAgenda() {
     am.length > 0 && el('details', { class: 'agenda-amanha' },
       el('summary', { text: `Amanhã: ${am.length} ${am.length === 1 ? 'atendimento' : 'atendimentos'}` }),
       am.map(i => linha(i, amanha))),
-    el('button', { type: 'button', class: 'link', text: 'Ver a agenda da semana', onclick: () => ir({ tela: 'agenda' }) }));
+    el('div', { class: 'botoes-linha' },
+      el('button', { type: 'button', class: 'link', text: 'Ver a agenda da semana', onclick: () => ir({ tela: 'agenda' }) }),
+      el('button', { type: 'button', class: 'link', text: 'Confirmações da semana', onclick: () => ir({ tela: 'confirmacoes' }) })));
 }
 
 // ---------- Aniversários ----------
@@ -395,7 +398,7 @@ function telaInicioAdm() {
   mostrar(
     cabecalho(modo === 'adm' ? 'Consultório' : 'Administrativo', {
       grande: modo === 'adm', voltar: modo === 'dono', sub: modo === 'adm' ? 'Área administrativa' : null,
-      acoes: [botaoSincronizar(), botaoAgenda(), botaoIcone('Pagamentos do mês', 'moeda', () => ir({ tela: 'mes' })),
+      acoes: [botaoSincronizar(), botaoConfirmacoes(), botaoAgenda(), botaoIcone('Pagamentos do mês', 'moeda', () => ir({ tela: 'mes' })),
         botaoIcone('Bloquear agora', 'cadeado', trancar), botaoIcone('Configurações', 'ajustes', () => ir({ tela: 'config' }))]
     }),
     el('div', { class: 'conteudo' },
@@ -2128,7 +2131,7 @@ function telaAgenda(inicio) {
         return el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => acoesOcorrencia(o) },
           el('span', { class: 'pag-info' },
             el('strong', { style: riscado ? 'text-decoration:line-through;opacity:.6' : null, text: `${horaCurta(o.hora) || '—'}  ${o.c.nome}` }),
-            el('span', { class: 'suave', text: etiqueta + (o.feriadoAviso ? ` · atenção: ${o.feriadoAviso}` : '') })));
+            el('span', { class: 'suave', text: etiqueta + (o.feriadoAviso ? ` · atenção: ${o.feriadoAviso}` : '') + (!riscado && estadoConfirmacao(o.c, o.data, o.hora) ? ' · ' + ROTULO_CONF[estadoConfirmacao(o.c, o.data, o.hora)] : '') })));
       }) : el('p', { class: 'suave pequeno', text: 'Nenhum atendimento.' }));
   });
   mostrar(
@@ -2200,7 +2203,7 @@ function telaAgendar(pid) {
     const aviso = conf.length ? ` ⚠️ Horário ocupado: ${conf.slice(0, 3).map(o => `${dataCurta(o.data).slice(0, 5)} ${horaCurta(o.hora)} (${o.c.nome})`).join('; ')}${conf.length > 3 ? ` e mais ${conf.length - 3}` : ''}.` : '';
     if (r.repetir === 'nao' || r.repetir === 'varios') {
       const ds = datasDoRascunho(r);
-      previa.textContent = (ds.length === 1 ? `Sessão em ${dataComDia(ds[0].data)}${ds[0].hora ? ', ' + horaCurta(ds[0].hora) : ''}.` : `${ds.length} sessões: ${ds.map(d => `${dataCurta(d.data).slice(0, 5)} ${horaCurta(d.hora)}`).join(', ')}.`) +
+      previa.textContent = (ds.length === 1 ? `Sessão em ${dataComDia(ds[0].data)}${ds[0].hora ? ', ' + horaCurta(ds[0].hora) : ''}.` : `${ds.length} sessões: ${ds.map(d => dataCurta(d.data).slice(0, 5) + (d.hora ? ' ' + horaCurta(d.hora) : '')).join(', ')}.`) +
         ds.filter(d => diaSemAtendimento(d.data)).map(d => ` Atenção: ${dataCurta(d.data).slice(0, 5)} é ${diaSemAtendimento(d.data).nome}.`).join('') + aviso;
       return;
     }
@@ -2514,4 +2517,131 @@ function combinarPendentes() {
     }
   }
   return res;
+}
+
+// ---------- Versão 17: painel de confirmações da semana ----------
+// Situação guardada no cadastro (sincroniza com o outro aparelho): confirmacoes["aaaa-mm-dd hh:mm"] = { enviada, confirmada }.
+const MSG_CONFIRMACAO_PADRAO = 'Olá, {nome}! Tudo bem? Podemos confirmar sua sessão de {dia}, {data}, às {hora}? Responda, por favor, para confirmar. Obrigado!';
+const ROTULO_CONF = { enviada: '📨 mensagem enviada', confirmada: '✓ confirmada' };
+const chaveConf = (data, hora) => `${data} ${hora || ''}`.trim();
+function estadoConfirmacao(c, data, hora) {
+  const x = (c.confirmacoes || {})[chaveConf(data, hora)];
+  return x?.confirmada ? 'confirmada' : x?.enviada ? 'enviada' : '';
+}
+function marcarConfirmacao(c, data, hora, campo, valor = true) {
+  const k = chaveConf(data, hora), cf = (c.confirmacoes ||= {});
+  cf[k] = { ...(cf[k] || {}) };
+  if (valor) cf[k][campo] = agoraISO(); else delete cf[k][campo];
+  if (!cf[k].enviada && !cf[k].confirmada) delete cf[k];
+  salvarCadastro(c);
+}
+function mensagemConfirmacao(c, data, hora) {
+  return (perfil.msgConfirmacao || MSG_CONFIRMACAO_PADRAO)
+    .replaceAll('{nome}', primeiroNome(c.nome)).replaceAll('{dia}', DIAS_LONGO[diaDaSemana(data)])
+    .replaceAll('{data}', dataCurta(data).slice(0, 5)).replaceAll('{hora}', horaCurta(hora) || '');
+}
+function enviarConfirmacao(c, data, hora) {
+  const n = numeroWhats(c.telefone);
+  if (!n) return aviso('Sem celular', `Cadastre o celular de ${c.nome} (paciente → Cadastro).`);
+  if (estadoConfirmacao(c, data, hora) !== 'confirmada') marcarConfirmacao(c, data, hora, 'enviada');
+  abrirExterno(`https://wa.me/${n}?text=${encodeURIComponent(mensagemConfirmacao(c, data, hora))}`);
+}
+function botaoConfirmacoes() { return botaoIcone('Confirmações da semana', 'mensagem', () => ir({ tela: 'confirmacoes' })); }
+async function editarMsgConfirmacao() {
+  const r = await dialogo({ titulo: 'Mensagem de confirmação', texto: 'Use {nome}, {dia}, {data} e {hora}; o app troca pelos dados de cada paciente.',
+    campos: [{ rotulo: 'Mensagem', valor: perfil.msgConfirmacao || MSG_CONFIRMACAO_PADRAO }], botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Padrão', valor: 'padrao' }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }] });
+  if (r === null) return;
+  perfil.msgConfirmacao = r === 'padrao' ? '' : String(r).trim();
+  salvarPerfil(); render(history.state);
+}
+async function enviarDiaInteiro(dia, itens) {
+  const pend = itens.filter(i => estadoConfirmacao(i.c, i.data, i.hora) !== 'confirmada');
+  if (!pend.length) return aviso('Tudo confirmado', 'Todos deste dia já confirmaram.');
+  const botoes = pend.map(i => {
+    const n = numeroWhats(i.c.telefone);
+    const b = el('button', { type: 'button', class: 'secundario com-icone', disabled: !n }, icone('mensagem'),
+      el('span', { text: n ? `${horaCurta(i.hora)} · ${i.c.nome}` : `${i.c.nome}: sem celular` }));
+    if (n) b.addEventListener('click', () => { enviarConfirmacao(i.c, i.data, i.hora); b.classList.add('marcado'); b.lastChild.textContent = `Aberto: ${i.c.nome}`; });
+    return b;
+  });
+  await janela(`Confirmações de ${dataComDia(dia)}`, [el('p', { class: 'suave pequeno', text: 'Toque em cada paciente: o WhatsApp abre com a mensagem pronta. Envie e volte para o próximo.' }), el('div', { class: 'pilha-pequena' }, botoes)],
+    [{ rotulo: 'Pronto', valor: true, estilo: 'primario' }]);
+  render(history.state);
+}
+function telaConfirmacoes(inicio) {
+  const hoje = hojeISO();
+  const padrao = diaDaSemana(hoje) >= 5 || diaDaSemana(hoje) === 0 ? somarDias(segundaDaSemana(hoje), 7) : hoje; // de sexta em diante, já mostra a próxima semana
+  const seg = segundaDaSemana(inicio || padrao), dom = somarDias(seg, 6);
+  const ocs = cadastros.filter(c => !c.arquivado).flatMap(c => ocorrenciasNoPeriodo(c, seg, dom)).filter(o => !o.feriado && !o.cancelada);
+  let total = 0, enviadas = 0, confirmadas = 0;
+  const blocos = [0, 1, 2, 3, 4, 5, 6].map(i => somarDias(seg, i)).map(d => {
+    const sem = diaSemAtendimento(d);
+    const itens = ocs.filter(o => o.data === d).sort((a, b) => a.hora.localeCompare(b.hora) || a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
+    if (diaDaSemana(d) === 0 && !itens.length) return null;
+    total += itens.length;
+    const linhas = itens.map(o => {
+      const st = estadoConfirmacao(o.c, o.data, o.hora); if (st === 'enviada') enviadas++; if (st === 'confirmada') confirmadas++;
+      const n = numeroWhats(o.c.telefone);
+      return el('div', { class: 'pag-linha' },
+        el('span', { class: 'pag-info' }, el('strong', { text: `${horaCurta(o.hora) || '—'}  ${o.c.nome}` }),
+          el('span', { class: 'suave', text: st ? ROTULO_CONF[st] : n ? 'Ainda não enviada' : 'Sem celular no cadastro' })),
+        st !== 'confirmada' && n && el('button', { type: 'button', class: 'secundario compacto', text: st === 'enviada' ? 'Reenviar' : 'Enviar', onclick: () => { enviarConfirmacao(o.c, o.data, o.hora); render(history.state); } }),
+        st === 'enviada' && el('button', { type: 'button', class: 'primario compacto', text: 'Confirmou', onclick: () => { marcarConfirmacao(o.c, o.data, o.hora, 'confirmada'); render(history.state); } }),
+        st === 'confirmada' && el('button', { type: 'button', class: 'link', text: 'Desfazer', onclick: () => { marcarConfirmacao(o.c, o.data, o.hora, 'confirmada', false); render(history.state); } }));
+    });
+    return el('section', { class: 'cartao' + (d === hoje ? ' destaque' : '') },
+      el('h3', { class: 'cartao-titulo' }, el('span', { class: 'ic-bolha' }, icone('calendario')),
+        el('span', { text: `${DIAS[diaDaSemana(d)]}, ${dataCurta(d).slice(0, 5)}${d === hoje ? ' (hoje)' : ''}` })),
+      sem && el('p', { class: 'faixa', text: `${sem.feriado ? 'Feriado' : 'Sem atendimento'}: ${sem.nome}` }),
+      itens.length ? linhas : el('p', { class: 'suave pequeno', text: 'Nenhuma sessão.' }),
+      itens.some(o => estadoConfirmacao(o.c, o.data, o.hora) !== 'confirmada') && el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => enviarDiaInteiro(d, itens) },
+        icone('mensagem'), el('span', { text: `Enviar confirmações de ${DIAS[diaDaSemana(d)].toLowerCase()}` })));
+  });
+  const fmt = d => paraData(d).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' });
+  mostrar(
+    cabecalho('Confirmações da semana', { voltar: true, sub: `${fmt(seg)} a ${fmt(dom)}` }),
+    el('div', { class: 'conteudo pilha' },
+      el('div', { class: 'botoes-linha' },
+        el('button', { type: 'button', class: 'secundario compacto', text: '‹ Anterior', onclick: () => ir({ tela: 'confirmacoes', semana: somarDias(seg, -7) }, false) }),
+        el('button', { type: 'button', class: 'secundario compacto', text: 'Esta semana', onclick: () => ir({ tela: 'confirmacoes', semana: hoje }, false) }),
+        el('button', { type: 'button', class: 'secundario compacto', text: 'Próxima ›', onclick: () => ir({ tela: 'confirmacoes', semana: somarDias(seg, 7) }, false) })),
+      el('p', { class: 'suave pequeno', text: `${total} ${total === 1 ? 'sessão' : 'sessões'} · ${confirmadas} ${confirmadas === 1 ? 'confirmada' : 'confirmadas'} · ${enviadas} aguardando resposta · ${total - confirmadas - enviadas} sem mensagem.` }),
+      ocs.some(o => estadoConfirmacao(o.c, o.data, o.hora) !== 'confirmada') && el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => enviarSemanaInteira(seg, ocs) },
+        icone('mensagem'), el('span', { text: 'Enviar confirmações da semana toda' })),
+      ...blocos,
+      el('button', { type: 'button', class: 'link', text: 'Editar o texto da mensagem', onclick: editarMsgConfirmacao })));
+}
+
+// ---------- Versão 18: enviar a semana toda (uma mensagem por paciente, com todas as sessões dele na semana) ----------
+function mensagemSemana(c, lista) {
+  if (lista.length === 1) return mensagemConfirmacao(c, lista[0].data, lista[0].hora);
+  const partes = lista.map(o => `${DIAS_LONGO[diaDaSemana(o.data)]}, ${dataCurta(o.data).slice(0, 5)}${o.hora ? `, às ${horaCurta(o.hora)}` : ''}`);
+  return `Olá, ${primeiroNome(c.nome)}! Tudo bem? Podemos confirmar suas sessões desta semana: ${listaNatural(partes)}? Responda, por favor, para confirmar. Obrigado!`;
+}
+async function enviarSemanaInteira(seg, ocs) {
+  const porPaciente = new Map();
+  for (const o of ocs) {
+    if (estadoConfirmacao(o.c, o.data, o.hora) === 'confirmada') continue;
+    if (!porPaciente.has(o.c.id)) porPaciente.set(o.c.id, { c: o.c, lista: [] });
+    porPaciente.get(o.c.id).lista.push(o);
+  }
+  const grupos = [...porPaciente.values()].map(g => ({ ...g, lista: g.lista.sort((a, b) => a.data.localeCompare(b.data) || a.hora.localeCompare(b.hora)) }))
+    .sort((a, b) => a.lista[0].data.localeCompare(b.lista[0].data) || a.lista[0].hora.localeCompare(b.lista[0].hora));
+  if (!grupos.length) return aviso('Tudo confirmado', 'Todos os pacientes desta semana já confirmaram.');
+  const botoes = grupos.map(g => {
+    const n = numeroWhats(g.c.telefone);
+    const quando = g.lista.map(o => `${DIAS[diaDaSemana(o.data)].slice(0, 3)} ${horaCurta(o.hora)}`).join(', ');
+    const b = el('button', { type: 'button', class: 'secundario com-icone', disabled: !n }, icone('mensagem'),
+      el('span', { text: n ? `${g.c.nome} · ${quando}` : `${g.c.nome}: sem celular` }));
+    if (n) b.addEventListener('click', () => {
+      for (const o of g.lista) marcarConfirmacao(g.c, o.data, o.hora, 'enviada');
+      abrirExterno(`https://wa.me/${n}?text=${encodeURIComponent(mensagemSemana(g.c, g.lista))}`);
+      b.classList.add('marcado'); b.lastChild.textContent = `Aberto: ${g.c.nome}`;
+    });
+    return b;
+  });
+  await janela(`Confirmações da semana (${grupos.length} ${grupos.length === 1 ? 'paciente' : 'pacientes'})`,
+    [el('p', { class: 'suave pequeno', text: 'Uma mensagem por paciente, com todos os horários dele na semana. Toque no nome, envie no WhatsApp e volte para o próximo.' }), el('div', { class: 'pilha-pequena' }, botoes)],
+    [{ rotulo: 'Pronto', valor: true, estilo: 'primario' }]);
+  render(history.state);
 }
