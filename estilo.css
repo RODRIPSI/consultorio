@@ -451,3 +451,6 @@ mark { background: var(--granada-suave); color: var(--granada); font-weight: 600
   background-image: linear-gradient(135deg, #7A5618 0%, #B8893A 22%, #E9CB7E 45%, #F7E3A6 52%, #C99C46 72%, #8A6420 100%); color: #1E1606; box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 2px 8px rgba(0,0,0,.35);
 }
 :root[data-paleta="noite"] .topo h1, :root[data-paleta="noite"] .cab b, :root[data-paleta="noite"] .topo b, :root[data-paleta="vinho"] .topo h1, :root[data-paleta="vinho"] .cab b, :root[data-paleta="vinho"] .topo b { color: #D9B66C; }
+
+/* Versão 22: dica da caneta no caderno */
+.destaque-dica { color: var(--granada) !important; font-weight: 600; }

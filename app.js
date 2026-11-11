@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 21';
+const VERSAO = 'versão 22';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -3455,11 +3455,15 @@ function desenharTracoFolha(ctx, t, esc) {
   }
   ctx.globalCompositeOperation = 'source-over';
 }
-function fundoFolha(div, larg, papel) {
-  if (papel !== 'linhas') { div.style.backgroundImage = 'none'; return; }
-  const r = larg / LARG_FOLHA, passo = 52 * r;
-  div.style.backgroundImage = `repeating-linear-gradient(to bottom, transparent 0, transparent ${passo - 1}px, #e3ddd1 ${passo - 1}px, #e3ddd1 ${passo}px)`;
-  div.style.backgroundPosition = `0 ${80 * r - passo}px`;
+// Versão 22: o papel é desenhado num canvas próprio, por baixo da tinta. Assim o modo escuro do navegador
+// não escurece só a folha (deixando a tinta invisível), e a borracha continua sem apagar as linhas.
+function desenharPapel(cv, papel) {
+  const ctx = cv.getContext('2d'), W = cv.width, H = cv.height, r = W / LARG_FOLHA;
+  ctx.fillStyle = '#fffdf8'; ctx.fillRect(0, 0, W, H);
+  if (papel !== 'linhas') return;
+  const passo = 52 * r;
+  ctx.fillStyle = '#e3ddd1';
+  for (let y = 80 * r; y < H - 10 * r; y += passo) ctx.fillRect(0, Math.round(y), W, Math.max(1, Math.round(r * 1.2)));
 }
 
 async function telaCaderno(pid, fid) {
@@ -3482,7 +3486,7 @@ async function telaCaderno(pid, fid) {
   const mudou = () => { alterado = true; clearTimeout(salvarTimer); salvarTimer = setTimeout(salvar, 1200); };
   const folhasDom = [];
   const zona = el('div', { style: 'padding:14px 0 90px' });
-  const larguraTela = () => Math.min(900, document.documentElement.clientWidth - 16);
+  const larguraTela = () => Math.min(900, (zona.clientWidth || document.documentElement.clientWidth) - 16);
   const redesenhar = i => {
     const { c, ctx } = folhasDom[i], esc = c.width / LARG_FOLHA;
     ctx.clearRect(0, 0, c.width, c.height);
@@ -3491,16 +3495,19 @@ async function telaCaderno(pid, fid) {
   const dimensionar = i => {
     const f = folhasDom[i], larg = larguraTela(), dpr = Math.min(window.devicePixelRatio || 1, 2.5);
     f.div.style.width = larg + 'px';
-    f.c.style.width = larg + 'px'; f.c.style.height = larg * ALT_FOLHA / LARG_FOLHA + 'px';
-    f.c.width = Math.round(larg * dpr); f.c.height = Math.round(larg * ALT_FOLHA / LARG_FOLHA * dpr);
-    fundoFolha(f.div, larg, est.papel);
+    for (const cv of [f.papel, f.c]) {
+      cv.style.width = larg + 'px'; cv.style.height = larg * ALT_FOLHA / LARG_FOLHA + 'px';
+      cv.width = Math.round(larg * dpr); cv.height = Math.round(larg * ALT_FOLHA / LARG_FOLHA * dpr);
+    }
+    desenharPapel(f.papel, est.papel);
     redesenhar(i);
   };
   const montarPagina = i => {
-    const c = el('canvas', { 'aria-label': `Página ${i + 1}`, style: 'display:block;touch-action:none;border-radius:6px' });
-    const div = el('div', { style: 'position:relative;margin:0 auto 16px;background-color:#fffdf8;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.14)' }, c,
+    const papel = el('canvas', { 'aria-hidden': 'true', style: 'display:block;border-radius:6px;pointer-events:none' });
+    const c = el('canvas', { 'aria-label': `Página ${i + 1}`, style: 'position:absolute;left:0;top:0;display:block;touch-action:none;border-radius:6px' });
+    const div = el('div', { style: 'position:relative;margin:0 auto 16px;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.14);color-scheme:light;forced-color-adjust:none' }, papel, c,
       el('span', { style: 'position:absolute;right:12px;bottom:8px;font-size:11px;color:#a39b91;pointer-events:none', text: `Página ${i + 1}` }));
-    const f = { c, ctx: c.getContext('2d'), div };
+    const f = { c, papel, ctx: c.getContext('2d'), div };
     folhasDom[i] = f;
     ligar(i);
     return div;
@@ -3516,10 +3523,11 @@ async function telaCaderno(pid, fid) {
     const aceita = e => e.pointerType === 'pen' || e.pointerType === 'mouse' || (est.dedo && e.pointerType === 'touch');
     c.addEventListener('pointerdown', e => {
       if (!aceita(e)) {
-        if (e.pointerType === 'touch' && !atual) { rolando = { id: e.pointerId, y: e.clientY }; c.setPointerCapture(e.pointerId); }
+        if (e.pointerType === 'touch' && !atual) { rolando = { id: e.pointerId, y: e.clientY, x0: e.clientX, y0: e.clientY }; c.setPointerCapture(e.pointerId); }
         return;
       }
       e.preventDefault(); c.setPointerCapture(e.pointerId); id = e.pointerId;
+      if (e.pointerType === 'pen' && !canetaVista) { canetaVista = true; try { localStorage.setItem('consultorio-caneta-vista', '1'); } catch { } dicaCaneta.remove(); }
       const borracha = est.ferramenta === 'borracha' || e.button === 5 || (e.buttons & 32);
       atual = { c: est.cor, e: est.esp, b: borracha ? 1 : 0, p: ponto(e) };
       desenharTracoFolha(folhasDom[i].ctx, atual, c.width / LARG_FOLHA);
@@ -3537,7 +3545,11 @@ async function telaCaderno(pid, fid) {
       }
     });
     const fim = e => {
-      if (rolando && e.pointerId === rolando.id) { rolando = null; return; }
+      if (rolando && e.pointerId === rolando.id) {
+        // Um risco feito "como dedo" que não chega a rolar a página: provavelmente a caneta não foi reconhecida.
+        if (!canetaVista && !est.dedo && Math.hypot(e.clientX - rolando.x0, e.clientY - rolando.y0) > 12) dicaCaneta.classList.add('destaque-dica');
+        rolando = null; return;
+      }
       if (!atual || e.pointerId !== id) return;
       reg.paginas[i].push(atual); historico.push({ i, t: atual }); refazer.length = 0;
       atual = null; id = null; mudou();
@@ -3550,14 +3562,19 @@ async function telaCaderno(pid, fid) {
     botaoBarra('✒️ Caneta', est.ferramenta !== 'borracha', () => { est.ferramenta = 'caneta'; desenharBarra(); }),
     botaoBarra('🧽 Borracha', est.ferramenta === 'borracha', () => { est.ferramenta = 'borracha'; desenharBarra(); }),
     ...CORES_CANETA.map(([cor, nome]) => botaoBarra(nome, est.cor === cor && est.ferramenta !== 'borracha', () => { est.cor = cor; est.ferramenta = 'caneta'; guardarPreferenciasCaneta(); desenharBarra(); },
-      { aria: nome, filho: el('span', { style: `display:block;width:18px;height:18px;border-radius:50%;background:${cor}` }) })),
+      { aria: nome, filho: el('span', { style: `display:block;width:18px;height:18px;border-radius:50%;background:${cor};box-shadow:0 0 0 1.5px rgba(255,255,255,.75)` }) })),
     ...ESPESSURAS.map(([v, nome]) => botaoBarra(nome, est.esp === v, () => { est.esp = v; guardarPreferenciasCaneta(); desenharBarra(); })),
     botaoBarra('↶', false, () => { const h = historico.pop(); if (!h) return; reg.paginas[h.i].splice(reg.paginas[h.i].lastIndexOf(h.t), 1); refazer.push(h); redesenhar(h.i); mudou(); }, { aria: 'Desfazer' }),
     botaoBarra('↷', false, () => { const h = refazer.pop(); if (!h) return; reg.paginas[h.i].push(h.t); historico.push(h); redesenhar(h.i); mudou(); }, { aria: 'Refazer' }),
-    botaoBarra(est.papel === 'linhas' ? 'Linhas largas' : 'Folha lisa', false, () => { est.papel = est.papel === 'linhas' ? 'liso' : 'linhas'; guardarPreferenciasCaneta(); desenharBarra(); folhasDom.forEach((_, i) => dimensionar(i)); }),
-    botaoBarra('☝️ Dedo escreve', est.dedo, () => { est.dedo = !est.dedo; guardarPreferenciasCaneta(); desenharBarra(); }));
+    botaoBarra(est.papel === 'linhas' ? 'Linhas largas' : 'Folha lisa', false, () => { est.papel = est.papel === 'linhas' ? 'liso' : 'linhas'; guardarPreferenciasCaneta(); desenharBarra(); folhasDom.forEach(f => desenharPapel(f.papel, est.papel)); }),
+    botaoBarra('☝️ Dedo escreve', est.dedo, () => { est.dedo = !est.dedo; guardarPreferenciasCaneta(); desenharBarra(); if (est.dedo) dicaCaneta?.remove(); }));
   est.ferramenta = 'caneta';
   desenharBarra();
+  let canetaVista = false;
+  try { canetaVista = localStorage.getItem('consultorio-caneta-vista') === '1'; } catch { }
+  const dicaCaneta = el('p', { class: 'suave pequeno', style: 'margin:0;padding:4px 12px 6px;background:var(--fundo)',
+    text: 'A caneta não escreve? Toque em "☝️ Dedo escreve". Com ele ligado, o dedo também escreve; para rolar a folha, desligue de novo.' });
+  if (canetaVista || est.dedo) dicaCaneta.remove();
   const editarDados = async () => {
     const r = await dialogo({ titulo: 'Dados da folha', campos: [{ rotulo: 'Data', tipo: 'date', valor: meta.data }, { rotulo: 'Título (opcional)', valor: meta.titulo || '' }],
       botoes: [{ rotulo: 'Excluir folha', valor: 'excluir', estilo: 'perigo' }, { rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }] });
@@ -3583,7 +3600,7 @@ async function telaCaderno(pid, fid) {
   mostrar(
     el('div', { style: 'position:sticky;top:0;z-index:6' },
       cabecalho(tituloFolha(), { voltar: true, sub: p.nome, status: true, acoes: [botaoIcone('Data, título ou excluir', 'opcoes', editarDados)] }),
-      barra),
+      barra, dicaCaneta),
     zona);
   reg.paginas.forEach((_, i) => dimensionar(i));
   const aoRedimensionar = () => { if (!document.body.contains(zona)) { window.removeEventListener('resize', aoRedimensionar); return; } folhasDom.forEach((_, i) => dimensionar(i)); };
