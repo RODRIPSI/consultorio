@@ -454,3 +454,19 @@ mark { background: var(--granada-suave); color: var(--granada); font-weight: 600
 
 /* Versão 22: dica da caneta no caderno */
 .destaque-dica { color: var(--granada) !important; font-weight: 600; }
+
+/* Versão 25: lista da semana */
+.lista-dia { display: flex; flex-direction: column; gap: 2px; }
+.lista-linha { display: block; width: 100%; text-align: left; padding: .45rem .55rem; border-radius: 8px; border: 0; background: transparent; color: inherit; font: inherit; font-size: .95rem; line-height: 1.35; }
+button.lista-linha { cursor: pointer; }
+button.lista-linha:hover, button.lista-linha:focus-visible { background: rgba(128,128,128,.12); }
+.lista-linha.saiu { opacity: .55; text-decoration: line-through; }
+.lista-linha.compromisso { opacity: .8; }
+.lista-linha.vago { color: var(--suave, inherit); }
+.lista-resumo { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem .9rem; margin: .4rem 0 .6rem; }
+.lista-resumo div { display: flex; justify-content: space-between; gap: .5rem; border-bottom: 1px solid rgba(128,128,128,.2); padding-bottom: .25rem; }
+.lista-legenda { display: grid; grid-template-columns: 1fr; gap: .3rem; margin-top: .6rem; }
+.lista-legenda div { display: flex; gap: .6rem; align-items: baseline; }
+.lista-emoji { min-width: 2rem; text-align: center; }
+details.cartao > summary { cursor: pointer; font-weight: 600; }
+@media (min-width: 700px) { .lista-legenda { grid-template-columns: 1fr 1fr; } }
