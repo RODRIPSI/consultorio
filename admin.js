@@ -1235,6 +1235,7 @@ async function telaConfigAdm() {
         linha('relogio', 'Bloqueio automático', 'Sem uso por este tempo, o app se fecha. Ele também se fecha ao sair para outro app.', tempo),
         linha('cadeado', 'Senha do administrativo', null, el('button', { type: 'button', class: 'secundario compacto', text: 'Trocar', onclick: trocarSenhaAdmAtual })),
         temClin && linha('pessoa', 'Área clínica', 'Só com a senha mestra do Rodrigo.', el('button', { type: 'button', class: 'secundario compacto', text: 'Entrar', onclick: entrarNaClinica }))),
+      secao('Aparência', linhaAparencia(linha)),
       secao('Troca de dados com o outro aparelho',
         linha('repetir', 'Sincronizar pelo Drive', driveCfg().pastaSync ? 'Pasta definida. Um toque envia e recebe.' : 'Defina a pasta compartilhada em Google Drive.',
           el('button', { type: 'button', class: 'primario compacto', text: 'Sincronizar', onclick: sincronizarDrive })),

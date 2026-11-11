@@ -414,3 +414,40 @@ mark { background: var(--granada-suave); color: var(--granada); font-weight: 600
 .numero-editar[open] summary { margin-bottom: .6rem; }
 .numero-editar .campo { margin-top: .5rem; }
 .sem-nota .ic-bolha { color: var(--granada); }
+/* Paletas de cores do Consultório (a padrão, Granada, é a do :root). */
+:root[data-paleta="marinho"] {
+  --fundo: #EDF0F5; --cartao: #FFFFFF; --campo: #F1F3F8; --tinta: #14213D; --suave: #5A6479; --linha: #DCE1EB;
+  --granada: #1B2A4A; --granada-tinta: #FFFFFF; --granada-suave: #E4E9F3;
+  --ocre: #A9802E; --ocre-suave: #F6EDD8; --perigo: #A2322B; --perigo-suave: #F8E4E2;
+  --sombra: 0 1px 2px rgba(20, 33, 61, .06), 0 8px 24px rgba(20, 33, 61, .07); color-scheme: light;
+}
+:root[data-paleta="dourado"] {
+  --fundo: #F5F0E6; --cartao: #FFFDF8; --campo: #F3ECDD; --tinta: #2B2118; --suave: #75685A; --linha: #E8DEC9;
+  --granada: #8E6A22; --granada-tinta: #FFFFFF; --granada-suave: #F3E8CF;
+  --ocre: #5E4318; --ocre-suave: #EFE3CA; --perigo: #A2322B; --perigo-suave: #F8E4E2;
+  --sombra: 0 1px 2px rgba(43, 33, 24, .06), 0 8px 24px rgba(43, 33, 24, .07); color-scheme: light;
+}
+:root[data-paleta="esmeralda"] {
+  --fundo: #ECF1EE; --cartao: #FFFFFF; --campo: #F0F4F1; --tinta: #142420; --suave: #5B6A65; --linha: #DBE4DF;
+  --granada: #1E4D3F; --granada-tinta: #FFFFFF; --granada-suave: #E1EDE8;
+  --ocre: #A07C2A; --ocre-suave: #F5ECD7; --perigo: #A2322B; --perigo-suave: #F8E4E2;
+  --sombra: 0 1px 2px rgba(20, 36, 32, .06), 0 8px 24px rgba(20, 36, 32, .07); color-scheme: light;
+}
+:root[data-paleta="noite"] {
+  --fundo: #0D1527; --cartao: #16213A; --campo: #1D2A47; --tinta: #EEF0F5; --suave: #A4ADC0; --linha: #26355A;
+  --granada: #C29A48; --granada-tinta: #1E1606; --granada-suave: #3A2F1C;
+  --ocre: #D9B66C; --ocre-suave: #3A3020; --perigo: #F0938A; --perigo-suave: #402626;
+  --sombra: none; color-scheme: dark;
+}
+:root[data-paleta="vinho"] {
+  --fundo: #1A1214; --cartao: #251A1D; --campo: #2F2226; --tinta: #F2ECEA; --suave: #B6A7A8; --linha: #3A2A2F;
+  --granada: #C29A48; --granada-tinta: #1E1606; --granada-suave: #3E3020;
+  --ocre: #D9B66C; --ocre-suave: #3E3224; --perigo: #F0938A; --perigo-suave: #452628;
+  --sombra: none; color-scheme: dark;
+}
+
+/* Ouro metálico nas paletas escuras: botões, aba ativa e destaques com brilho de ouro. */
+:root[data-paleta="noite"] .primario, :root[data-paleta="noite"] .aba.ativa, :root[data-paleta="noite"] .destaque, :root[data-paleta="noite"] .fab, :root[data-paleta="noite"] .chip.marcado, :root[data-paleta="noite"] .letra-t-casa.meio, :root[data-paleta="noite"] .prim, :root[data-paleta="noite"] .abas .on, :root[data-paleta="noite"] .av, :root[data-paleta="vinho"] .primario, :root[data-paleta="vinho"] .aba.ativa, :root[data-paleta="vinho"] .destaque, :root[data-paleta="vinho"] .fab, :root[data-paleta="vinho"] .chip.marcado, :root[data-paleta="vinho"] .letra-t-casa.meio, :root[data-paleta="vinho"] .prim, :root[data-paleta="vinho"] .abas .on, :root[data-paleta="vinho"] .av {
+  background-image: linear-gradient(135deg, #7A5618 0%, #B8893A 22%, #E9CB7E 45%, #F7E3A6 52%, #C99C46 72%, #8A6420 100%); color: #1E1606; box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 2px 8px rgba(0,0,0,.35);
+}
+:root[data-paleta="noite"] .topo h1, :root[data-paleta="noite"] .cab b, :root[data-paleta="noite"] .topo b, :root[data-paleta="vinho"] .topo h1, :root[data-paleta="vinho"] .cab b, :root[data-paleta="vinho"] .topo b { color: #D9B66C; }

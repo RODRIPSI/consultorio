@@ -5,7 +5,24 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 18';
+const VERSAO = 'versão 21';
+// Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
+const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
+  ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
+function aplicarPaleta(k) {
+  const pal = PALETAS.find(x => x[0] === k) || PALETAS[0];
+  if (pal[0]) document.documentElement.dataset.paleta = pal[0]; else delete document.documentElement.dataset.paleta;
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', pal[0] ? pal[3] : (m.media.includes('dark') ? '#161A1B' : '#E9ECE6')));
+  try { localStorage.setItem('consultorio-paleta', pal[0]); } catch { }
+}
+try { aplicarPaleta(localStorage.getItem('consultorio-paleta') ?? 'noite'); } catch { aplicarPaleta('noite'); }
+function linhaAparencia(linha) {
+  let atual = 'noite'; try { atual = localStorage.getItem('consultorio-paleta') ?? 'noite'; } catch { }
+  const sel = el('select', { 'aria-label': 'Cores do app' }, PALETAS.map(([k, nome]) => el('option', { value: k, text: nome })));
+  sel.value = atual;
+  sel.addEventListener('change', () => aplicarPaleta(sel.value));
+  return linha('imagem', 'Cores do app', 'Muda na hora. Vale só para este aparelho.', sel);
+}
 let modo = null;              // 'dono' (senha mestra: tudo) ou 'adm' (senha do administrativo: só a parte administrativa)
 
 let pacientes = [];          // decifrados, só na memória enquanto desbloqueado
@@ -231,8 +248,9 @@ function verificarInatividade() {
 setInterval(verificarInatividade, 10000);
 
 // ---------- Navegação ----------
-const TELAS_CLINICAS = ['ficha', 'sessao', 'importar', 'planilha', 'busca', 'perfil', 'letrat', 'numeros'];
+const TELAS_CLINICAS = ['ficha', 'sessao', 'importar', 'planilha', 'busca', 'perfil', 'letrat', 'numeros', 'compilado', 'modelosAnamnese', 'normas', 'caderno', 'drivePaciente'];
 function render(s) {
+  if (telaCadernoSair && history.state?.tela !== 'caderno') { telaCadernoSair(); telaCadernoSair = null; }
   if (modo === 'adm' && (!s || s.tela === 'lista' || TELAS_CLINICAS.includes(s.tela))) { telaInicioAdm(); return; }
   if (s && renderAdm(s)) return;
   if (!s || s.tela === 'lista') telaLista();
@@ -246,8 +264,14 @@ function render(s) {
   else if (s.tela === 'busca') telaBuscaGeral();
   else if (s.tela === 'letrat') telaLetraT(s.id);
   else if (s.tela === 'numeros') telaNumeros();
+  else if (s.tela === 'compilado') telaCompilado(s.pid);
+  else if (s.tela === 'modelosAnamnese') telaModelosAnamnese(s.modelo);
+  else if (s.tela === 'normas') telaNormas(s.id, s.q);
+  else if (s.tela === 'caderno') telaCaderno(s.pid, s.fid);
+  else if (s.tela === 'drivePaciente') telaDrivePaciente(s.pid, s.pasta, s.nome);
 }
 function ir(estado, empilhar = true) {
+  if (telaCadernoSair) { telaCadernoSair(); telaCadernoSair = null; }
   salvarAgora();
   const antes = history.state || {};
   const mudou = antes.tela !== estado.tela || antes.id !== estado.id || antes.sid !== estado.sid || antes.aba !== estado.aba;
@@ -460,10 +484,12 @@ function telaFicha(id, aba) {
   chips.push(`${ss.length} ${ss.length === 1 ? 'sessão' : 'sessões'}`);
 
   if (aba === 'mensagem' || aba === 'pagamentos') { ir({ tela: 'adm', id, aba: aba === 'mensagem' ? 'mensagem' : 'pagamentos' }, false); return; }
-  const abas = [['retomar', 'Retomar', 'retomar'], ['sessoes', 'Sessões', 'sessoes'], ['ficha', 'Ficha', 'pessoa'], ['buscar', 'Buscar', 'busca'],
+  const abas = [['retomar', 'Retomar', 'retomar'], ['caderno', 'Anotações e evolução', 'nota'], ['sessoes', 'Sessões', 'sessoes'], ['ficha', 'Ficha', 'pessoa'], ['anamnese', 'Anamnese', 'texto'], ['buscar', 'Buscar', 'busca'],
     ['recebidos', 'Recebidos', 'clipe'], ['emitidos', 'Emitidos', 'assinar']];
   const corpo = aba === 'sessoes' ? abaSessoes(p, ss)
     : aba === 'ficha' ? abaFicha(p)
+      : aba === 'anamnese' ? abaAnamnese(p)
+      : aba === 'caderno' ? abaCaderno(p)
       : aba === 'buscar' ? abaBuscar(p, ss)
         : aba === 'recebidos' ? abaRecebidos(p)
           : aba === 'emitidos' ? abaEmitidos(p)
@@ -557,6 +583,7 @@ function abaSessoes(p, ss) {
   if (!ss.length) return vazioSessoes(p);
   const ordem = recentesPrimeiro ? [...ss].reverse() : ss;
   return el('div', { class: 'pilha' },
+    el('button', { type: 'button', class: 'link com-icone', onclick: () => { compiladoRasc = null; ir({ tela: 'compilado', pid: p.id }); } }, icone('arquivo'), el('span', { text: 'Gerar compilado da evolução (PDF)' })),
     el('div', { class: 'barra-lista' },
       el('span', { class: 'suave', text: `${ss.length} ${ss.length === 1 ? 'sessão' : 'sessões'}` }),
       el('button', {
@@ -994,6 +1021,8 @@ async function fazerBackup() {
   for (const d of documentos) { const c = await Cofre.ler(chaveConteudo(d)); if (c) registros[chaveConteudo(d)] = c; }
   if (assinatura) registros['c:assinatura'] = assinatura;
   if (numeros) registros['c:numeros'] = numeros;
+  for (const k of ['c:modelos-anamnese', 'c:normas']) { const v = await Cofre.ler(k); if (v) registros[k] = v; }
+  for (const f of await Cofre.lerTodos('c:folha:')) if (f?.id) registros[chaveFolha(f.id)] = f;
   Object.assign(registros, await registrosAdm(true));
   const texto = await Cofre.cifrarPacote(senha, { formato: 'consultorio', versao: 1, criadoEm: new Date().toISOString(), registros });
   const nome = `consultorio-backup-${hojeISO()}.cifrado.txt`;
@@ -1687,12 +1716,17 @@ async function telaConfig() {
           el('button', { type: 'button', class: 'secundario compacto', text: temBio ? 'Desativar' : 'Ativar', onclick: temBio ? desativarBio : ativarBio })),
         linha('cadeado', 'Senha mestra', null, el('button', { type: 'button', class: 'secundario compacto', text: 'Trocar', onclick: trocarSenha }))),
       secaoAdministrativo(linha, secao),
+      secao('Aparência', linhaAparencia(linha)),
       secao('Documentos',
         linha('assinar', 'Dados profissionais e assinatura',
           perfil.nome ? `${perfil.nome}${perfil.crp ? ', CRP ' + perfil.crp : ''}${assinatura ? '. Assinatura cadastrada.' : '. Falta a assinatura.'}` : 'Nome, CRP, endereço e a imagem do carimbo com assinatura, usados nas declarações.',
           el('button', { type: 'button', class: 'secundario compacto', text: 'Editar', onclick: () => ir({ tela: 'perfil' }) })),
         linha('triangulo', 'Os dezesseis números da letra T', 'Traços positivos e negativos de cada número, iguais para todos os pacientes.',
-          el('button', { type: 'button', class: 'secundario compacto', text: 'Editar', onclick: () => ir({ tela: 'numeros' }) }))),
+          el('button', { type: 'button', class: 'secundario compacto', text: 'Editar', onclick: () => ir({ tela: 'numeros' }) })),
+        linha('nota', 'Modelos de anamnese', 'Adulto, adolescente, casal e os que você criar.',
+          el('button', { type: 'button', class: 'secundario compacto', text: 'Editar', onclick: () => ir({ tela: 'modelosAnamnese', modelo: 'adulto' }) })),
+        linha('texto', 'Normas do CFP e LGPD', 'Código de Ética, Resoluções 06/2019 e 01/2009 e outras, com busca.',
+          el('button', { type: 'button', class: 'secundario compacto', text: 'Abrir', onclick: () => ir({ tela: 'normas' }) }))),
       secao('Backup e transferência',
         linha('escudo', 'Fazer backup cifrado',
           config.ultimoBackup ? `Último: ${dataBR(config.ultimoBackup)}.` : 'Nenhum backup feito ainda.',
@@ -2024,6 +2058,7 @@ function abaRecebidos(p) {
   const lista = docsDe(p.id, 'recebido');
   return el('div', { class: 'pilha' },
     el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => adicionarDocumentos(p, 'recebido') }, icone('clipe'), el('span', { text: 'Adicionar foto ou arquivo' })),
+    cartaoPastaDrive(p),
     lista.length ? lista.map(d => itemDocumento(p, d))
       : el('div', { class: 'cartao vazio-cartao' },
         el('span', { class: 'ic-bolha grande' }, icone('clipe')),
@@ -2036,7 +2071,9 @@ function abaEmitidos(p) {
     el('div', { class: 'botoes-linha' },
       el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => novaDeclaracao(p) }, icone('assinar'), el('span', { text: 'Nova declaração' })),
       el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => adicionarDocumentos(p, 'emitido') }, icone('clipe'), el('span', { text: 'Guardar arquivo' })),
-      el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: emitirNfse }, icone('moeda'), el('span', { text: 'Emitir NFS-e' }))),
+      el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: emitirNfse }, icone('moeda'), el('span', { text: 'Emitir NFS-e' })),
+      el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => { compiladoRasc = null; ir({ tela: 'compilado', pid: p.id }); } }, icone('sessoes'), el('span', { text: 'Compilado da evolução' }))),
+    cartaoPastaDrive(p),
     perfilIncompleto() && el('div', { class: 'faixa' },
       el('p', { text: 'Antes da primeira declaração, preencha seus dados profissionais e a imagem do carimbo com assinatura.' }),
       el('button', { type: 'button', class: 'link', text: 'Preencher agora', onclick: () => ir({ tela: 'perfil' }) })),
@@ -2532,7 +2569,8 @@ function telaDeclaracao(pid) {
       cartao('Como vai ficar', 'arquivo', folha),
       el('p', { class: 'suave pequeno', text: dc.modelo === 'relatorio'
         ? 'O relatório segue as partes previstas na Resolução CFP 06/2019 (identificação, demanda, procedimento, análise e conclusão). Ele fica só na área clínica.'
-        : 'As declarações seguem a Resolução CFP 06/2019: registram comparecimento, acompanhamento e valores, sem diagnóstico nem conteúdo das sessões.' })),
+        : 'As declarações seguem a Resolução CFP 06/2019: registram comparecimento, acompanhamento e valores, sem diagnóstico nem conteúdo das sessões.' }),
+      modo === 'dono' && el('button', { type: 'button', class: 'link', text: 'Ver a Resolução CFP 06/2019', onclick: () => ir({ tela: 'normas', id: 'res-06-2019' }) })),
     el('button', { type: 'button', class: 'fab estendido', onclick: () => emitirDeclaracao(p) }, icone('assinar'), el('span', { text: 'Gerar PDF' })));
   if (usaSessoes) desenharSessoes();
   atualizar();
@@ -2643,7 +2681,7 @@ function quebrarLinhas(texto, tam, max, negrito = false) {
   return linhas;
 }
 
-function gerarPdfDocumento({ titulo, subtitulo = '', texto, emissao }) {
+function gerarPdfDocumento({ titulo, subtitulo = '', texto, emissao, anexos = [] }) {
   const W = 595.28, H = 841.89, ME = 72, MD = 72, MI = 70, LARG = W - ME - MD;
   const paginas = [];
   const imagens = []; // { nome, bytes, w, h }
@@ -2734,6 +2772,23 @@ function gerarPdfDocumento({ titulo, subtitulo = '', texto, emissao }) {
   }
   rodape();
   paginas.push(ops);
+  for (const an of anexos) { // folhas manuscritas, uma por página
+    ops = []; y = H - 64; cabeca();
+    const leg = codigos1252(an.legenda || '');
+    ops.push(`BT /F2 11 Tf 0 Tw ${ME} ${y.toFixed(2)} Td ${literalPdf(leg)} Tj ET`);
+    y -= 14;
+    const nome = 'Im' + (imagens.length + 1);
+    imagens.push({ nome, bytes: an.bytes, w: an.w, h: an.h });
+    const k = Math.min(LARG / an.w, (y - MI - 20) / an.h), iw = an.w * k, ih = an.h * k;
+    ops.push(`0.8 G 0.5 w ${((W - iw) / 2).toFixed(2)} ${(y - ih).toFixed(2)} ${iw.toFixed(2)} ${ih.toFixed(2)} re S 0 G`);
+    ops.push(`q ${iw.toFixed(2)} 0 0 ${ih.toFixed(2)} ${((W - iw) / 2).toFixed(2)} ${(y - ih).toFixed(2)} cm /${nome} Do Q`);
+    rodape();
+    paginas.push(ops);
+  }
+  if (paginas.length > 1) paginas.forEach((pg, i) => {
+    const c = codigos1252(`Página ${i + 1} de ${paginas.length}`);
+    pg.push(`0.4 g BT /F1 8.5 Tf 0 Tw ${(W - MD - largura(c, 8.5)).toFixed(2)} 22 Td ${literalPdf(c)} Tj ET 0 g`);
+  });
   return montarPdf(paginas.map(o => o.join('\n')), imagens, W, H);
 }
 
@@ -2922,4 +2977,761 @@ function cartaoLembretes() {
         el('strong', { text: p.nome }), el('span', { text: l.texto })),
       numeroWhats(telefoneDoPaciente(p)) && botaoIcone(`WhatsApp de ${p.nome}`, 'mensagem', () => abrirWhatsPaciente(p)),
       el('button', { type: 'button', class: 'secundario compacto', text: 'Feito', onclick: () => { concluirLembrete(p, l); render(history.state); } }))));
+}
+
+// =====================================================================
+// Anamnese por paciente (modelos adulto, adolescente e casal, editáveis) e compilado da evolução.
+// Tudo na área clínica, cifrado; o administrativo não tem acesso.
+// Formato do modelo: linha começando com "# " é uma seção; as outras linhas são campos.
+// =====================================================================
+const ANAMNESE_PADRAO = {
+  adulto: { nome: 'Adulto', texto: `# Demanda
+Queixa principal (nas palavras do paciente)
+Como chegou ao atendimento / quem indicou
+Expectativas em relação ao tratamento
+# Histórico da queixa
+Quando começou e em que circunstâncias
+O que agrava ou alivia
+Tratamentos psicológicos ou psiquiátricos anteriores
+# Saúde
+Condições de saúde e tratamentos médicos
+Medicações em uso
+Uso de álcool e outras substâncias
+Sono e alimentação
+Riscos (ideação suicida, autolesão, violência)
+# Relações importantes
+Mãe
+Pai
+Irmãos
+Parceiro(a) e relacionamentos
+Filhos
+Outras pessoas importantes
+# História de vida
+Gestação, nascimento e primeira infância
+Infância
+Adolescência
+Vida adulta: estudos, trabalho, relacionamentos
+Acontecimentos marcantes
+# Situação atual
+Trabalho e rotina
+Situação familiar e moradia
+Rede de apoio
+Lazer e vida social
+# Impressões iniciais
+Impressões das primeiras entrevistas` },
+  adolescente: { nome: 'Adolescente', texto: `# Demanda
+Queixa principal (nas palavras do adolescente)
+Queixa dos responsáveis
+Quem buscou o atendimento e por quê
+Expectativas do adolescente e dos responsáveis
+# Família e responsáveis
+Responsáveis e com quem mora
+Relação com a mãe
+Relação com o pai
+Irmãos
+Separações, perdas ou mudanças na família
+# Desenvolvimento
+Gestação, nascimento e primeiros anos
+Infância
+Puberdade e mudanças do corpo
+# Escola
+Escola, ano e desempenho
+Relação com colegas e professores
+# Vida social
+Amizades e grupos
+Relacionamentos afetivos
+Internet, redes sociais e jogos
+Lazer e interesses
+# Saúde
+Condições de saúde e medicações
+Sono e alimentação
+Uso de álcool e outras substâncias
+Riscos (ideação suicida, autolesão, violência)
+Tratamentos anteriores
+# Combinados
+Combinados com os responsáveis (sigilo, pagamentos, contato)
+# Impressões iniciais
+Impressões das primeiras entrevistas` },
+  casal: { nome: 'Casal', texto: `# Demanda
+Motivo da procura, na visão de cada um
+Quem tomou a iniciativa de buscar atendimento
+Expectativas de cada um
+# História do casal
+Como se conheceram
+Tempo de relação e marcos (namoro, casamento, moradia)
+Crises anteriores e como foram atravessadas
+# Vida atual
+Rotina e divisão de tarefas
+Comunicação e conflitos
+Vida afetiva e sexual
+Finanças
+Filhos e parentalidade
+Famílias de origem
+# Cada parceiro
+Parceiro(a) 1: história pessoal
+Parceiro(a) 2: história pessoal
+# Saúde
+Condições de saúde, medicações e substâncias
+Riscos (violência, ideação suicida)
+Tratamentos anteriores (individuais ou de casal)
+# Impressões iniciais
+Impressões das primeiras entrevistas` }
+};
+let modelosAnamneseCache = null;
+async function carregarModelosAnamnese() {
+  if (!modelosAnamneseCache) {
+    const salvo = await Cofre.ler('c:modelos-anamnese');
+    modelosAnamneseCache = JSON.parse(JSON.stringify(ANAMNESE_PADRAO));
+    for (const [k, v] of Object.entries(salvo?.modelos || {})) modelosAnamneseCache[k] = v;
+  }
+  return modelosAnamneseCache;
+}
+async function salvarModelosAnamnese() {
+  const alterados = {};
+  for (const [k, v] of Object.entries(modelosAnamneseCache)) if (!ANAMNESE_PADRAO[k] || ANAMNESE_PADRAO[k].texto !== v.texto || ANAMNESE_PADRAO[k].nome !== v.nome) alterados[k] = v;
+  await Cofre.salvar('c:modelos-anamnese', { tipoRegistro: 'modelos-anamnese', modelos: alterados, atualizadoEm: agoraISO() });
+}
+function estruturaModelo(texto) {
+  const secoes = []; let atual = null;
+  for (const bruta of (texto || '').split(/\r?\n/)) {
+    const l = bruta.trim(); if (!l) continue;
+    if (l.startsWith('#')) { atual = { titulo: l.replace(/^#+\s*/, ''), campos: [] }; secoes.push(atual); }
+    else { if (!atual) { atual = { titulo: 'Geral', campos: [] }; secoes.push(atual); } atual.campos.push(l); }
+  }
+  return secoes;
+}
+const chaveCampo = (secao, campo) => `${secao} › ${campo}`;
+
+function abaAnamnese(p) {
+  const caixa = el('div', { class: 'pilha' }, el('p', { class: 'suave', text: 'Carregando…' }));
+  carregarModelosAnamnese().then(modelos => desenharAnamnese(p, caixa, modelos)).catch(() => caixa.replaceChildren(el('p', { class: 'faixa', text: 'Não foi possível abrir os modelos.' })));
+  return caixa;
+}
+function desenharAnamnese(p, caixa, modelos) {
+  const an = p.anamnese ||= { modelo: '', campos: {}, hipotese: '' };
+  an.campos ||= {};
+  const salvar = () => { an.atualizadoEm = agoraISO(); agendarSalvar('p:' + p.id, p); };
+  const sel = el('select', { 'aria-label': 'Modelo de anamnese' }, el('option', { value: '', text: 'Escolha o modelo' }),
+    Object.entries(modelos).map(([k, v]) => el('option', { value: k, text: v.nome })));
+  sel.value = an.modelo || '';
+  sel.addEventListener('change', () => { an.modelo = sel.value; salvar(); desenharAnamnese(p, caixa, modelos); });
+  const topo = cartao('Modelo', 'nota', el('label', { class: 'campo' }, el('span', { text: 'Modelo de anamnese' }), sel),
+    el('div', { class: 'botoes-linha' },
+      el('button', { type: 'button', class: 'secundario com-icone', onclick: () => importarAnamnese(p, caixa, modelos) }, icone('arquivo'), el('span', { text: 'Importar de um Word' })),
+      el('button', { type: 'button', class: 'link', text: 'Editar os modelos', onclick: () => ir({ tela: 'modelosAnamnese', modelo: an.modelo || 'adulto' }) })),
+    an.atualizadoEm && el('p', { class: 'suave pequeno', text: `Última alteração: ${dataBR(an.atualizadoEm)}.` }));
+  const caixaTexto = (rotulo, valor, aoMudar, dica = '') => {
+    const ta = el('textarea', { rows: '2', placeholder: dica, 'aria-label': rotulo });
+    ta.value = valor || '';
+    ta.addEventListener('input', () => { aoMudar(ta.value); crescer(ta); });
+    setTimeout(() => crescer(ta));
+    return el('label', { class: 'campo largo' }, el('span', { text: rotulo }), ta);
+  };
+  const blocos = [];
+  if (an.modelo && modelos[an.modelo]) {
+    const secoes = estruturaModelo(modelos[an.modelo].texto), usados = new Set();
+    for (const s of secoes) blocos.push(cartao(s.titulo, 'nota', s.campos.map(c => {
+      const k = chaveCampo(s.titulo, c); usados.add(k);
+      return caixaTexto(c, an.campos[k], v => { an.campos[k] = v; salvar(); });
+    })));
+    const soltos = Object.keys(an.campos).filter(k => !usados.has(k) && (an.campos[k] || '').trim());
+    if (soltos.length) blocos.push(cartao('Outros campos (de outro modelo ou importados)', 'nota', soltos.map(k => caixaTexto(k, an.campos[k], v => { an.campos[k] = v; salvar(); }))));
+  } else blocos.push(el('p', { class: 'suave', text: 'Escolha o modelo (adulto, adolescente ou casal) para começar.' }));
+  blocos.push(cartao('Hipótese diagnóstica', 'alvo', caixaTexto('Hipótese diagnóstica', an.hipotese, v => { an.hipotese = v; salvar(); }, 'Opcional')));
+  caixa.replaceChildren(topo, ...blocos,
+    el('p', { class: 'suave pequeno', text: 'A anamnese fica só na área clínica, cifrada. O administrativo não tem acesso. Os campos podem ficar em branco.' }));
+}
+
+// Importar uma anamnese já preenchida (Word): distribui o texto pelos campos cujo título aparece no documento.
+async function importarAnamnese(p, caixa, modelos) {
+  const an = p.anamnese;
+  if (!an.modelo) return aviso('Escolha o modelo', 'Escolha primeiro o modelo de anamnese, para o app saber quais campos procurar.');
+  const [f] = await escolherArquivos({ accept: '.docx,.odt,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain' });
+  if (!f) return;
+  let texto;
+  try { texto = await extrairTexto(f); } catch { return aviso('Não foi possível ler', 'Use um arquivo Word (.docx), LibreOffice (.odt) ou texto (.txt).'); }
+  const secoes = estruturaModelo(modelos[an.modelo].texto);
+  const norma = x => semAcento(String(x).toLowerCase()).replace(/\([^)]*\)/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const alvos = secoes.flatMap(s => s.campos.map(c => ({ k: chaveCampo(s.titulo, c), n: norma(c.split(':')[0]) }))).filter(a => a.n.length >= 3).sort((a, b) => b.n.length - a.n.length);
+  const achados = {}; let atual = 'Outros › Texto importado sem campo', buf = [];
+  const fechar = () => { const v = buf.join('\n').replace(/_{3,}/g, '').replace(/-{5,}/g, '').trim(); if (v) achados[atual] = (achados[atual] ? achados[atual] + '\n' : '') + v; buf = []; };
+  for (const bruta of texto.split(/\r?\n/)) {
+    const l = bruta.trim(); if (!l) continue;
+    const antes = norma(l.split(':')[0]);
+    const alvo = alvos.find(a => antes === a.n || (antes.startsWith(a.n) && antes.length - a.n.length < 12));
+    if (alvo) { fechar(); atual = alvo.k; const resto = l.includes(':') ? l.slice(l.indexOf(':') + 1).trim() : ''; if (resto) buf.push(resto); }
+    else buf.push(l);
+  }
+  fechar();
+  const n = Object.keys(achados).length;
+  if (!n) return aviso('Nada encontrado', 'O documento não tinha texto para importar.');
+  const ocupados = Object.keys(achados).filter(k => (an.campos[k] || '').trim());
+  const ok = await dialogo({ titulo: 'Importar anamnese', texto: `${n} ${n === 1 ? 'trecho encontrado' : 'trechos encontrados'}.` + (ocupados.length ? ` ${ocupados.length} ${ocupados.length === 1 ? 'campo já preenchido vai' : 'campos já preenchidos vão'} receber o texto importado no fim.` : '') + ' O que não corresponder a nenhum campo vai para "Outros". Confira depois de importar.',
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Importar', valor: true, estilo: 'primario' }] });
+  if (!ok) return;
+  for (const [k, v] of Object.entries(achados)) an.campos[k] = (an.campos[k] || '').trim() ? an.campos[k].trim() + '\n\n' + v : v;
+  an.atualizadoEm = agoraISO(); agendarSalvar('p:' + p.id, p);
+  desenharAnamnese(p, caixa, modelos);
+}
+
+async function telaModelosAnamnese(k) {
+  const modelos = await carregarModelosAnamnese();
+  k = modelos[k] ? k : 'adulto';
+  const sel = el('select', { 'aria-label': 'Modelo' }, Object.entries(modelos).map(([id, v]) => el('option', { value: id, text: v.nome })));
+  sel.value = k;
+  sel.addEventListener('change', () => ir({ tela: 'modelosAnamnese', modelo: sel.value }, false));
+  const nome = el('input', { type: 'text', value: modelos[k].nome, 'aria-label': 'Nome do modelo' });
+  const ta = el('textarea', { rows: '18', 'aria-label': 'Texto do modelo', style: 'font-family:monospace' });
+  ta.value = modelos[k].texto;
+  setTimeout(() => crescer(ta));
+  const guardar = async () => {
+    if (!estruturaModelo(ta.value).some(s => s.campos.length)) return aviso('Modelo vazio', 'Escreva ao menos uma seção com um campo.');
+    modelos[k] = { nome: nome.value.trim() || modelos[k].nome, texto: ta.value };
+    await salvarModelosAnamnese(); indicarStatus('Modelo salvo');
+  };
+  mostrar(
+    cabecalho('Modelos de anamnese', { voltar: true }),
+    el('div', { class: 'conteudo pilha' },
+      cartao('Modelo', 'nota', el('label', { class: 'campo' }, el('span', { text: 'Qual modelo' }), sel),
+        el('label', { class: 'campo' }, el('span', { text: 'Nome' }), nome)),
+      cartao('Seções e campos', 'texto',
+        el('p', { class: 'suave pequeno', text: 'Uma linha começando com "#" é o título de uma seção. Cada linha abaixo dela é um campo. Mudar um campo não apaga o que já foi escrito nas anamneses: o texto antigo aparece em "Outros campos".' }),
+        ta,
+        el('div', { class: 'botoes-linha' },
+          el('button', { type: 'button', class: 'secundario', text: 'Novo modelo', onclick: async () => {
+            const n = await dialogo({ titulo: 'Novo modelo', campos: [{ rotulo: 'Nome do modelo' }], botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Criar', valor: true, estilo: 'primario' }] });
+            if (!n || !String(n).trim()) return;
+            const id = 'm' + Date.now(); modelos[id] = { nome: String(n).trim(), texto: '# Demanda\nQueixa principal' };
+            await salvarModelosAnamnese(); ir({ tela: 'modelosAnamnese', modelo: id }, false);
+          } }),
+          ANAMNESE_PADRAO[k] && el('button', { type: 'button', class: 'link', text: 'Voltar ao modelo original', onclick: async () => {
+            modelos[k] = JSON.parse(JSON.stringify(ANAMNESE_PADRAO[k])); await salvarModelosAnamnese(); telaModelosAnamnese(k);
+          } })))),
+    el('button', { type: 'button', class: 'fab estendido', onclick: guardar }, icone('nota'), el('span', { text: 'Salvar modelo' })));
+}
+
+// ---------- Compilado da evolução (registro documental, para o paciente que pedir acesso) ----------
+let compiladoRasc = null;
+function telaCompilado(pid) {
+  const p = pacientes.find(x => x.id === pid);
+  if (!p) { history.back(); return; }
+  const ss = sessoesDe(pid);
+  const r = compiladoRasc && compiladoRasc.pid === pid ? compiladoRasc
+    : (compiladoRasc = { pid, de: ss[0]?.data || hojeISO(), ate: hojeISO(), anamnese: false, hipotese: false, retomar: false, cpf: true, manuscritas: true, emissao: hojeISO() });
+  const doPeriodo = () => ss.filter(s => s.data >= r.de && s.data <= r.ate);
+  const resumo = el('p', { class: 'suave' });
+  const atualizar = () => { const n = doPeriodo().length, f = folhasNoPeriodo(p, r).length; resumo.textContent = `${n} ${n === 1 ? 'sessão' : 'sessões'} e ${f} ${f === 1 ? 'folha manuscrita' : 'folhas manuscritas'} no período.`; };
+  const data = (rotulo, k) => el('label', { class: 'campo' }, el('span', { text: rotulo }), el('input', { type: 'date', value: r[k], onchange: e => { r[k] = e.target.value; atualizar(); } }));
+  const marcar = (rotulo, k) => el('label', { class: 'marcar largo' }, el('input', { type: 'checkbox', checked: !!r[k], onchange: e => { r[k] = e.target.checked; } }), el('span', { text: rotulo }));
+  mostrar(
+    cabecalho('Compilado da evolução', { voltar: true, sub: p.nome }),
+    el('div', { class: 'conteudo pilha' },
+      cartao('Período', 'calendario', el('div', { class: 'grade duas' }, data('De', 'de'), data('Até', 'ate')), resumo),
+      cartao('O que incluir', 'tag', el('div', { class: 'grade' },
+        el('p', { class: 'suave pequeno largo', text: 'Sempre entram a identificação e a evolução de cada sessão (data, situação e registro).' }),
+        marcar('Folhas manuscritas do caderno (como imagem)', 'manuscritas'),
+        marcar('Anamnese', 'anamnese'),
+        marcar('Hipótese diagnóstica', 'hipotese'),
+        marcar('Anotações "para retomar"', 'retomar'),
+        (p.dados?.cpf || cadastroDe?.(pid)?.cpf) && marcar('CPF do paciente', 'cpf'))),
+      el('div', { class: 'grade duas' }, data('Data do documento', 'emissao')),
+      el('p', { class: 'suave pequeno', text: 'O documento sai com a logo, o carimbo e as páginas numeradas, e fica guardado em Emitidos. Antes de entregar, confira o conteúdo: as anotações pessoais de trabalho podem ficar de fora.' }),
+      el('button', { type: 'button', class: 'link', text: 'Ver a Resolução CFP 01/2009 (registro documental)', onclick: () => ir({ tela: 'normas', id: 'res-01-2009' }) })),
+    el('button', { type: 'button', class: 'fab estendido', onclick: () => gerarCompilado(p) }, icone('arquivo'), el('span', { text: 'Gerar PDF' })));
+  atualizar();
+}
+async function textoCompilado(p, r) {
+  const c = typeof cadastroDe === 'function' ? cadastroDe(p.id) : null;
+  const cpf = r.cpf ? (p.dados?.cpf || c?.cpf || '') : '';
+  const ss = sessoesDe(p.id).filter(s => s.data >= r.de && s.data <= r.ate).sort((a, b) => a.data.localeCompare(b.data));
+  const nasc = p.dados?.nascimento;
+  const partes = ['## Identificação',
+    `Paciente: ${p.nome}${nasc ? ` – nascimento ${dataCurta(nasc)}` : ''}${cpf ? ` – CPF ${cpf}` : ''}\n` +
+    (p.dados?.inicio ? `Início do acompanhamento: ${dataCurta(p.dados.inicio)}\n` : '') +
+    `Período deste registro: ${dataCurta(r.de)} a ${dataCurta(r.ate)} (${ss.length} ${ss.length === 1 ? 'sessão' : 'sessões'})\n` +
+    `Profissional: ${perfil.nome || ''}${perfil.crp ? ' – CRP ' + perfil.crp : ''}`];
+  if (r.anamnese && p.anamnese?.modelo) {
+    const modelos = await carregarModelosAnamnese(), m = modelos[p.anamnese.modelo];
+    const linhas = [];
+    for (const s of estruturaModelo(m?.texto || '')) {
+      const itens = s.campos.map(cp => [cp, (p.anamnese.campos[chaveCampo(s.titulo, cp)] || '').trim()]).filter(([, v]) => v);
+      if (itens.length) linhas.push(`## Anamnese – ${s.titulo}`, itens.map(([cp, v]) => `${cp}: ${v}`).join('\n\n'));
+    }
+    if (linhas.length) partes.push(...linhas);
+  }
+  if (r.hipotese && (p.anamnese?.hipotese || '').trim()) partes.push('## Hipótese diagnóstica', p.anamnese.hipotese.trim());
+  partes.push('## Evolução');
+  if (!ss.length) partes.push('Nenhuma sessão registrada no período.');
+  for (const s of ss) {
+    partes.push(`## ${dataCurta(s.data)} (${DIAS[paraData(s.data).getDay()].toLowerCase()}) – ${STATUS[s.status] || 'Sessão'}`);
+    partes.push((s.relato || '').trim() || '(sem registro escrito)');
+    if (r.retomar && (s.retomar || '').trim()) partes.push('Para retomar: ' + s.retomar.trim());
+  }
+  return partes.join('\n\n');
+}
+async function gerarCompilado(p) {
+  const r = compiladoRasc;
+  if (perfilIncompleto()) return aviso('Faltam seus dados', 'Preencha ao menos seu nome e CRP em Dados profissionais.');
+  if (r.de > r.ate) return aviso('Período inválido', 'A data inicial está depois da final.');
+  indicarStatus('Gerando…');
+  const texto = await textoCompilado(p, r);
+  const anexos = r.manuscritas ? await imagensDasFolhas(p, r) : [];
+  const bytes = gerarPdfDocumento({ titulo: 'Registro documental', subtitulo: 'Evolução do acompanhamento psicológico – Confidencial', texto, emissao: r.emissao, anexos });
+  const nomeArq = `Registro documental - ${p.nome} - ${r.emissao}.pdf`.replace(/[\\/:*?"<>|]/g, '-');
+  const d = await guardarDocumento(p, 'emitido', { nome: nomeArq, mime: 'application/pdf', bytes, descricao: `Compilado da evolução (${dataCurta(r.de)} a ${dataCurta(r.ate)})`, data: r.emissao, texto, modelo: 'evolucao', adm: false });
+  indicarStatus('');
+  compiladoRasc = null;
+  const acao = await dialogo({ titulo: 'Compilado pronto', texto: 'Ficou guardado em Emitidos. Confira o conteúdo antes de entregar ao paciente.', botoes: [{ rotulo: 'Fechar', valor: null }, { rotulo: 'Ver / enviar', valor: true, estilo: 'primario' }] });
+  history.back();
+  if (acao) await compartilharDocumento(d, bytes);
+}
+
+// =====================================================================
+// Normas do CFP e LGPD. Resumos e links oficiais embutidos; o texto integral é colado pelo
+// próprio Rodrigo a partir da fonte oficial e fica guardado neste aparelho, com busca, sem internet.
+// =====================================================================
+const NORMAS = [
+  { id: 'codigo-etica', titulo: 'Código de Ética Profissional do Psicólogo', num: 'Resolução CFP nº 10/2005', principal: true,
+    resumo: 'Princípios fundamentais, deveres e proibições, sigilo profissional, honorários, relação com outros profissionais e regras de divulgação dos serviços.',
+    link: 'https://site.cfp.org.br/wp-content/uploads/2012/07/codigo-de-etica-psicologia.pdf' },
+  { id: 'res-06-2019', titulo: 'Documentos escritos produzidos pela(o) psicóloga(o)', num: 'Resolução CFP nº 06/2019', principal: true,
+    resumo: 'Tipos de documento (declaração, atestado, relatório, laudo e parecer), o que cada um pode conter, estrutura, entrega e guarda por no mínimo cinco anos. Na declaração, é vedado registrar sintomas ou estados psicológicos.',
+    link: 'https://atosoficiais.com.br/cfp/resolucao-do-exercicio-profissional-n-6-2019-institui-regras-para-a-elaboracao-de-documentos-escritos-produzidos-pela-o-psicologa-o-no-exercicio-profissional-e-revoga-a-resolucao-cfp-n-151996-a-resolucao-cfp-n-07-2003-e-a-resolucao-cfp-n-04-2019' },
+  { id: 'res-01-2009', titulo: 'Registro documental obrigatório', num: 'Resolução CFP nº 01/2009 (alterada pela nº 05/2010)', principal: true,
+    resumo: 'Obriga o registro documental dos serviços: identificação, avaliação da demanda e objetivos, evolução do trabalho, encaminhamento ou encerramento e cópias dos documentos emitidos. Guarda mínima de cinco anos, em local que garanta o sigilo.',
+    link: 'https://site.cfp.org.br/wp-content/uploads/2009/04/resolucao2009_01.pdf',
+    extra: ['Alteração (Resolução nº 05/2010)', 'https://atosoficiais.com.br/cfp/resolucao-administrativa-financeira-n-5-2010-altera-a-resolucao-cfp-n-0012009-publicada-no-dia-1-de-abril-de-2009-pag-90-secao-i-do-dou'] },
+  { id: 'res-11-2018', titulo: 'Atendimento por meios digitais (online)', num: 'Resolução CFP nº 11/2018',
+    resumo: 'Regras para atendimentos por tecnologias da informação e comunicação, incluindo o cadastro no e-Psi. Artigos sobre emergências e violação de direitos tiveram regras próprias durante a pandemia (Resolução nº 04/2020); confira a situação atual no site oficial.',
+    link: 'https://atosoficiais.com.br/cfp/resolucao-do-exercicio-profissional-n-11-2018-regulamenta-a-prestacao-de-servicos-psicologicos-realizados-por-meios-de-tecnologias-da-informacao-e-da-comunicacao-e-revoga-a-resolucao-cfp-n-112012' },
+  { id: 'res-31-2022', titulo: 'Avaliação psicológica e testes (SATEPSI)', num: 'Resolução CFP nº 31/2022 (substituiu a nº 09/2018)',
+    resumo: 'Diretrizes para a avaliação psicológica e para o uso de testes; uso de teste com parecer desfavorável ou não avaliado no SATEPSI é falta ética.',
+    link: 'https://atosoficiais.com.br/cfp/resolucao-do-exercicio-profissional-n-31-2022-estabelece-diretrizes-para-a-realizacao-de-avaliacao-psicologica-no-exercicio-profissional-da-psicologa-e-do-psicologo-regulamenta-o-sistema-de-avaliacao-de-testes-psicologicos-satepsi-e-revoga-a-resolucao-cfp-no-09-2018' },
+  { id: 'res-03-2007', titulo: 'Consolidação das resoluções (inclui registro de pessoa jurídica)', num: 'Resolução CFP nº 03/2007',
+    resumo: 'Reúne normas administrativas do Sistema Conselhos, entre elas o registro e o cadastro de pessoas jurídicas que prestam serviços de psicologia. Confira no site oficial a redação atual.',
+    link: 'https://atosoficiais.com.br/cfp' },
+  { id: 'lgpd', titulo: 'Lei Geral de Proteção de Dados (LGPD)', num: 'Lei nº 13.709/2018',
+    resumo: 'Regras para o tratamento de dados pessoais. Dados de saúde são dados pessoais sensíveis, com proteção reforçada.',
+    link: 'https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709.htm' }
+];
+let normasCache = null;
+async function carregarNormas() { if (!normasCache) normasCache = (await Cofre.ler('c:normas'))?.textos || {}; return normasCache; }
+async function salvarNormas() { await Cofre.salvar('c:normas', { tipoRegistro: 'normas', textos: normasCache, atualizadoEm: agoraISO() }); }
+function trechosCom(texto, termo, max = 30) {
+  const t = semAcento(termo).trim(); if (t.length < 2) return [];
+  return (texto || '').split(/\n+/).map((par, i) => ({ par: par.trim(), i })).filter(x => x.par && semAcento(x.par).includes(t)).slice(0, max);
+}
+function destacar(par, termo) {
+  const t = semAcento(termo).trim(), base = semAcento(par), partes = [];
+  if (!t) return [par];
+  let i = 0, j;
+  while ((j = base.indexOf(t, i)) !== -1) { partes.push(par.slice(i, j), el('mark', { text: par.slice(j, j + t.length) })); i = j + t.length; }
+  partes.push(par.slice(i));
+  return partes;
+}
+async function colarNorma(n) {
+  const ta = el('textarea', { rows: '8', placeholder: 'Cole aqui o texto oficial', 'aria-label': 'Texto da norma' });
+  const r = await janela(`Guardar o texto: ${n.num}`, [
+    el('p', { class: 'suave pequeno', text: '1. Toque em "Abrir fonte oficial". 2. Na página, mantenha o dedo sobre o texto → "Selecionar tudo" → "Copiar". 3. Volte aqui, mantenha o dedo na caixa abaixo → "Colar" → "Guardar".' }),
+    el('button', { type: 'button', class: 'secundario com-icone', onclick: () => abrirExterno(n.link) }, icone('seguinte'), el('span', { text: 'Abrir fonte oficial' })),
+    ta
+  ], [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Guardar', valor: true, estilo: 'primario' }]);
+  const texto = ta.value.trim();
+  if (!r) return;
+  if (texto.length < 200) return aviso('Texto muito curto', 'Parece que o texto não foi colado inteiro. Tente de novo.');
+  const cache = await carregarNormas();
+  cache[n.id] = { texto, guardadoEm: agoraISO() };
+  await salvarNormas(); render(history.state);
+}
+async function telaNormas(id, q = '') {
+  const cache = await carregarNormas();
+  if (id) {
+    const n = NORMAS.find(x => x.id === id); if (!n) { history.back(); return; }
+    const g = cache[n.id];
+    const corpo = el('div', { class: 'pilha-pequena' });
+    const busca = el('input', { type: 'search', placeholder: 'Buscar neste texto', value: q, 'aria-label': 'Buscar neste texto' });
+    const desenhar = () => {
+      const termo = busca.value.trim();
+      if (!g) { corpo.replaceChildren(el('p', { class: 'suave', text: 'O texto integral ainda não foi guardado neste aparelho.' })); return; }
+      const pars = g.texto.split(/\n+/).map(x => x.trim()).filter(Boolean);
+      const achados = termo.length >= 2 ? pars.filter(p => semAcento(p).includes(semAcento(termo))) : pars;
+      corpo.replaceChildren(...[
+        termo.length >= 2 && el('p', { class: 'suave pequeno', text: `${achados.length} ${achados.length === 1 ? 'trecho encontrado' : 'trechos encontrados'}.` }),
+        ...achados.map(p => el('p', { style: /^(art\.|cap[ií]tulo|se[çc][ãa]o|par[áa]grafo)/i.test(p) ? 'font-weight:600' : null }, ...destacar(p, termo.length >= 2 ? termo : '')))].filter(Boolean));
+    };
+    busca.addEventListener('input', desenhar);
+    mostrar(
+      cabecalho(n.num, { voltar: true, sub: n.titulo }),
+      el('div', { class: 'conteudo pilha' },
+        cartao('Resumo', 'texto', el('p', { text: n.resumo }),
+          el('div', { class: 'botoes-linha' },
+            el('button', { type: 'button', class: 'secundario compacto', text: 'Fonte oficial', onclick: () => abrirExterno(n.link) }),
+            n.extra && el('button', { type: 'button', class: 'secundario compacto', text: n.extra[0], onclick: () => abrirExterno(n.extra[1]) }),
+            el('button', { type: 'button', class: g ? 'link' : 'primario compacto', text: g ? 'Substituir o texto' : 'Guardar o texto integral', onclick: () => colarNorma(n) }),
+            g && el('button', { type: 'button', class: 'link perigo-texto', text: 'Apagar o texto', onclick: async () => { delete cache[n.id]; await salvarNormas(); render(history.state); } })),
+          g && el('p', { class: 'suave pequeno', text: `Texto guardado em ${dataBR(g.guardadoEm)}. Se o CFP alterar a norma, guarde a versão nova.` })),
+        g && busca,
+        corpo));
+    desenhar();
+    return;
+  }
+  const busca = el('input', { type: 'search', placeholder: 'Buscar em todas as normas guardadas (ex.: sigilo, prontuário)', value: q, 'aria-label': 'Buscar nas normas' });
+  const resultados = el('div', { class: 'pilha-pequena' });
+  const desenharBusca = () => {
+    const termo = busca.value.trim();
+    if (termo.length < 2) { resultados.replaceChildren(); return; }
+    const itens = NORMAS.flatMap(n => trechosCom(cache[n.id]?.texto, termo, 8).map(x => ({ n, par: x.par })));
+    resultados.replaceChildren(...(itens.length ? itens.map(({ n, par }) => el('button', { type: 'button', class: 'cartao linha-botao', style: 'text-align:left', onclick: () => ir({ tela: 'normas', id: n.id, q: termo }) },
+      el('strong', { text: n.num }), el('p', { class: 'pequeno' }, ...destacar(par.length > 280 ? par.slice(0, 280) + '…' : par, termo))))
+      : [el('p', { class: 'suave', text: 'Nada encontrado nos textos guardados.' })]));
+  };
+  busca.addEventListener('input', desenharBusca);
+  const guardadas = NORMAS.filter(n => cache[n.id]).length;
+  mostrar(
+    cabecalho('Normas do CFP e LGPD', { voltar: true, sub: `${guardadas} de ${NORMAS.length} com texto integral guardado` }),
+    el('div', { class: 'conteudo pilha' },
+      busca, resultados,
+      ...NORMAS.map(n => el('button', { type: 'button', class: 'cartao linha-botao', style: 'text-align:left', onclick: () => ir({ tela: 'normas', id: n.id }) },
+        el('strong', { text: `${n.titulo}` }),
+        el('span', { class: 'suave pequeno', text: `${n.num}${n.principal ? ' · principal' : ''} · ${cache[n.id] ? 'texto guardado ✓' : 'só resumo e link'}` }))),
+      el('p', { class: 'suave pequeno', text: 'Os resumos são orientações gerais, não substituem a leitura do texto oficial. Os textos integrais ficam guardados só neste aparelho.' })));
+  desenharBusca();
+}
+
+// =====================================================================
+// Caderno de anotações e evolução: folhas manuscritas por paciente, escritas com a S Pen.
+// O índice das folhas fica na ficha (p.folhas); os traços ficam em 'c:folha:<id>', cifrados.
+// Só a caneta escreve; o dedo rola a página; a mão apoiada é ignorada.
+// =====================================================================
+const LARG_FOLHA = 900, ALT_FOLHA = Math.round(900 * 1.414);
+const CORES_CANETA = [['#222222', 'Preto'], ['#1f4fbf', 'Azul'], ['#c62828', 'Vermelho'], ['#2e7d32', 'Verde']];
+const ESPESSURAS = [[1.4, 'Fina'], [2.2, 'Média'], [3.4, 'Grossa']];
+let preferenciasCaneta = { cor: '#222222', esp: 2.2, papel: 'liso', dedo: false };
+try { Object.assign(preferenciasCaneta, JSON.parse(localStorage.getItem('consultorio-caneta') || '{}')); } catch { }
+const guardarPreferenciasCaneta = () => { try { localStorage.setItem('consultorio-caneta', JSON.stringify(preferenciasCaneta)); } catch { } };
+const chaveFolha = id => 'c:folha:' + id;
+const folhasDe = p => (p.folhas || []).slice().sort((a, b) => b.data.localeCompare(a.data) || (b.criadoEm || '').localeCompare(a.criadoEm || ''));
+const folhasNoPeriodo = (p, r) => (p.folhas || []).filter(f => f.data >= r.de && f.data <= r.ate).sort((a, b) => a.data.localeCompare(b.data) || (a.criadoEm || '').localeCompare(b.criadoEm || ''));
+
+function abaCaderno(p) {
+  const lista = folhasDe(p);
+  return el('div', { class: 'pilha' },
+    el('div', { class: 'botoes-linha' },
+      el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => novaFolha(p) }, icone('nota'), el('span', { text: 'Nova folha' }))),
+    lista.length ? lista.map(f => el('button', { type: 'button', class: 'cartao linha-botao', style: 'text-align:left;display:flex;align-items:center;gap:.8rem', onclick: () => ir({ tela: 'caderno', pid: p.id, fid: f.id }) },
+      el('span', { class: 'ic-bolha' }, icone('nota')),
+      el('span', { style: 'display:flex;flex-direction:column;gap:2px' },
+        el('strong', { text: `${dataCurta(f.data)}${f.titulo ? ' · ' + f.titulo : ''}` }),
+        el('span', { class: 'suave pequeno', text: `${f.paginas || 1} ${(f.paginas || 1) === 1 ? 'página' : 'páginas'}${f.atualizadoEm ? ' · alterada em ' + dataBR(f.atualizadoEm) : ''}` }))))
+      : el('div', { class: 'cartao vazio-cartao' },
+        el('span', { class: 'ic-bolha grande' }, icone('nota')),
+        el('p', { text: 'Nenhuma folha ainda. Toque em "Nova folha" para escrever com a caneta, como no Samsung Notes.' })),
+    el('p', { class: 'suave pequeno', text: 'As folhas ficam só na área clínica, cifradas. O administrativo não tem acesso. Elas entram no backup e podem entrar no compilado da evolução.' }));
+}
+async function novaFolha(p) {
+  const r = await dialogo({ titulo: 'Nova folha', texto: 'Data do atendimento e, se quiser, um título.',
+    campos: [{ rotulo: 'Data', tipo: 'date', valor: hojeISO() }, { rotulo: 'Título (opcional)' }],
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Criar', valor: true, estilo: 'primario' }] });
+  if (!r) return;
+  const [data, titulo] = r;
+  const f = { id: crypto.randomUUID(), data: data || hojeISO(), titulo: (titulo || '').trim(), paginas: 1, criadoEm: agoraISO(), atualizadoEm: agoraISO() };
+  (p.folhas ||= []).push(f);
+  agendarSalvar('p:' + p.id, p);
+  await Cofre.salvar(chaveFolha(f.id), { tipoRegistro: 'folha', id: f.id, pid: p.id, paginas: [[]], atualizadoEm: f.atualizadoEm });
+  ir({ tela: 'caderno', pid: p.id, fid: f.id });
+}
+
+// Desenho de um traço. Pontos guardados em unidades da folha (900 de largura): [x, y, pressão×100, ...].
+function desenharTracoFolha(ctx, t, esc) {
+  const pts = t.p, n = pts.length / 3;
+  ctx.globalCompositeOperation = t.b ? 'destination-out' : 'source-over';
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = ctx.fillStyle = t.b ? '#000' : t.c;
+  const larg = pr => (t.b ? 28 : t.e * (0.45 + pr / 100)) * esc;
+  if (n === 1) { ctx.beginPath(); ctx.arc(pts[0] * esc, pts[1] * esc, larg(pts[2]) / 2, 0, Math.PI * 2); ctx.fill(); }
+  for (let i = 1; i < n; i++) {
+    ctx.lineWidth = larg((pts[i * 3 - 1] + pts[i * 3 + 2]) / 2);
+    ctx.beginPath(); ctx.moveTo(pts[i * 3 - 3] * esc, pts[i * 3 - 2] * esc); ctx.lineTo(pts[i * 3] * esc, pts[i * 3 + 1] * esc); ctx.stroke();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+function fundoFolha(div, larg, papel) {
+  if (papel !== 'linhas') { div.style.backgroundImage = 'none'; return; }
+  const r = larg / LARG_FOLHA, passo = 52 * r;
+  div.style.backgroundImage = `repeating-linear-gradient(to bottom, transparent 0, transparent ${passo - 1}px, #e3ddd1 ${passo - 1}px, #e3ddd1 ${passo}px)`;
+  div.style.backgroundPosition = `0 ${80 * r - passo}px`;
+}
+
+async function telaCaderno(pid, fid) {
+  const p = pacientes.find(x => x.id === pid), meta = p && (p.folhas || []).find(f => f.id === fid);
+  if (!meta) { history.back(); return; }
+  const reg = (await Cofre.ler(chaveFolha(fid))) || { tipoRegistro: 'folha', id: fid, pid, paginas: [[]] };
+  if (!reg.paginas?.length) reg.paginas = [[]];
+  const est = preferenciasCaneta;
+  const historico = [], refazer = [];
+  let salvarTimer = null, alterado = false;
+  const salvar = async () => {
+    clearTimeout(salvarTimer); salvarTimer = null;
+    if (!alterado) return;
+    alterado = false;
+    reg.atualizadoEm = meta.atualizadoEm = agoraISO(); meta.paginas = reg.paginas.length;
+    await Cofre.salvar(chaveFolha(fid), reg);
+    agendarSalvar('p:' + p.id, p);
+    indicarStatus('Salvo');
+  };
+  const mudou = () => { alterado = true; clearTimeout(salvarTimer); salvarTimer = setTimeout(salvar, 1200); };
+  const folhasDom = [];
+  const zona = el('div', { style: 'padding:14px 0 90px' });
+  const larguraTela = () => Math.min(900, document.documentElement.clientWidth - 16);
+  const redesenhar = i => {
+    const { c, ctx } = folhasDom[i], esc = c.width / LARG_FOLHA;
+    ctx.clearRect(0, 0, c.width, c.height);
+    for (const t of reg.paginas[i]) desenharTracoFolha(ctx, t, esc);
+  };
+  const dimensionar = i => {
+    const f = folhasDom[i], larg = larguraTela(), dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    f.div.style.width = larg + 'px';
+    f.c.style.width = larg + 'px'; f.c.style.height = larg * ALT_FOLHA / LARG_FOLHA + 'px';
+    f.c.width = Math.round(larg * dpr); f.c.height = Math.round(larg * ALT_FOLHA / LARG_FOLHA * dpr);
+    fundoFolha(f.div, larg, est.papel);
+    redesenhar(i);
+  };
+  const montarPagina = i => {
+    const c = el('canvas', { 'aria-label': `Página ${i + 1}`, style: 'display:block;touch-action:none;border-radius:6px' });
+    const div = el('div', { style: 'position:relative;margin:0 auto 16px;background-color:#fffdf8;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.14)' }, c,
+      el('span', { style: 'position:absolute;right:12px;bottom:8px;font-size:11px;color:#a39b91;pointer-events:none', text: `Página ${i + 1}` }));
+    const f = { c, ctx: c.getContext('2d'), div };
+    folhasDom[i] = f;
+    ligar(i);
+    return div;
+  };
+  const ligar = i => {
+    const { c } = folhasDom[i];
+    let atual = null, id = null, rolando = null;
+    const ponto = e => {
+      const r = c.getBoundingClientRect(), esc = LARG_FOLHA / r.width;
+      const pr = e.pointerType === 'pen' && e.pressure ? e.pressure : 0.5;
+      return [Math.round((e.clientX - r.left) * esc * 10) / 10, Math.round((e.clientY - r.top) * esc * 10) / 10, Math.round(pr * 100)];
+    };
+    const aceita = e => e.pointerType === 'pen' || e.pointerType === 'mouse' || (est.dedo && e.pointerType === 'touch');
+    c.addEventListener('pointerdown', e => {
+      if (!aceita(e)) {
+        if (e.pointerType === 'touch' && !atual) { rolando = { id: e.pointerId, y: e.clientY }; c.setPointerCapture(e.pointerId); }
+        return;
+      }
+      e.preventDefault(); c.setPointerCapture(e.pointerId); id = e.pointerId;
+      const borracha = est.ferramenta === 'borracha' || e.button === 5 || (e.buttons & 32);
+      atual = { c: est.cor, e: est.esp, b: borracha ? 1 : 0, p: ponto(e) };
+      desenharTracoFolha(folhasDom[i].ctx, atual, c.width / LARG_FOLHA);
+    });
+    c.addEventListener('pointermove', e => {
+      if (rolando && e.pointerId === rolando.id) { window.scrollBy(0, rolando.y - e.clientY); rolando.y = e.clientY; return; }
+      if (!atual || e.pointerId !== id) return;
+      e.preventDefault();
+      const esc = c.width / LARG_FOLHA;
+      for (const ev of (e.getCoalescedEvents ? e.getCoalescedEvents() : [e])) {
+        const pt = ponto(ev), n = atual.p.length;
+        const seg = { ...atual, p: [atual.p[n - 3], atual.p[n - 2], atual.p[n - 1], ...pt] };
+        atual.p.push(...pt);
+        desenharTracoFolha(folhasDom[i].ctx, seg, esc);
+      }
+    });
+    const fim = e => {
+      if (rolando && e.pointerId === rolando.id) { rolando = null; return; }
+      if (!atual || e.pointerId !== id) return;
+      reg.paginas[i].push(atual); historico.push({ i, t: atual }); refazer.length = 0;
+      atual = null; id = null; mudou();
+    };
+    c.addEventListener('pointerup', fim); c.addEventListener('pointercancel', fim);
+  };
+  const botaoBarra = (rotulo, ativo, aoTocar, extra = {}) => el('button', { type: 'button', 'aria-pressed': String(!!ativo), class: 'secundario compacto', style: (ativo ? 'box-shadow:inset 0 0 0 2px currentColor;' : '') + (extra.style || ''), 'aria-label': extra.aria || rotulo, onclick: aoTocar }, extra.filho || rotulo);
+  const barra = el('div', { role: 'toolbar', 'aria-label': 'Ferramentas da caneta', style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:6px 10px 8px;background:var(--fundo);border-bottom:1px solid rgba(128,128,128,.25)' });
+  const desenharBarra = () => barra.replaceChildren(
+    botaoBarra('✒️ Caneta', est.ferramenta !== 'borracha', () => { est.ferramenta = 'caneta'; desenharBarra(); }),
+    botaoBarra('🧽 Borracha', est.ferramenta === 'borracha', () => { est.ferramenta = 'borracha'; desenharBarra(); }),
+    ...CORES_CANETA.map(([cor, nome]) => botaoBarra(nome, est.cor === cor && est.ferramenta !== 'borracha', () => { est.cor = cor; est.ferramenta = 'caneta'; guardarPreferenciasCaneta(); desenharBarra(); },
+      { aria: nome, filho: el('span', { style: `display:block;width:18px;height:18px;border-radius:50%;background:${cor}` }) })),
+    ...ESPESSURAS.map(([v, nome]) => botaoBarra(nome, est.esp === v, () => { est.esp = v; guardarPreferenciasCaneta(); desenharBarra(); })),
+    botaoBarra('↶', false, () => { const h = historico.pop(); if (!h) return; reg.paginas[h.i].splice(reg.paginas[h.i].lastIndexOf(h.t), 1); refazer.push(h); redesenhar(h.i); mudou(); }, { aria: 'Desfazer' }),
+    botaoBarra('↷', false, () => { const h = refazer.pop(); if (!h) return; reg.paginas[h.i].push(h.t); historico.push(h); redesenhar(h.i); mudou(); }, { aria: 'Refazer' }),
+    botaoBarra(est.papel === 'linhas' ? 'Linhas largas' : 'Folha lisa', false, () => { est.papel = est.papel === 'linhas' ? 'liso' : 'linhas'; guardarPreferenciasCaneta(); desenharBarra(); folhasDom.forEach((_, i) => dimensionar(i)); }),
+    botaoBarra('☝️ Dedo escreve', est.dedo, () => { est.dedo = !est.dedo; guardarPreferenciasCaneta(); desenharBarra(); }));
+  est.ferramenta = 'caneta';
+  desenharBarra();
+  const editarDados = async () => {
+    const r = await dialogo({ titulo: 'Dados da folha', campos: [{ rotulo: 'Data', tipo: 'date', valor: meta.data }, { rotulo: 'Título (opcional)', valor: meta.titulo || '' }],
+      botoes: [{ rotulo: 'Excluir folha', valor: 'excluir', estilo: 'perigo' }, { rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }] });
+    if (r === 'excluir') {
+      const ok = await dialogo({ titulo: 'Excluir esta folha?', texto: 'A folha e tudo o que foi escrito nela serão apagados deste aparelho.', botoes: [{ rotulo: 'Voltar', valor: null }, { rotulo: 'Excluir', valor: true, estilo: 'perigo' }] });
+      if (!ok) return;
+      clearTimeout(salvarTimer); alterado = false;
+      p.folhas = p.folhas.filter(f => f.id !== fid); agendarSalvar('p:' + p.id, p);
+      await Cofre.apagar(chaveFolha(fid)); history.back(); return;
+    }
+    if (!r) return;
+    meta.data = r[0] || meta.data; meta.titulo = (r[1] || '').trim(); meta.atualizadoEm = agoraISO();
+    agendarSalvar('p:' + p.id, p); document.getElementById('titulo-tela').textContent = tituloFolha();
+  };
+  const tituloFolha = () => `${dataCurta(meta.data)}${meta.titulo ? ' · ' + meta.titulo : ''}`;
+  const botaoNova = el('button', { type: 'button', class: 'secundario com-icone centralizado', style: 'display:flex;margin:0 auto', onclick: () => {
+    reg.paginas.push([]); const i = reg.paginas.length - 1;
+    zona.insertBefore(montarPagina(i), botaoNova); dimensionar(i); mudou();
+    folhasDom[i].div.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } }, icone('mais'), el('span', { text: 'Nova página' }));
+  reg.paginas.forEach((_, i) => zona.append(montarPagina(i)));
+  zona.append(botaoNova);
+  mostrar(
+    el('div', { style: 'position:sticky;top:0;z-index:6' },
+      cabecalho(tituloFolha(), { voltar: true, sub: p.nome, status: true, acoes: [botaoIcone('Data, título ou excluir', 'opcoes', editarDados)] }),
+      barra),
+    zona);
+  reg.paginas.forEach((_, i) => dimensionar(i));
+  const aoRedimensionar = () => { if (!document.body.contains(zona)) { window.removeEventListener('resize', aoRedimensionar); return; } folhasDom.forEach((_, i) => dimensionar(i)); };
+  window.addEventListener('resize', aoRedimensionar);
+  // salva ao sair da tela ou ao bloquear
+  const aoSair = () => { if (alterado) salvar(); };
+  window.addEventListener('pagehide', aoSair, { once: true });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) aoSair(); });
+  telaCadernoSair = aoSair;
+}
+let telaCadernoSair = null;
+
+// Imagens das folhas para o compilado (JPEG, fundo branco).
+async function imagensDasFolhas(p, r) {
+  const res = [];
+  for (const f of folhasNoPeriodo(p, r)) {
+    const reg = await Cofre.ler(chaveFolha(f.id));
+    if (!reg?.paginas) continue;
+    for (let i = 0; i < reg.paginas.length; i++) {
+      if (!reg.paginas[i].length) continue;
+      const W = 1000, H = Math.round(W * ALT_FOLHA / LARG_FOLHA);
+      const tinta = document.createElement('canvas'); tinta.width = W; tinta.height = H;
+      const tc = tinta.getContext('2d');
+      for (const t of reg.paginas[i]) desenharTracoFolha(tc, t, W / LARG_FOLHA);
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H); ctx.drawImage(tinta, 0, 0);
+      const blob = await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.85));
+      res.push({ bytes: new Uint8Array(await blob.arrayBuffer()), w: W, h: H,
+        legenda: `Folha manuscrita – ${dataCurta(f.data)}${f.titulo ? ' – ' + f.titulo : ''}${reg.paginas.length > 1 ? ` (página ${i + 1} de ${reg.paginas.length})` : ''}` });
+    }
+  }
+  return res;
+}
+
+// =====================================================================
+// Pasta do paciente no Google Drive. O app guarda só o endereço da pasta (na ficha cifrada).
+// Os arquivos são listados direto do Drive, com a conta Google do próprio Rodrigo, e só
+// entram no app (cifrados) quando ele toca em "Trazer para o app". Nada passa por terceiros.
+// =====================================================================
+const TIPO_PASTA = 'application/vnd.google-apps.folder';
+const EXPORTAR_GOOGLE = { 'application/vnd.google-apps.document': ['application/pdf', '.pdf'], 'application/vnd.google-apps.spreadsheet': ['application/pdf', '.pdf'], 'application/vnd.google-apps.presentation': ['application/pdf', '.pdf'] };
+const linkDaPasta = id => `https://drive.google.com/drive/folders/${id}`;
+async function tokenLeitura() {
+  if (!driveCfg().clientId) { await aviso('Falta a chave do Google', 'Em Configurações → Google Drive, cole a chave de conexão (ID do cliente).'); return null; }
+  try { await carregarGoogle(); return await pedirTokenGoogle(); }
+  catch (e) { await aviso('Sem acesso ao Google', e.message === 'sem-internet' ? 'Verifique a internet e tente de novo.' : 'O acesso ao Drive não foi concedido. Toque de novo e entre na sua conta.'); return null; }
+}
+function cartaoPastaDrive(p) {
+  if (driveCfg().clientId) carregarGoogle().catch(() => { });
+  const pasta = p.drivePasta;
+  return cartao('Pasta no Google Drive', 'arquivo',
+    pasta ? el('p', { class: 'suave pequeno', text: `Ligada à pasta "${pasta.nome || 'do paciente'}".` })
+      : el('p', { class: 'suave pequeno', text: 'Ligue este paciente à pasta dele no seu Drive para ver e trazer declarações e outros arquivos que já estão lá.' }),
+    el('div', { class: 'botoes-linha' },
+      pasta && el('button', { type: 'button', class: 'primario com-icone', onclick: async () => { if (await tokenLeitura()) ir({ tela: 'drivePaciente', pid: p.id, pasta: pasta.id, nome: pasta.nome }); } }, icone('arquivo'), el('span', { text: 'Ver arquivos' })),
+      pasta && el('button', { type: 'button', class: 'secundario compacto', text: 'Abrir no Drive', onclick: () => abrirExterno(linkDaPasta(pasta.id)) }),
+      el('button', { type: 'button', class: pasta ? 'link' : 'primario compacto', text: pasta ? 'Trocar pasta' : 'Encontrar a pasta', onclick: () => encontrarPastaPaciente(p) }),
+      !pasta && el('button', { type: 'button', class: 'secundario compacto', text: 'Colar link', onclick: () => colarLinkPasta(p) }),
+      pasta && el('button', { type: 'button', class: 'link perigo-texto', text: 'Desligar', onclick: () => { delete p.drivePasta; agendarSalvar('p:' + p.id, p); render(history.state); } })));
+}
+async function encontrarPastaPaciente(p) {
+  const token = await tokenLeitura(); if (!token) return;
+  const palavras = semAcento(p.nome).split(/\s+/).filter(w => w.length > 2);
+  const termo = (p.nome.split(/\s+/)[0] || '').replace(/'/g, "\\'");
+  let achadas = [];
+  try {
+    const q = encodeURIComponent(`mimeType = '${TIPO_PASTA}' and name contains '${termo}' and trashed = false`);
+    const r = await (await driveApi(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&pageSize=50&supportsAllDrives=true&includeItemsFromAllDrives=true`, token)).json();
+    achadas = (r.files || []).map(f => ({ ...f, pontos: palavras.filter(w => semAcento(f.name).includes(w)).length })).sort((a, b) => b.pontos - a.pontos || a.name.localeCompare(b.name, 'pt-BR')).slice(0, 12);
+  } catch { return aviso('Não foi possível buscar', 'Verifique a internet e tente de novo.'); }
+  if (!achadas.length) {
+    const ok = await dialogo({ titulo: 'Nenhuma pasta encontrada', texto: `Não achei pastas com "${termo}" no nome. Você pode colar o link da pasta.`, botoes: [{ rotulo: 'Fechar', valor: null }, { rotulo: 'Colar link', valor: true, estilo: 'primario' }] });
+    if (ok) colarLinkPasta(p);
+    return;
+  }
+  const r = await janela(`Pasta de ${p.nome}`, [el('p', { class: 'suave pequeno', text: 'Toque na pasta deste paciente.' })],
+    [...achadas.map((f, i) => ({ rotulo: f.name, valor: String(i) })), { rotulo: 'Colar link', valor: 'colar' }, { rotulo: 'Cancelar', valor: null }]);
+  if (r === 'colar') return colarLinkPasta(p);
+  if (r === null || r === undefined || !achadas[Number(r)]) return;
+  const f = achadas[Number(r)];
+  p.drivePasta = { id: f.id, nome: f.name, ligadaEm: agoraISO() };
+  agendarSalvar('p:' + p.id, p); render(history.state);
+}
+async function colarLinkPasta(p) {
+  const r = await dialogo({ titulo: 'Link da pasta no Drive', texto: 'No Drive: na pasta do paciente, toque nos três pontinhos → Compartilhar → Copiar link. Cole aqui. (A pasta continua privada; o link só serve para o app saber qual é.)',
+    campos: [{ rotulo: 'https://drive.google.com/drive/folders/…' }], botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }] });
+  if (!r) return;
+  const id = idDaPasta(String(r).trim());
+  if (!id) return aviso('Link não reconhecido', 'Copie o link da pasta pelo botão Compartilhar do Drive.');
+  p.drivePasta = { id, nome: '', ligadaEm: agoraISO() };
+  agendarSalvar('p:' + p.id, p); render(history.state);
+}
+async function telaDrivePaciente(pid, pastaId, nomePasta) {
+  const p = pacientes.find(x => x.id === pid);
+  if (!p) { history.back(); return; }
+  const lista = el('div', { class: 'pilha-pequena' }, el('p', { class: 'suave', text: 'Carregando os arquivos do Drive…' }));
+  mostrar(
+    cabecalho(nomePasta || p.drivePasta?.nome || 'Pasta no Drive', { voltar: true, sub: p.nome, status: true, acoes: [botaoIcone('Abrir no Drive', 'seguinte', () => abrirExterno(linkDaPasta(pastaId)))] }),
+    el('div', { class: 'conteudo pilha' }, lista,
+      el('p', { class: 'suave pequeno', text: '"Trazer para o app" guarda uma cópia cifrada no paciente (em Recebidos ou Emitidos). O arquivo continua também no Drive.' })));
+  let token = tokenGoogle && tokenGoogle.expira > Date.now() + 60000 ? tokenGoogle.valor : null;
+  if (!token) { lista.replaceChildren(el('p', { class: 'faixa', text: 'A conexão com o Google expirou.' }), el('button', { type: 'button', class: 'primario', text: 'Conectar de novo', onclick: async () => { if (await tokenLeitura()) telaDrivePaciente(pid, pastaId, nomePasta); } })); return; }
+  let arquivos = [];
+  try {
+    const q = encodeURIComponent(`'${pastaId}' in parents and trashed = false`);
+    const r = await (await driveApi(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType,modifiedTime,size,webViewLink)&orderBy=folder,modifiedTime desc&pageSize=200&supportsAllDrives=true&includeItemsFromAllDrives=true`, token)).json();
+    arquivos = r.files || [];
+    if (!nomePasta && p.drivePasta?.id === pastaId && !p.drivePasta.nome) {
+      const meta = await (await driveApi(`https://www.googleapis.com/drive/v3/files/${pastaId}?fields=name&supportsAllDrives=true`, token)).json();
+      p.drivePasta.nome = meta.name || ''; agendarSalvar('p:' + p.id, p); document.getElementById('titulo-tela').textContent = meta.name || 'Pasta no Drive';
+    }
+  } catch (e) {
+    lista.replaceChildren(el('p', { class: 'faixa', text: e.message === 'nao-encontrado' ? 'A pasta não foi encontrada. Ela pode ter sido movida ou apagada; use "Trocar pasta".' : 'Não foi possível abrir a pasta agora. Verifique a internet.' }));
+    return;
+  }
+  const trazidos = new Set(documentos.filter(d => d.pid === pid && d.driveId).map(d => d.driveId));
+  if (!arquivos.length) { lista.replaceChildren(el('p', { class: 'suave', text: 'A pasta está vazia.' })); return; }
+  lista.replaceChildren(...arquivos.map(f => {
+    const pasta = f.mimeType === TIPO_PASTA;
+    return el('div', { class: 'pag-linha' },
+      el('button', { type: 'button', class: 'pag-info linha-botao', style: 'text-align:left;background:none;border:0;padding:0',
+        onclick: () => pasta ? ir({ tela: 'drivePaciente', pid, pasta: f.id, nome: f.name }) : abrirExterno(f.webViewLink) },
+        el('strong', { text: (pasta ? '📁 ' : '') + f.name }),
+        el('span', { class: 'suave', text: (pasta ? 'Pasta' : `Alterado em ${dataBR(f.modifiedTime)}`) + (trazidos.has(f.id) ? ' · já está no app' : '') })),
+      !pasta && el('button', { type: 'button', class: 'secundario compacto', text: trazidos.has(f.id) ? 'Trazer de novo' : 'Trazer para o app', onclick: () => trazerDoDrive(p, f) }));
+  }));
+}
+async function trazerDoDrive(p, f) {
+  const tipo = await dialogo({ titulo: 'Trazer para o app', texto: `"${f.name}" vai ser guardado cifrado neste paciente. Onde?`,
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Recebidos', valor: 'recebido' }, { rotulo: 'Emitidos', valor: 'emitido', estilo: 'primario' }] });
+  if (!tipo) return;
+  const token = tokenGoogle?.valor; if (!token) return aviso('Conexão expirada', 'Volte e toque em "Ver arquivos" de novo.');
+  if (Number(f.size) > 25 * 1048576) return aviso('Arquivo grande demais', 'O app guarda arquivos de até 25 MB. Abra este pelo Drive.');
+  indicarStatus('Baixando…');
+  try {
+    const exp = EXPORTAR_GOOGLE[f.mimeType];
+    if (!exp && f.mimeType.startsWith('application/vnd.google-apps')) throw new Error('tipo');
+    const url = exp ? `https://www.googleapis.com/drive/v3/files/${f.id}/export?mimeType=${encodeURIComponent(exp[0])}`
+      : `https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&supportsAllDrives=true`;
+    const bytes = new Uint8Array(await (await driveApi(url, token)).arrayBuffer());
+    const nome = exp && !f.name.toLowerCase().endsWith(exp[1]) ? f.name + exp[1] : f.name;
+    const data = (f.modifiedTime || agoraISO()).slice(0, 10);
+    const d = await guardarDocumento(p, tipo, { nome, mime: exp ? exp[0] : (f.mimeType || 'application/octet-stream'), bytes, descricao: nome.replace(/\.[^.]+$/, ''), data });
+    d.driveId = f.id; await Cofre.salvar(chaveDoc(d), d);
+    indicarStatus('Guardado no app');
+    render(history.state);
+  } catch (e) {
+    indicarStatus('');
+    aviso('Não foi possível trazer', e.message === 'tipo' ? 'Este tipo de arquivo do Google não pode ser copiado. Abra pelo Drive.' : 'Verifique a internet e tente de novo.');
+  }
 }
