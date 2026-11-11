@@ -61,7 +61,7 @@ async function entrarAdm() {
   aparelhoComClinica = await Cofre.temClinica();
   await Cofre.garantirChavesEntrada();
   await carregarAdm();
-  history.replaceState({ tela: 'lista' }, '');
+  history.replaceState({ tela: 'listaSemana' }, '');
   if (!(await abrirEntradaSePendente())) telaInicioAdm();
 }
 
@@ -85,7 +85,7 @@ function renderAdm(s) {
   if (s.tela === 'agenda') { telaAgenda(s.semana); return true; }
   if (s.tela === 'agendaMes') { telaAgendaMes(s.ym); return true; }
   if (s.tela === 'confirmacoes') { telaConfirmacoes(s.semana); return true; }
-  if (s.tela === 'lista') { telaListaSemana(s.semana); return true; }
+  if (s.tela === 'listaSemana') { telaListaSemana(s.semana); return true; }
   if (s.tela === 'expediente') { telaExpediente(); return true; }
   if (s.tela === 'agendar') { telaAgendar(s.id); return true; }
   if (s.tela === 'feriados') { telaFeriados(s.ano); return true; }
@@ -457,7 +457,7 @@ async function entrarNaClinica() {
 // ---------- Paciente, na área administrativa ----------
 function telaAdm(id, aba) {
   const c = cadastroDe(id);
-  if (!c) { render({ tela: 'lista' }); return; }
+  if (!c) { render({ tela: 'listaSemana' }); return; }
   const chips = [];
   const hs = horariosDe(c).filter(h => h.hora);
   if (hs.length) chips.push(hs.map(h => `${DIAS[h.dia].slice(0, 3)} ${horaCurta(h.hora)}`).join(', '));
@@ -1813,7 +1813,7 @@ async function concluirImportacaoDrive() {
     itens.length ? `${atNovos} atendimentos novos, ${atAtualizados} atualizados, horários fixos definidos para ${horariosDef}.` : '',
     arquivados ? `${arquivados} sem atendimento nos últimos 60 dias foram arquivados (dá para desarquivar).` : '',
     modos ? `Modo ou dia de pagamento definido em ${modos} cadastros.` : ''].filter(Boolean).join(' '));
-  history.replaceState({ tela: 'lista' }, ''); render(history.state);
+  history.replaceState({ tela: 'listaSemana' }, ''); render(history.state);
 }
 
 // ---------- Tela de configuração do Drive ----------
@@ -2143,7 +2143,7 @@ function telaAgenda(inicio) {
     cabecalho('Agenda', { voltar: true, sub: `${fmt(seg)} a ${fmt(dom)}`, acoes: [botaoIcone('Feriados e dias sem atendimento', 'ajustes', () => ir({ tela: 'feriados' }))] }),
     el('div', { class: 'conteudo pilha' },
       cartaoAvisosAgenda(),
-      segmentoEscolha({ semana: 'Semana', lista: 'Lista', mes: 'Mês' }, 'semana', k => { if (k === 'mes') ir({ tela: 'agendaMes', ym: seg.slice(0, 7) }, false); if (k === 'lista') ir({ tela: 'lista', semana: seg }, false); }),
+      segmentoEscolha({ semana: 'Semana', lista: 'Lista', mes: 'Mês' }, 'semana', k => { if (k === 'mes') ir({ tela: 'agendaMes', ym: seg.slice(0, 7) }, false); if (k === 'lista') ir({ tela: 'listaSemana', semana: seg }, false); }),
       el('div', { class: 'botoes-linha' },
         el('button', { type: 'button', class: 'secundario compacto', text: '‹ Semana anterior', onclick: () => ir({ tela: 'agenda', semana: somarDias(seg, -7) }, false) }),
         el('button', { type: 'button', class: 'secundario compacto', text: 'Hoje', onclick: () => ir({ tela: 'agenda' }, false) }),
@@ -2363,7 +2363,7 @@ function telaAgendaMes(ym) {
     cabecalho('Agenda', { voltar: true, sub: nomeMes(ym), acoes: [botaoIcone('Feriados e dias sem atendimento', 'ajustes', () => ir({ tela: 'feriados' }))] }),
     el('div', { class: 'conteudo pilha' },
       cartaoAvisosAgenda(),
-      segmentoEscolha({ semana: 'Semana', lista: 'Lista', mes: 'Mês' }, 'mes', k => { if (k === 'semana') ir({ tela: 'agenda', semana: ym === hoje.slice(0, 7) ? hoje : primeiro }, false); if (k === 'lista') ir({ tela: 'lista', semana: ym === hoje.slice(0, 7) ? hoje : primeiro }, false); }),
+      segmentoEscolha({ semana: 'Semana', lista: 'Lista', mes: 'Mês' }, 'mes', k => { if (k === 'semana') ir({ tela: 'agenda', semana: ym === hoje.slice(0, 7) ? hoje : primeiro }, false); if (k === 'lista') ir({ tela: 'listaSemana', semana: ym === hoje.slice(0, 7) ? hoje : primeiro }, false); }),
       el('div', { class: 'botoes-linha' },
         el('button', { type: 'button', class: 'secundario compacto', text: '‹ Mês anterior', onclick: () => ir({ tela: 'agendaMes', ym: somarMeses(ym, -1) }, false) }),
         el('button', { type: 'button', class: 'secundario compacto', text: 'Este mês', onclick: () => ir({ tela: 'agendaMes' }, false) }),
@@ -2788,9 +2788,9 @@ function telaListaSemana(inicio) {
     el('div', { class: 'conteudo pilha' },
       segmentoEscolha({ semana: 'Semana', lista: 'Lista', mes: 'Mês' }, 'lista', k => { if (k === 'semana') ir({ tela: 'agenda', semana: seg }, false); if (k === 'mes') ir({ tela: 'agendaMes', ym: seg.slice(0, 7) }, false); }),
       el('div', { class: 'botoes-linha' },
-        el('button', { type: 'button', class: 'secundario compacto', text: '‹ Anterior', onclick: () => ir({ tela: 'lista', semana: somarDias(seg, -7) }, false) }),
-        el('button', { type: 'button', class: 'secundario compacto', text: 'Esta semana', onclick: () => ir({ tela: 'lista', semana: hoje }, false) }),
-        el('button', { type: 'button', class: 'secundario compacto', text: 'Próxima ›', onclick: () => ir({ tela: 'lista', semana: somarDias(seg, 7) }, false) })),
+        el('button', { type: 'button', class: 'secundario compacto', text: '‹ Anterior', onclick: () => ir({ tela: 'listaSemana', semana: somarDias(seg, -7) }, false) }),
+        el('button', { type: 'button', class: 'secundario compacto', text: 'Esta semana', onclick: () => ir({ tela: 'listaSemana', semana: hoje }, false) }),
+        el('button', { type: 'button', class: 'secundario compacto', text: 'Próxima ›', onclick: () => ir({ tela: 'listaSemana', semana: somarDias(seg, 7) }, false) })),
       el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => enviarListaSemana(S) }, icone('mensagem'), el('span', { text: 'Enviar a lista pelo WhatsApp' })),
       el('label', { class: 'marcar' }, chk, el('span', { text: 'Incluir a legenda na mensagem' })),
       el('p', { class: 'suave pequeno', text: 'Toque numa linha para marcar: mensagem enviada, confirmou, veio, desmarcou, faltou ou reagendou. Toque num horário vago para agendar.' }),
