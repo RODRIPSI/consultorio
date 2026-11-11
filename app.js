@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 23';
+const VERSAO = 'versão 24';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -1024,7 +1024,10 @@ async function fazerBackup() {
   if (assinatura) registros['c:assinatura'] = assinatura;
   if (numeros) registros['c:numeros'] = numeros;
   for (const k of ['c:modelos-anamnese', 'c:normas']) { const v = await Cofre.ler(k); if (v) registros[k] = v; }
-  for (const f of await Cofre.lerTodos('c:folha:')) if (f?.id) registros[chaveFolha(f.id)] = f;
+  for (const f of await Cofre.lerTodos('c:folha:')) if (f?.id) {
+    registros[chaveFolha(f.id)] = f;
+    for (let i = 0; i < (f.fundos || []).length; i++) if (f.fundos[i]) { const fu = await Cofre.ler(chaveFundo(f.id, i)); if (fu) registros[chaveFundo(f.id, i)] = fu; }
+  }
   Object.assign(registros, await registrosAdm(true));
   const texto = await Cofre.cifrarPacote(senha, { formato: 'consultorio', versao: 1, criadoEm: new Date().toISOString(), registros });
   const nome = `consultorio-backup-${hojeISO()}.cifrado.txt`;
@@ -3412,6 +3415,72 @@ let preferenciasCaneta = { cor: '#222222', esp: 2.2, papel: 'liso', dedo: false 
 try { Object.assign(preferenciasCaneta, JSON.parse(localStorage.getItem('consultorio-caneta') || '{}')); } catch { }
 const guardarPreferenciasCaneta = () => { try { localStorage.setItem('consultorio-caneta', JSON.stringify(preferenciasCaneta)); } catch { } };
 const chaveFolha = id => 'c:folha:' + id;
+// Versão 24: página importada (PDF ou imagem) guardada como fundo da folha, cifrada, em 'a:fundo:<folha>:<página>'.
+const chaveFundo = (fid, i) => `a:fundo:${fid}:${i}`;
+const alturaPagina = (reg, i) => reg.alturas?.[i] || ALT_FOLHA;
+async function imagemDoFundo(fid, i) {
+  const r = await Cofre.ler(chaveFundo(fid, i));
+  if (!r?.b64) return null;
+  return createImageBitmap(new Blob([deBase64(r.b64)], { type: 'image/jpeg' }));
+}
+// Converte cada página do PDF (ou a imagem) em JPEG com 1400 px de largura.
+async function paginasDoArquivo(f, aoProgredir) {
+  const LARG = 1400, res = [];
+  const paraJpeg = async (desenhar, w, h) => {
+    const esc = LARG / w, W = LARG, H = Math.min(Math.round(h * esc), LARG * 12);
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+    await desenhar(ctx, esc);
+    const blob = await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.82));
+    return { bytes: new Uint8Array(await blob.arrayBuffer()), w: W, h: H };
+  };
+  if (f.type === 'application/pdf' || /\.pdf$/i.test(f.name)) {
+    const pdfjs = await import('./pdf.min.mjs');
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.min.mjs', location.href).href;
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(await f.arrayBuffer()), isEvalSupported: false }).promise;
+    const n = Math.min(doc.numPages, 60);
+    for (let i = 1; i <= n; i++) {
+      aoProgredir?.(i, n);
+      const pg = await doc.getPage(i), vp = pg.getViewport({ scale: 1 });
+      res.push(await paraJpeg((ctx, esc) => pg.render({ canvasContext: ctx, viewport: pg.getViewport({ scale: esc }) }).promise, vp.width, vp.height));
+    }
+    await doc.destroy();
+  } else {
+    const bmp = await createImageBitmap(f);
+    res.push(await paraJpeg((ctx, esc) => ctx.drawImage(bmp, 0, 0, bmp.width * esc, bmp.height * esc), bmp.width, bmp.height));
+  }
+  return res;
+}
+async function importarParaCaderno(p) {
+  const arquivos = await escolherArquivos({ multiplo: true, accept: 'application/pdf,.pdf,image/*' });
+  if (!arquivos?.length) return;
+  const nomeBase = arquivos[0].name.replace(/\.[^.]+$/, '');
+  const r = await dialogo({ titulo: 'Trazer para Anotações e evolução', texto: 'Cada página vira uma folha deste caderno, e você pode continuar escrevendo em cima com a caneta. Data do atendimento e título:',
+    campos: [{ rotulo: 'Data', tipo: 'date', valor: hojeISO() }, { rotulo: 'Título', valor: nomeBase }],
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Trazer', valor: true, estilo: 'primario' }] });
+  if (!r) return;
+  const [data, titulo] = r;
+  let paginas = [];
+  try {
+    for (const [k, f] of arquivos.entries())
+      paginas.push(...await paginasDoArquivo(f, (i, n) => indicarStatus(`Lendo ${arquivos.length > 1 ? `arquivo ${k + 1}, ` : ''}página ${i} de ${n}…`)));
+  } catch (e) {
+    console.warn('importar', e); indicarStatus('');
+    return aviso('Não foi possível ler o arquivo', e?.name === 'PasswordException' ? 'O PDF tem senha. Salve de novo sem senha e tente outra vez.' : 'Confira se é um PDF ou uma imagem e tente de novo.');
+  }
+  indicarStatus('');
+  if (!paginas.length) return aviso('Nada encontrado', 'O arquivo não tem páginas.');
+  const f = { id: crypto.randomUUID(), data: data || hojeISO(), titulo: (titulo || '').trim(), paginas: paginas.length, importada: true, criadoEm: agoraISO(), atualizadoEm: agoraISO() };
+  for (const [i, pg] of paginas.entries())
+    await Cofre.salvar(chaveFundo(f.id, i), { tipoRegistro: 'fundo', b64: paraBase64(pg.bytes), w: pg.w, h: pg.h, atualizadoEm: f.atualizadoEm });
+  await Cofre.salvar(chaveFolha(f.id), { tipoRegistro: 'folha', id: f.id, pid: p.id, paginas: paginas.map(() => []),
+    fundos: paginas.map(() => true), alturas: paginas.map(pg => Math.round(LARG_FOLHA * pg.h / pg.w)), atualizadoEm: f.atualizadoEm });
+  (p.folhas ||= []).push(f);
+  agendarSalvar('p:' + p.id, p);
+  await salvarAgora();
+  indicarStatus('Salvo');
+  ir({ tela: 'caderno', pid: p.id, fid: f.id });
+}
 const folhasDe = p => (p.folhas || []).slice().sort((a, b) => b.data.localeCompare(a.data) || (b.criadoEm || '').localeCompare(a.criadoEm || ''));
 const folhasNoPeriodo = (p, r) => (p.folhas || []).filter(f => f.data >= r.de && f.data <= r.ate).sort((a, b) => a.data.localeCompare(b.data) || (a.criadoEm || '').localeCompare(b.criadoEm || ''));
 
@@ -3419,7 +3488,8 @@ function abaCaderno(p) {
   const lista = folhasDe(p);
   return el('div', { class: 'pilha' },
     el('div', { class: 'botoes-linha' },
-      el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => novaFolha(p) }, icone('nota'), el('span', { text: 'Nova folha' }))),
+      el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => novaFolha(p) }, icone('nota'), el('span', { text: 'Nova folha' })),
+      el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => importarParaCaderno(p) }, icone('clipe'), el('span', { text: 'Trazer PDF ou imagem' }))),
     lista.length ? lista.map(f => el('button', { type: 'button', class: 'cartao linha-botao', style: 'text-align:left;display:flex;align-items:center;gap:.8rem', onclick: () => ir({ tela: 'caderno', pid: p.id, fid: f.id }) },
       el('span', { class: 'ic-bolha' }, icone('nota')),
       el('span', { style: 'display:flex;flex-direction:column;gap:2px' },
@@ -3427,7 +3497,7 @@ function abaCaderno(p) {
         el('span', { class: 'suave pequeno', text: `${f.paginas || 1} ${(f.paginas || 1) === 1 ? 'página' : 'páginas'}${f.atualizadoEm ? ' · alterada em ' + dataBR(f.atualizadoEm) : ''}` }))))
       : el('div', { class: 'cartao vazio-cartao' },
         el('span', { class: 'ic-bolha grande' }, icone('nota')),
-        el('p', { text: 'Nenhuma folha ainda. Toque em "Nova folha" para escrever com a caneta, como no Samsung Notes.' })),
+        el('p', { text: 'Nenhuma folha ainda. Toque em "Nova folha" para escrever com a caneta, como no Samsung Notes, ou em "Trazer PDF ou imagem" para guardar aqui anotações que já existem (por exemplo, o PDF de uma nota do Samsung Notes).' })),
     el('p', { class: 'suave pequeno', text: 'As folhas ficam só na área clínica, cifradas. O administrativo não tem acesso. Elas entram no backup e podem entrar no compilado da evolução.' }));
 }
 async function novaFolha(p) {
@@ -3459,9 +3529,10 @@ function desenharTracoFolha(ctx, t, esc) {
 }
 // Versão 22: o papel é desenhado num canvas próprio, por baixo da tinta. Assim o modo escuro do navegador
 // não escurece só a folha (deixando a tinta invisível), e a borracha continua sem apagar as linhas.
-function desenharPapel(cv, papel) {
+function desenharPapel(cv, papel, img) {
   const ctx = cv.getContext('2d'), W = cv.width, H = cv.height, r = W / LARG_FOLHA;
-  ctx.fillStyle = '#fffdf8'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = img ? '#ffffff' : '#fffdf8'; ctx.fillRect(0, 0, W, H);
+  if (img) { ctx.drawImage(img, 0, 0, W, W * img.height / img.width); return; }
   if (papel !== 'linhas') return;
   const passo = 52 * r;
   ctx.fillStyle = '#e3ddd1';
@@ -3495,13 +3566,15 @@ async function telaCaderno(pid, fid) {
     for (const t of reg.paginas[i]) desenharTracoFolha(ctx, t, esc);
   };
   const dimensionar = i => {
-    const f = folhasDom[i], larg = larguraTela(), dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    const f = folhasDom[i], larg = larguraTela(), alt = larg * alturaPagina(reg, i) / LARG_FOLHA;
+    // limite de pixels por canvas, para páginas muito compridas não travarem o tablet
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.5, Math.sqrt(14e6 / (larg * alt)));
     f.div.style.width = larg + 'px';
     for (const cv of [f.papel, f.c]) {
-      cv.style.width = larg + 'px'; cv.style.height = larg * ALT_FOLHA / LARG_FOLHA + 'px';
-      cv.width = Math.round(larg * dpr); cv.height = Math.round(larg * ALT_FOLHA / LARG_FOLHA * dpr);
+      cv.style.width = larg + 'px'; cv.style.height = alt + 'px';
+      cv.width = Math.round(larg * dpr); cv.height = Math.round(alt * dpr);
     }
-    desenharPapel(f.papel, est.papel);
+    desenharPapel(f.papel, est.papel, f.img);
     redesenhar(i);
   };
   const montarPagina = i => {
@@ -3509,8 +3582,9 @@ async function telaCaderno(pid, fid) {
     const c = el('canvas', { 'aria-label': `Página ${i + 1}`, style: 'position:absolute;left:0;top:0;display:block;touch-action:none;border-radius:6px' });
     const div = el('div', { style: 'position:relative;margin:0 auto 16px;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.14);color-scheme:light;forced-color-adjust:none' }, papel, c,
       el('span', { style: 'position:absolute;right:12px;bottom:8px;font-size:11px;color:#a39b91;pointer-events:none', text: `Página ${i + 1}` }));
-    const f = { c, papel, ctx: c.getContext('2d'), div };
+    const f = { c, papel, ctx: c.getContext('2d'), div, img: null };
     folhasDom[i] = f;
+    if (reg.fundos?.[i]) imagemDoFundo(fid, i).then(img => { if (!img) return; f.img = img; desenharPapel(f.papel, est.papel, img); }).catch(() => { });
     ligar(i);
     return div;
   };
@@ -3568,7 +3642,7 @@ async function telaCaderno(pid, fid) {
     ...ESPESSURAS.map(([v, nome]) => botaoBarra(nome, est.esp === v, () => { est.esp = v; guardarPreferenciasCaneta(); desenharBarra(); })),
     botaoBarra('↶', false, () => { const h = historico.pop(); if (!h) return; reg.paginas[h.i].splice(reg.paginas[h.i].lastIndexOf(h.t), 1); refazer.push(h); redesenhar(h.i); mudou(); }, { aria: 'Desfazer' }),
     botaoBarra('↷', false, () => { const h = refazer.pop(); if (!h) return; reg.paginas[h.i].push(h.t); historico.push(h); redesenhar(h.i); mudou(); }, { aria: 'Refazer' }),
-    botaoBarra(est.papel === 'linhas' ? 'Linhas largas' : 'Folha lisa', false, () => { est.papel = est.papel === 'linhas' ? 'liso' : 'linhas'; guardarPreferenciasCaneta(); desenharBarra(); folhasDom.forEach(f => desenharPapel(f.papel, est.papel)); }),
+    botaoBarra(est.papel === 'linhas' ? 'Linhas largas' : 'Folha lisa', false, () => { est.papel = est.papel === 'linhas' ? 'liso' : 'linhas'; guardarPreferenciasCaneta(); desenharBarra(); folhasDom.forEach(f => desenharPapel(f.papel, est.papel, f.img)); }),
     botaoBarra('☝️ Dedo escreve', est.dedo, () => { est.dedo = !est.dedo; guardarPreferenciasCaneta(); desenharBarra(); if (est.dedo) dicaCaneta?.remove(); }));
   est.ferramenta = 'caneta';
   desenharBarra();
@@ -3585,6 +3659,7 @@ async function telaCaderno(pid, fid) {
       if (!ok) return;
       clearTimeout(salvarTimer); alterado = false;
       p.folhas = p.folhas.filter(f => f.id !== fid); agendarSalvar('p:' + p.id, p);
+      for (let k = 0; k < (reg.fundos || []).length; k++) if (reg.fundos[k]) await Cofre.apagar(chaveFundo(fid, k));
       await Cofre.apagar(chaveFolha(fid)); history.back(); return;
     }
     if (!r) return;
@@ -3622,13 +3697,16 @@ async function imagensDasFolhas(p, r) {
     const reg = await Cofre.ler(chaveFolha(f.id));
     if (!reg?.paginas) continue;
     for (let i = 0; i < reg.paginas.length; i++) {
-      if (!reg.paginas[i].length) continue;
-      const W = 1000, H = Math.round(W * ALT_FOLHA / LARG_FOLHA);
+      const fundo = reg.fundos?.[i] ? await imagemDoFundo(f.id, i).catch(() => null) : null;
+      if (!reg.paginas[i].length && !fundo) continue;
+      const W = 1000, H = Math.round(W * alturaPagina(reg, i) / LARG_FOLHA);
       const tinta = document.createElement('canvas'); tinta.width = W; tinta.height = H;
       const tc = tinta.getContext('2d');
       for (const t of reg.paginas[i]) desenharTracoFolha(tc, t, W / LARG_FOLHA);
       const c = document.createElement('canvas'); c.width = W; c.height = H;
-      const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H); ctx.drawImage(tinta, 0, 0);
+      const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+      if (fundo) ctx.drawImage(fundo, 0, 0, W, W * fundo.height / fundo.width);
+      ctx.drawImage(tinta, 0, 0);
       const blob = await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.85));
       res.push({ bytes: new Uint8Array(await blob.arrayBuffer()), w: W, h: H,
         legenda: `Folha manuscrita – ${dataCurta(f.data)}${f.titulo ? ' – ' + f.titulo : ''}${reg.paginas.length > 1 ? ` (página ${i + 1} de ${reg.paginas.length})` : ''}` });
