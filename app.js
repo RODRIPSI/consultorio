@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 63';
+const VERSAO = 'versão 64';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -464,7 +464,13 @@ function telaLista(todos = false) {
           el('span', { class: 'nome', text: p.nome }),
           el('span', { class: 'meta' }, icone('relogio'),
             el('span', { text: ult ? `Última sessão ${relativo(ult.data)}` : 'Nenhuma sessão ainda' })),
-          p.dados.frequencia && el('span', { class: 'meta' }, icone('calendario'), el('span', { text: p.dados.frequencia }))),
+          p.dados.frequencia && el('span', { class: 'meta' }, icone('calendario'), el('span', { text: p.dados.frequencia })),
+          todos && (() => { // versão 64: quanto o paciente paga por sessão (do cadastro do administrativo)
+            const c = typeof cadastroDe === 'function' ? cadastroDe(p.id) : null;
+            const proprio = c ? valorNum(c.valor) : 0, padrao = valorNum(perfil?.valorSessao), mensal = c ? valorNum(c.valorMensal) : 0;
+            const t = proprio ? `R$ ${reais(proprio)} por sessão` : padrao ? `R$ ${reais(padrao)} por sessão (valor padrão)` : 'Valor da sessão não definido';
+            return el('span', { class: 'meta' }, icone('moeda'), el('span', { text: t + (mensal ? ` · R$ ${reais(mensal)} por mês` : '') }));
+          })()),
         el('span', { class: 'contador', title: 'Sessões registradas', text: String(ss.length) }),
         icone('seguinte'));
     }));
