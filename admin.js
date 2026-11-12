@@ -2232,9 +2232,18 @@ function telaAgendar(pid) {
     previa.textContent = `${n} ${n === 1 ? 'sessão' : 'sessões'}, ${DIAS[h.dia].toLowerCase()}${r.hora ? ' às ' + horaCurta(r.hora) : ''}, ${h.freq === 2 ? 'a cada 15 dias' : 'toda semana'}, de ${dataCurta(r.data)} até ${ultima ? dataCurta(ultima) : '—'}.` +
       (puladas.length ? ` ${puladas.length === 1 ? 'Um feriado foi pulado' : `${puladas.length} feriados foram pulados`} (${puladas.map(o => dataCurta(o.data).slice(0, 5)).join(', ')}); a série foi estendida.` : '') + aviso;
   };
-  const sel = el('select', { 'aria-label': 'Paciente' }, el('option', { value: '', text: 'Escolha o paciente' }), ativos.map(c => el('option', { value: c.id, text: c.nome })));
+  const sel = el('select', { 'aria-label': 'Paciente' }, el('option', { value: '', text: 'Escolha o paciente' }),
+    el('option', { value: '__novo', text: '+ Paciente que não está na lista (escrever o nome)' }), ativos.map(c => el('option', { value: c.id, text: c.nome })));
   sel.value = r.pid;
-  sel.addEventListener('change', () => { r.pid = sel.value; r.ajustado = false; telaAgendar(); });
+  sel.addEventListener('change', async () => {
+    if (sel.value === '__novo') {
+      const c = await pacienteRapido();
+      sel.value = r.pid;
+      if (!c) return;
+      r.pid = c.id; r.ajustado = false; telaAgendar(); return;
+    }
+    r.pid = sel.value; r.ajustado = false; telaAgendar();
+  });
   const campoSessoes = el('label', { class: 'campo', hidden: r.repetir === 'nao' || r.repetir === 'varios' }, el('span', { text: `Número de sessões (1 a ${MAX_SESSOES_SERIE})` }),
     el('input', { type: 'number', min: '1', max: String(MAX_SESSOES_SERIE), inputmode: 'numeric', value: r.sessoes, oninput: e => { r.sessoes = e.target.value; desenharPrevia(); } }));
   const listaExtras = el('div', { class: 'pilha-pequena', hidden: r.repetir !== 'varios' });
@@ -2957,4 +2966,25 @@ async function acoesDiaAgenda(d) {
   if (r === 'agendar') { agendamentoRasc = { pid: '', data: d, hora: '', repetir: 'semanal', sessoes: String(MAX_SESSOES_SERIE), extras: [], ajustado: true }; ir({ tela: 'agendar' }); }
   if (r === 'lista') ir({ tela: 'listaSemana', semana: d });
   if (r === 'feriados') ir({ tela: 'feriados' });
+}
+
+// Versão 31: cadastrar na hora, pelo nome, quem ainda não preencheu o Google Forms.
+// Fica como cadastro provisório: quando a ficha do Forms chegar, "Atualizar do Drive" completa este mesmo cadastro.
+async function pacienteRapido() {
+  const v = await dialogo({ titulo: 'Paciente novo', texto: 'Escreva o nome como ele é chamado. Quando a ficha do Google Forms chegar, o cadastro é completado sem duplicar.',
+    campos: [{ rotulo: 'Nome' }, { rotulo: 'Celular (WhatsApp), se tiver', tipo: 'tel' }],
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Cadastrar', valor: true, estilo: 'primario' }] });
+  if (!v || !(v[0] || '').trim()) return null;
+  const nome = v[0].trim().replace(/\s+/g, ' ');
+  const igual = cadastros.find(c => !c.arquivado && norm(c.nome) === norm(nome));
+  if (igual) { await aviso('Já existe', `${igual.nome} já está cadastrado: foi escolhido na lista.`); return igual; }
+  const c = await criarCadastro({ nome, nomeLista: nome, telefone: (v[1] || '').trim(), provisorio: true });
+  if (modo === 'dono' && !pacientes.some(p => p.id === c.id)) {
+    const agora = agoraISO();
+    const p = { id: c.id, nome, criadoEm: agora, atualizadoEm: agora, arquivado: false,
+      dados: { nascimento: '', cpf: '', telefone: c.telefone, contatoEmergencia: '', inicio: '', frequencia: '' }, demanda: '', temas: '', observacoes: '' };
+    await Cofre.salvar('p:' + p.id, p);
+    pacientes.push(p);
+  }
+  return c;
 }
