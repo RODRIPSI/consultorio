@@ -2523,14 +2523,17 @@ async function sincronizarDrive(opcoes = {}) {
     const q = encodeURIComponent(`'${pasta}' in parents and trashed = false`);
     const lista = await (await driveApi(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&supportsAllDrives=true&includeItemsFromAllDrives=true&pageSize=100`, token)).json();
     const achar = nome => (lista.files || []).find(f => f.name === nome);
-    let r = { novos: 0, atualizados: 0, mantidos: 0 }, recebeu = false;
+    let r = { novos: 0, atualizados: 0, mantidos: 0 }, recebeu = false, outraSenha = false;
     const doOutro = achar(ARQ_SYNC[outro]);
+    let pacote = null;
     if (doOutro) {
       const texto = await (await driveApi(`https://www.googleapis.com/drive/v3/files/${doOutro.id}?alt=media&supportsAllDrives=true`, token)).text();
-      let pacote;
-      try { pacote = await Cofre.decifrarPacote(s.senha, texto); }
-      catch (e) { throw new Error(e.message === 'senha-incorreta' ? 'senha-incorreta' : 'arquivo-invalido'); }
-      if (pacote.formato !== 'consultorio-adm') throw new Error('arquivo-invalido');
+      // Versão 52: arquivo do outro aparelho com outra senha (antigo, ou o outro ainda não sincronizou com a senha nova):
+      // não trava; envia os dados deste aparelho e avisa.
+      try { pacote = await Cofre.decifrarPacote(s.senha, texto); if (pacote.formato !== 'consultorio-adm') pacote = null; }
+      catch (e) { if (e.message === 'senha-incorreta') outraSenha = true; else pacote = null; }
+    }
+    if (pacote) {
       await salvarAgora();
       r = await mesclarRegistros(pacote.registros || {}, k => k.startsWith('x:'));
       mudou = (r.novos || 0) + (r.atualizados || 0) > 0;
@@ -2549,13 +2552,14 @@ async function sincronizarDrive(opcoes = {}) {
       await driveApi('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true', token, { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + limite }, body: corpo });
     }
     try { localStorage.setItem('consultorio-ultima-sync', agoraISO()); } catch { } // fora do perfil, para não sobrescrever dados do outro aparelho
-    if (silencioso) { indicarStatus('Sincronizado às ' + new Date().toTimeString().slice(0, 5)); return; }
+    if (silencioso) { indicarStatus(outraSenha ? 'Enviado. O outro aparelho ainda usa outra senha.' : 'Sincronizado às ' + new Date().toTimeString().slice(0, 5)); return; }
     await oferecerLembrarSenha(s);
     if (!senhaTroca && s.senha) senhaTroca = s.senha;
     indicarStatus('Sincronizado. Agora sincroniza sozinho enquanto o app estiver aberto.');
-    await aviso('Sincronizado', recebeu
-      ? `Recebidos do outro aparelho: ${r.novos} novos, ${r.atualizados} atualizados. Os seus dados também foram enviados.`
-      : 'Os seus dados foram enviados. O outro aparelho ainda não sincronizou nenhuma vez.');
+    await aviso(outraSenha ? 'Seus dados foram enviados' : 'Sincronizado', outraSenha
+      ? 'O arquivo do outro aparelho que está no Drive usa outra senha: é antigo, ou o outro aparelho ainda não sincronizou com a senha nova. Os seus dados foram enviados. Quando o outro aparelho tocar no 🔁 com a mesma senha, os dois ficam iguais.'
+      : recebeu ? `Recebidos do outro aparelho: ${r.novos} novos, ${r.atualizados} atualizados. Os seus dados também foram enviados.`
+        : 'Os seus dados foram enviados. O outro aparelho ainda não sincronizou nenhuma vez.');
   } catch (e) {
     console.warn('sincronização', e);
     indicarStatus('');
