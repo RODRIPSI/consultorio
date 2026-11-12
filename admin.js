@@ -2592,7 +2592,7 @@ async function sincronizarDrive(opcoes = {}) {
     }
     // Versão 66: quem preencheu o Google Forms entra (ou é atualizado) sozinho, a cada sincronização.
     let doForms = null;
-    try { doForms = await autoImportarForms(token); } catch { doForms = null; }
+    try { doForms = await autoImportarForms(token, !silencioso); } catch { doForms = null; }
     await salvarAgora();
     const registros = await registrosAdm(false);
     const conteudo = await Cofre.cifrarPacote(s.senha, { formato: 'consultorio-adm', versao: 1, de: modo, criadoEm: agoraISO(), registros });
@@ -3526,11 +3526,11 @@ function codigoForms(rec) {
   return 'forms-' + h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0');
 }
 const CAMPOS_FORMS = ['cpf', 'nascimento', 'email', 'telefone', 'telefone2', 'pix'];
-async function autoImportarForms(token) {
+async function autoImportarForms(token, agora0 = false) {
   const id = idDoLink(driveCfg().fontes?.pacientes);
   if (!id || !token) return null;
   let ultimo = {}; try { ultimo = JSON.parse(localStorage.getItem('consultorio-forms') || '{}'); } catch { }
-  if (ultimo.em && Date.now() - ultimo.em < 5 * 60000) return null;   // no máximo a cada 5 minutos
+  if (!agora0 && ultimo.em && Date.now() - ultimo.em < 5 * 60000) return null;   // sozinho: no máximo a cada 5 minutos; tocando no 🔁: sempre
   const meta = await (await driveApi(`https://www.googleapis.com/drive/v3/files/${id}?fields=modifiedTime&supportsAllDrives=true`, token)).json();
   const salvarUltimo = () => { try { localStorage.setItem('consultorio-forms', JSON.stringify({ em: Date.now(), mod: meta.modifiedTime })); } catch { } };
   if (meta.modifiedTime && meta.modifiedTime === ultimo.mod) { salvarUltimo(); return null; }
