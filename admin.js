@@ -431,6 +431,8 @@ function telaInicioAdm(todos = false) {
           el('span', { class: 'ic-bolha' }, icone(verArquivadosAdm ? 'pessoa' : 'caixa')), el('span', { text: verArquivadosAdm ? 'Pacientes ativos' : 'Arquivados' })),
         !todos && el('button', { type: 'button', class: 'atalho', onclick: () => ir({ tela: 'drive' }) },
           el('span', { class: 'ic-bolha' }, icone('retomar')), el('span', { text: 'Google Drive' })),
+        !todos && el('button', { type: 'button', class: 'atalho', onclick: () => abrirExterno(/^https:\/\//.test(perfil.nfUrl || '') ? perfil.nfUrl : 'https://www.nfse.gov.br/EmissorNacional/Login') },
+          el('span', { class: 'ic-bolha' }, icone('moeda')), el('span', { text: 'Site da nota fiscal' })),
         !todos && modo === 'adm' && aparelhoComClinica && el('button', { type: 'button', class: 'atalho', onclick: entrarNaClinica },
           el('span', { class: 'ic-bolha' }, icone('cadeado')), el('span', { text: 'Área clínica' })))),
     !verArquivadosAdm && el('button', { type: 'button', class: 'fab', 'aria-label': 'Novo paciente', title: 'Novo paciente', onclick: novoPacienteAdm }, icone('mais'))
