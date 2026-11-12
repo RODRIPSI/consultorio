@@ -3192,7 +3192,13 @@ async function pagarSessao(c, a) {
   const [valor, data] = r;
   if (!valorNum(valor)) return aviso('Falta o valor', 'Digite quanto foi pago.');
   if (valorNum(valor) !== valorDe(a)) { a.valor = String(valorNum(valor)); salvarAt(a); } // a sessão passa a valer o que foi pago
-  await registrarPagamento(c, { valor, data: data || hojeISO(), ids: [a.id] });
+  const g = await registrarPagamento(c, { valor, data: data || hojeISO(), ids: [a.id] });
   indicarStatus('Pagamento registrado');
   render(history.state);
+  // Versão 49: logo depois do pagamento, os dois jeitos de comprovar: recibo com texto próprio ou nota fiscal no Emissor Nacional (gov.br).
+  const r2 = await janela('Pagamento registrado', [el('p', { text: `${c.nome} · R$ ${reais(valorNum(valor))}` }),
+    el('p', { class: 'suave pequeno', text: 'Quer emitir o comprovante agora? Dá para fazer depois, no paciente → Pagamentos.' })],
+    [{ rotulo: 'Agora não', valor: null }, { rotulo: '📄 Recibo', valor: 'recibo' }, { rotulo: '🏛️ Nota fiscal (gov.br)', valor: 'nota', estilo: c.nf ? 'primario' : undefined }]);
+  if (r2 === 'recibo') novaDeclaracao(c, { modelo: 'recibo', soPagas: true, de: a.data.slice(0, 8) + '01', ate: a.data > hojeISO() ? a.data : hojeISO() });
+  if (r2 === 'nota' && g) abrirNotaFiscal(c, g);
 }
