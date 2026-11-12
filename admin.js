@@ -3197,9 +3197,23 @@ function chipPagamentoSessao(c, a) {
 async function perguntarPagamento(c, a) {
   const r = await janela(`${c.nome}`, [el('p', { text: `Sessão de ${dataComDia(a.data)}${a.hora ? ', ' + horaCurta(a.hora) : ''}${valorDe(a) ? ' · R$ ' + reais(valorDe(a)) : ''}` }),
     el('p', { class: 'suave', text: a.conferidaEm ? `Conferido em ${dataCurta(a.conferidaEm)}: ainda não tinha pago.` : 'Está em "Quem deve" até o pagamento ser registrado.' })],
-    [{ rotulo: 'Fechar', valor: null }, { rotulo: 'Ainda não pagou', valor: 'nao' }, { rotulo: '✅ Pagou', valor: 'sim', estilo: 'primario' }]);
+    [{ rotulo: 'Fechar', valor: null }, { rotulo: '✏️ Outro valor', valor: 'valor' }, { rotulo: 'Ainda não pagou', valor: 'nao' }, { rotulo: '✅ Pagou', valor: 'sim', estilo: 'primario' }]);
   if (r === 'sim') return pagarSessao(c, a);
+  if (r === 'valor') return mudarValorSessao(c, a);
   if (r === 'nao') { a.conferidaEm = hojeISO(); salvarAt(a); indicarStatus('Continua em "Quem deve"'); render(history.state); }
+}
+// Versão 54: o valor da sessão não é fixo; muda só esta sessão, sem mexer no cadastro nem nas outras.
+async function mudarValorSessao(c, a) {
+  const r = await dialogo({ titulo: 'Valor desta sessão', texto: `${c.nome} · sessão de ${dataComDia(a.data)}${a.hora ? ', ' + horaCurta(a.hora) : ''}.`,
+    campos: [{ rotulo: 'Valor (R$)', valor: valorDe(a) ? reais(valorDe(a)) : '' }],
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }] });
+  if (!r) return;
+  const v = valorNum(r);
+  if (!v) return aviso('Falta o valor', 'Digite o valor desta sessão.');
+  a.valor = String(v); salvarAt(a);
+  indicarStatus(`Valor da sessão: R$ ${reais(v)}`);
+  render(history.state);
+  return perguntarPagamento(c, a);
 }
 async function pagarSessao(c, a) {
   const r = await dialogo({ titulo: 'Pagamento desta sessão', texto: `${c.nome} · sessão de ${dataComDia(a.data)}${a.hora ? ', ' + horaCurta(a.hora) : ''}.`,
