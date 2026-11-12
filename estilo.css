@@ -474,3 +474,7 @@ details.cartao > summary { cursor: pointer; font-weight: 600; }
 /* Versão 27: título do dia tocável na agenda */
 .dia-botao { display: flex; align-items: center; gap: .6rem; width: 100%; background: transparent; border: 0; padding: 0; color: inherit; font: 600 1.02rem/1.3 var(--sans); text-align: left; cursor: pointer; }
 .dia-botao .dia-mais { margin-left: auto; font-size: 1.5rem; line-height: 1; color: var(--granada); padding: 0 .4rem; }
+
+/* Versão 30: atalho "Todos os pacientes" na tela inicial */
+.todos-pacientes { margin-top: .6rem; }
+.todos-pacientes .ic-bolha { width: 44px; height: 44px; display: grid; place-items: center; }

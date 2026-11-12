@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 29';
+const VERSAO = 'versão 30';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -250,12 +250,13 @@ function verificarInatividade() {
 setInterval(verificarInatividade, 10000);
 
 // ---------- Navegação ----------
-const TELAS_CLINICAS = ['ficha', 'sessao', 'importar', 'planilha', 'busca', 'perfil', 'letrat', 'numeros', 'compilado', 'modelosAnamnese', 'normas', 'caderno', 'drivePaciente'];
+const TELAS_CLINICAS = ['pacientes', 'ficha', 'sessao', 'importar', 'planilha', 'busca', 'perfil', 'letrat', 'numeros', 'compilado', 'modelosAnamnese', 'normas', 'caderno', 'drivePaciente'];
 function render(s) {
   if (telaCadernoSair && history.state?.tela !== 'caderno') { telaCadernoSair(); telaCadernoSair = null; }
   if (modo === 'adm' && (!s || s.tela === 'lista' || TELAS_CLINICAS.includes(s.tela))) { telaInicioAdm(); return; }
   if (s && renderAdm(s)) return;
   if (!s || s.tela === 'lista') telaLista();
+  else if (s.tela === 'pacientes') telaLista(true);
   else if (s.tela === 'ficha') telaFicha(s.id, s.aba || 'retomar');
   else if (s.tela === 'sessao') telaSessao(s.pid, s.sid);
   else if (s.tela === 'config') (modo === 'adm' ? telaConfigAdm() : telaConfig());
@@ -391,16 +392,23 @@ function avisoBackup() {
     el('button', { type: 'button', class: 'secundario compacto', text: 'Fazer', onclick: fazerBackup }));
 }
 
-function telaLista() {
+// Versão 30: a tela inicial mostra o resumo do dia; a lista completa fica em "Todos os pacientes".
+function telaLista(todos = false) {
+  if (!todos) verArquivados = false;
   const busca = el('input', { type: 'search', placeholder: 'Procurar pelo nome', 'aria-label': 'Procurar paciente pelo nome' });
   const lista = el('div', { class: 'cartoes' });
   const ativos = pacientes.filter(p => !p.arquivado).length;
   const desenhar = () => {
     const q = semAcento(busca.value.trim());
-    const itens = pacientes
+    let itens = pacientes
       .filter(p => !!p.arquivado === verArquivados)
       .filter(p => !q || semAcento(p.nome).includes(q))
       .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    if (!todos) {
+      // Na tela inicial, os nomes só aparecem quando a pessoa digita.
+      if (!q) { lista.replaceChildren(); return; }
+      itens = itens.slice(0, 8);
+    }
     lista.replaceChildren(...itens.map(p => {
       const ss = sessoesDe(p.id);
       const ult = ss[ss.length - 1];
@@ -424,29 +432,33 @@ function telaLista() {
   busca.addEventListener('input', desenhar);
 
   mostrar(
-    cabecalho(verArquivados ? 'Arquivados' : 'Pacientes', {
+    todos ? cabecalho(verArquivados ? 'Arquivados' : 'Todos os pacientes', { voltar: true, sub: verArquivados ? null : `${ativos} em acompanhamento` }) : cabecalho('Consultório', {
       grande: true,
-      sub: verArquivados ? null : `${ativos} em acompanhamento`,
+      sub: `${ativos} em acompanhamento`,
       acoes: [botaoIcone('Buscar em todos os pacientes', 'busca', () => ir({ tela: 'busca' })), botaoSincronizar(), botaoAgenda(), botaoIcone('Pagamentos do mês', 'moeda', () => ir({ tela: 'mes' })),
         botaoIcone('Bloquear agora', 'cadeado', trancar), botaoIcone('Configurações', 'ajustes', () => ir({ tela: 'config' }))]
     }),
     el('div', { class: 'conteudo' },
-      !verArquivados && cartaoLembretes(),
-      !verArquivados && cartaoAvisosAgenda(),
-      !verArquivados && avisoBackup(),
-      !verArquivados && cartaoEntrada(),
-      !verArquivados && cartaoAniversarios(),
-      !verArquivados && cartaoAgenda(),
+      !todos && cartaoLembretes(),
+      !todos && cartaoAvisosAgenda(),
+      !todos && avisoBackup(),
+      !todos && cartaoEntrada(),
+      !todos && cartaoAniversarios(),
+      !todos && cartaoAgenda(),
       el('label', { class: 'campo-busca' }, icone('busca'), busca),
       lista,
+      !todos && el('button', { type: 'button', class: 'cartao paciente todos-pacientes', onclick: () => ir({ tela: 'pacientes' }) },
+        el('span', { class: 'ic-bolha' }, icone('pessoa')),
+        el('span', { class: 'info' }, el('span', { class: 'nome', text: 'Todos os pacientes' }), el('span', { class: 'meta' }, el('span', { text: `${ativos} em acompanhamento · arquivados` }))),
+        icone('seguinte')),
       el('div', { class: 'atalhos' },
         el('button', {
-          type: 'button', class: 'atalho', onclick: () => { verArquivados = !verArquivados; telaLista(); }
+          type: 'button', class: 'atalho', onclick: () => { if (!todos) { verArquivados = true; ir({ tela: 'pacientes' }); return; } verArquivados = !verArquivados; telaLista(true); }
         }, el('span', { class: 'ic-bolha' }, icone(verArquivados ? 'pessoa' : 'caixa')),
         el('span', { text: verArquivados ? 'Pacientes ativos' : 'Arquivados' })),
-        !verArquivados && el('button', { type: 'button', class: 'atalho', onclick: () => ir({ tela: 'admInicio' }) },
+        !todos && el('button', { type: 'button', class: 'atalho', onclick: () => ir({ tela: 'admInicio' }) },
           el('span', { class: 'ic-bolha' }, icone('moeda')), el('span', { text: 'Administrativo' })),
-        !verArquivados && el('button', { type: 'button', class: 'atalho', onclick: abrirPlanilha },
+        !todos && el('button', { type: 'button', class: 'atalho', onclick: abrirPlanilha },
           el('span', { class: 'ic-bolha' }, icone('tabela')), el('span', { text: 'Importar planilha' })))),
     !verArquivados && el('button', { type: 'button', class: 'fab', 'aria-label': 'Novo paciente', title: 'Novo paciente', onclick: novoPaciente }, icone('mais'))
   );
