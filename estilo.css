@@ -481,3 +481,18 @@ details.cartao > summary { cursor: pointer; font-weight: 600; }
 
 /* Versão 32: conteúdo embaçado enquanto o app está em segundo plano (lista de apps recentes) */
 html.app-oculto #app { filter: blur(22px); }
+
+/* Versão 43: pagamentos */
+.pag-numeros { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; margin: .3rem 0 .8rem; }
+.pag-numero { display: flex; flex-direction: column; gap: .15rem; padding: .6rem .7rem; border-radius: 10px; background: rgba(128,128,128,.10); }
+.pag-numero strong { font-size: 1.05rem; }
+.pag-numero.ok strong { color: var(--verde, #3a9a5b); }
+.pag-numero.alerta strong { color: #d9534f; }
+.tabela-rolagem { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 10px; }
+.tabela-pag { width: 100%; border-collapse: collapse; font-size: .92rem; }
+.tabela-pag th { text-align: left; font-size: .75rem; letter-spacing: .04em; padding: .5rem .55rem; background: rgba(128,128,128,.16); white-space: nowrap; }
+.tabela-pag td { padding: .5rem .55rem; border-bottom: 1px solid rgba(128,128,128,.18); white-space: nowrap; }
+.tabela-pag tbody tr { cursor: pointer; }
+.tabela-pag td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.tabela-pag.mensais td.marca, .tabela-pag.mensais th:nth-child(n+3) { text-align: center; }
+@media (max-width: 520px) { .pag-numeros { grid-template-columns: 1fr; } }
