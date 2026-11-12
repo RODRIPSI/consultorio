@@ -284,23 +284,24 @@ function cartaoAgenda() {
         rascunhoMsg[c.id] = { modelo: 0, data: amanha, hora, texto: null };
         ir({ tela: 'adm', id: c.id, aba: 'mensagem' });
       } });
-    } else if (modo === 'dono') {
-      const feita = sessoesDe(c.id).find(s => s.data === hoje);
-      acoes = feita ? el('button', { type: 'button', class: 'chip acao', text: 'Registrada', onclick: () => ir({ tela: 'sessao', pid: c.id, sid: feita.id }) })
-        : el('button', { type: 'button', class: 'chip acao marcado', text: 'Registrar', onclick: () => { const p = pacientes.find(x => x.id === c.id); if (p) novaSessao(p); } });
-    } else if (a?.presenca) {
-      acoes = el('button', { type: 'button', class: 'chip acao', text: PRESENCA[a.presenca], onclick: () => dialogoAtendimento(c, a) });
     } else {
-      acoes = el('span', { class: 'chips' },
-        el('button', { type: 'button', class: 'chip acao marcado', text: 'Veio', onclick: () => marcarPresenca(c, hoje, hora, 'realizada') }),
-        el('button', { type: 'button', class: 'chip acao', text: 'Faltou', onclick: () => marcarPresenca(c, hoje, hora, 'falta') }));
+      // Versão 29: presença direto na linha de hoje (veio, faltou, desmarcou com a regra das 24h, remarcou).
+      const o = ocorrenciasNoPeriodo(c, dia, dia).find(x => (x.hora || '') === (hora || '')) || { c, data: dia, hora: hora || '' };
+      const pres = atDaOcorrencia(c, dia, hora)?.presenca;
+      const chipPres = el('button', { type: 'button', class: 'chip acao' + (pres ? '' : ' marcado'), text: pres ? CHIP_PRESENCA[pres] : 'Presença', 'aria-label': `Presença de ${c.nome}`, onclick: () => acoesListaPaciente(o) });
+      if (modo === 'dono') {
+        const feita = sessoesDe(c.id).find(s => s.data === hoje);
+        const chipSessao = feita ? el('button', { type: 'button', class: 'chip acao', text: 'Anotação feita', onclick: () => ir({ tela: 'sessao', pid: c.id, sid: feita.id }) })
+          : el('button', { type: 'button', class: 'chip acao', text: 'Anotar sessão', onclick: () => { const p = pacientes.find(x => x.id === c.id); if (p) novaSessao(p); } });
+        acoes = el('span', { class: 'chips' }, chipPres, chipSessao);
+      } else acoes = chipPres;
     }
     return el('div', { class: 'agenda-linha' },
       el('span', { class: 'agenda-hora', text: horaCurta(hora) || '—' }),
       el('button', { type: 'button', class: 'agenda-nome', onclick: () => ir(modo === 'dono' ? { tela: 'ficha', id: c.id, aba: 'retomar' } : { tela: 'adm', id: c.id, aba: 'atendimentos' }) }, avatar(c), el('span', { text: c.nome })),
       acoes);
   };
-  const hj = agendaDoDia(hoje), am = agendaDoDia(amanha);
+  const hj = agendaDoDia(hoje, true), am = agendaDoDia(amanha);
   const titulo = d => `${paraData(d).toLocaleDateString('pt-BR', { weekday: 'long' })}, ${dataCurta(d).slice(0, 5)}`;
   return el('section', { class: 'cartao agenda' },
     el('h3', { class: 'cartao-titulo' }, el('span', { class: 'ic-bolha' }, icone('calendario')), el('span', { text: 'Hoje, ' + titulo(hoje) })),
@@ -2002,11 +2003,11 @@ function ocorrenciasNoPeriodo(c, de, ate) {
 }
 const temAgenda = c => horariosDe(c).length > 0 || (c.avulsos || []).length > 0;
 
-function agendaDoDia(ymd) {
+function agendaDoDia(ymd, comDesmarcadas = false) {
   const itens = [];
   for (const c of cadastros) {
     if (c.arquivado) continue;
-    for (const o of ocorrenciasNoPeriodo(c, ymd, ymd)) if (!o.feriado && !o.cancelada) itens.push({ c, hora: o.hora, o });
+    for (const o of ocorrenciasNoPeriodo(c, ymd, ymd)) if (!o.feriado && (!o.cancelada || (comDesmarcadas && atDaOcorrencia(c, ymd, o.hora)?.presenca))) itens.push({ c, hora: o.hora, o });
   }
   return itens.sort((a, b) => a.hora.localeCompare(b.hora) || a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
 }
@@ -2671,6 +2672,7 @@ const GRADE_PADRAO = { 1: { de: 9, ate: 21 }, 2: { de: 9, ate: 21 }, 3: { de: 9,
 const gradeDia = dia => (cfgAgenda().grade || GRADE_PADRAO)[dia] || null;
 const fixosSemPaciente = () => (cfgAgenda().fixos ||= []);      // { id, dia, de, ate, nome } — com nome: ⚠️ compromisso; sem nome: 🔴 sem atendimento
 const bloqueiosDia = () => (cfgAgenda().bloqueiosDia ||= []);   // { data, h } — 🔴 só naquele dia
+const CHIP_PRESENCA = { realizada: '✅ Veio', falta: '⭕ Faltou', tardia: '⭕ Desmarcou <24h', cancelada: '❌ Desmarcou', remarcada: '💱 Remarcada' };
 const LEGENDA_LISTA = [
   ['📲', 'Mensagem de confirmação enviada'], ['🟢', 'Consulta confirmada'],
   ['💰', 'Paga por sessão'], ['💵', 'Pagamento semanal'], ['💸', 'Pagamento mensal'], ['1X', 'Sessão avulsa'],
