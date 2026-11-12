@@ -1395,7 +1395,7 @@ async function importarAdm() {
   const s = await senhaDosArquivos(arquivo.name);
   if (!s) return;
   let pacote;
-  try { pacote = await Cofre.decifrarPacote(s.senha, await arquivo.text()); }
+  try { pacote = await Cofre.decifrarPacote(s.senha, await textoDoPacote(arquivo)); }
   catch (e) { return aviso('Não foi possível abrir', e.message === 'senha-incorreta' ? 'Senha incorreta.' : 'Este arquivo não é do Consultório.'); }
   if (pacote.formato !== 'consultorio-adm') return aviso('Arquivo diferente', 'Este é um backup completo. Aqui entra só o arquivo gerado em "Enviar dados ao administrativo".');
   await salvarAgora();

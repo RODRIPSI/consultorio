@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 38';
+const VERSAO = 'versão 39';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -1119,7 +1119,7 @@ async function restaurarBackup() {
   });
   if (!senha) return;
   let pacote;
-  try { pacote = await Cofre.decifrarPacote(senha, await arquivo.text()); }
+  try { pacote = await Cofre.decifrarPacote(senha, await textoDoPacote(arquivo)); }
   catch (e) {
     return aviso('Não foi possível restaurar', e.message === 'senha-incorreta' ? 'Senha do backup incorreta.' : 'Este arquivo não é um backup do Consultório.');
   }
@@ -1184,6 +1184,24 @@ function textoDoXml(xml, ns, paragrafos, trocas) {
   return linhas.map(l => l.t).join('\n');
 }
 
+// Versão 39: o arquivo cifrado às vezes chega convertido em PDF ou Word (pelo WhatsApp, Drive ou um visualizador).
+// O conteúdo é só texto sem espaços; aqui ele é recuperado de PDF, Word ou texto e os espaços/quebras são retirados.
+async function textoDoPacote(arquivo) {
+  const nome = (arquivo.name || '').toLowerCase();
+  let t;
+  if (arquivo.type === 'application/pdf' || nome.endsWith('.pdf')) {
+    const pdfjs = await import('./pdf.min.mjs');
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.min.mjs', location.href).href;
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(await arquivo.arrayBuffer()), isEvalSupported: false }).promise;
+    const partes = [];
+    for (let i = 1; i <= doc.numPages; i++) partes.push((await (await doc.getPage(i)).getTextContent()).items.map(x => x.str).join(''));
+    await doc.destroy();
+    t = partes.join('');
+  } else if (nome.endsWith('.docx') || nome.endsWith('.odt')) t = await extrairTexto(arquivo);
+  else t = await arquivo.text();
+  const ini = t.indexOf('{'), fim = t.lastIndexOf('}');
+  return (ini >= 0 && fim > ini ? t.slice(ini, fim + 1) : t).replace(/\s+/g, '').replace(/[“”]/g, '"');
+}
 async function extrairTexto(arquivo) {
   const nome = arquivo.name.toLowerCase();
   if (/\.(txt|md|text)$/.test(nome) || arquivo.type === 'text/plain') return arquivo.text();
