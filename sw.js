@@ -3,7 +3,7 @@
    Também recebe comprovantes compartilhados de outros apps (WhatsApp, banco)
    e os guarda já cifrados, sem enviá-los a lugar nenhum.
    Ao publicar uma nova versão, mude o número abaixo. */
-const VERSAO = 'consultorio-v62';
+const VERSAO = 'consultorio-v64';
 const ARQUIVOS = ['./', './index.html', './estilo.css', './cofre.js', './app.js', './admin.js',
   './manifest.webmanifest', './icone-192.png', './icone-512.png'];
 
@@ -77,3 +77,12 @@ async function receber(request) {
   } catch { destino = './?recebido=erro'; }
   return Response.redirect(destino, 303);
 }
+
+// Versão 60: tocar no aviso abre (ou traz para a frente) o Consultório.
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => {
+    const c = cs.find(x => x.url.includes('/consultorio/'));
+    return c ? c.focus() : self.clients.openWindow('./');
+  }));
+});

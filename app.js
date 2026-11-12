@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 59';
+const VERSAO = 'versão 61';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -454,6 +454,7 @@ function telaLista(todos = false) {
     }),
     el('div', { class: 'conteudo' },
       !todos && cartaoLembretes(),
+      !todos && typeof cartaoLembretesAdm === 'function' && cartaoLembretesAdm(true),
       !todos && cartaoAvisosAgenda(),
       !todos && avisoBackup(),
       !todos && cartaoEntrada(),
@@ -3051,31 +3052,31 @@ function botaoLembretes(p) {
   return b;
 }
 async function janelaLembretes(p) {
+  // Versão 61: um só campo e dois botões — "Só para mim" (fica aqui, cifrado com a ficha) ou "Para o administrativo".
+  const podeAdm = typeof novoLembreteAdm === 'function' && !!cadastroDe(p.id);
   const lista = el('div', { class: 'pilha-pequena' });
-  const desenhar = () => lista.replaceChildren(...((p.lembretes || []).length ? p.lembretes.slice().sort((a, b) => (a.desde || '').localeCompare(b.desde || '')).map(l => el('div', { class: 'pag-linha' },
-    el('span', { class: 'pag-info' }, el('strong', { text: l.texto }),
-      el('span', { class: 'suave', text: (l.desde || '') > hojeISO() ? `Aparece a partir de ${dataCurta(l.desde)}` : 'Aparecendo na tela inicial' })),
-    el('button', { type: 'button', class: 'secundario compacto', text: 'Feito', onclick: () => { concluirLembrete(p, l); desenhar(); } })))
-    : [el('p', { class: 'suave pequeno', text: 'Nenhum lembrete para este paciente.' })]));
+  const desenhar = () => lista.replaceChildren(...((p.lembretes || []).length ? [el('strong', { text: '🔒 Só para mim' }), ...p.lembretes.slice().sort((a, b) => (a.desde || '').localeCompare(b.desde || '')).map(l => el('div', { class: 'pag-linha' },
+    el('span', { class: 'pag-info' }, el('span', { text: l.texto })),
+    podeAdm && el('button', { type: 'button', class: 'secundario compacto', text: 'Mandar ao adm.', onclick: () => { fecharDialogos(); novoLembreteAdm(p.id, l.texto, () => concluirLembrete(p, l)); } }),
+    el('button', { type: 'button', class: 'secundario compacto', text: 'Feito', onclick: () => { concluirLembrete(p, l); desenhar(); } })))]
+    : [el('p', { class: 'suave pequeno', text: 'Nenhum lembrete seu para este paciente.' })]));
   desenhar();
-  const texto = el('textarea', { rows: '3', placeholder: 'Ex.: perguntar como foi a consulta médica' });
+  const texto = el('textarea', { rows: '3', placeholder: 'Escreva o lembrete e escolha abaixo para quem é' });
   const tel = numeroWhats(telefoneDoPaciente(p));
-  // Versão 58: dois tipos — só para mim (fica aqui, cifrado com a ficha) ou para o administrativo.
   const lAdm = typeof lembretesAdm !== 'undefined' ? lembretesAdm.filter(l => l.pid === p.id && !l.feito) : [];
   const r = await janela(`Lembretes · ${p.nome}`, [
     lista,
-    lAdm.length > 0 && el('div', { class: 'pilha-pequena' }, el('strong', { text: 'Para o administrativo' }),
+    lAdm.length > 0 && el('div', { class: 'pilha-pequena' }, el('strong', { text: '📋 Para o administrativo' }),
       ...lAdm.map(l => el('div', { class: 'pag-linha' }, el('span', { class: 'pag-info' }, el('span', { text: l.texto }), el('span', { class: 'suave', text: 'Aguardando o assistente' }))))),
-    typeof novoLembreteAdm === 'function' && cadastroDe(p.id) && el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => { fecharDialogos(); novoLembreteAdm(p.id); } },
-      icone('sino'), el('span', { text: 'Lembrete para o administrativo' })),
-    el('label', { class: 'campo' }, el('span', { text: 'Novo lembrete só para mim' }), texto),
+    el('label', { class: 'campo' }, el('span', { text: 'Novo lembrete' }), texto),
     el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => abrirWhatsPaciente(p) }, icone('mensagem'),
-      el('span', { text: tel ? `Abrir conversa no WhatsApp` : 'WhatsApp: celular não cadastrado' }))
-  ], [{ rotulo: 'Fechar', valor: null }, { rotulo: 'Salvar lembrete', valor: true, estilo: 'primario' }]);
-  if (r && texto.value.trim()) {
+      el('span', { text: tel ? `Abrir conversa com o paciente no WhatsApp` : 'WhatsApp: celular não cadastrado' }))
+  ], [{ rotulo: 'Fechar', valor: null }, podeAdm && { rotulo: '📋 Para o administrativo', valor: 'adm' }, { rotulo: '🔒 Só para mim', valor: 'eu', estilo: 'primario' }].filter(Boolean));
+  if (r === 'eu' && texto.value.trim()) {
     (p.lembretes ||= []).push({ id: crypto.randomUUID(), texto: texto.value.trim(), desde: hojeISO(), criadoEm: new Date().toISOString() });
     agendarSalvar('p:' + p.id, p);
   }
+  if (r === 'adm') return novoLembreteAdm(p.id, texto.value.trim());
   render(history.state);
 }
 // Cartão na tela inicial: todos os lembretes do dia, com o nome do paciente.

@@ -1208,6 +1208,7 @@ function secaoAdministrativo(linha, secao) {
     linha('calendario', 'Feriados e dias sem atendimento', 'Feriados do ano, férias e recessos. Aviso 5 dias antes.', el('button', { type: 'button', class: 'secundario compacto', text: 'Abrir', onclick: () => ir({ tela: 'feriados' }) })),
     linha('repetir', 'Sincronizar com o administrativo pelo Drive', driveCfg().pastaSync ? 'Pasta definida. Um toque envia e recebe.' : 'Defina a pasta compartilhada em Google Drive.',
       el('button', { type: 'button', class: 'primario compacto', text: 'Sincronizar', onclick: sincronizarDrive })),
+    linhaAvisos(linha),
     linha('retomar', 'Enviar dados ao administrativo', 'Gera um arquivo cifrado com agenda, cadastros e pagamentos, sem nada clínico, para o aparelho do administrativo.',
       el('button', { type: 'button', class: 'secundario compacto', text: 'Enviar', onclick: exportarAdm })),
     linha('clipe', 'Receber dados do administrativo', 'Traz os pagamentos e a agenda que ele registrou.',
@@ -1303,6 +1304,7 @@ async function telaConfigAdm() {
       secao('Troca de dados com o outro aparelho',
         linha('repetir', 'Sincronizar pelo Drive', driveCfg().pastaSync ? 'Pasta definida. Um toque envia e recebe.' : 'Defina a pasta compartilhada em Google Drive.',
           el('button', { type: 'button', class: 'primario compacto', text: 'Sincronizar', onclick: sincronizarDrive })),
+        linhaAvisos(linha),
         linha('retomar', 'Enviar dados', 'Gera um arquivo cifrado com a agenda, os cadastros e os pagamentos. Serve também de cópia de segurança.',
           el('button', { type: 'button', class: 'primario compacto', text: 'Enviar', onclick: exportarAdm })),
         linha('clipe', 'Receber dados', 'Abre o arquivo enviado pelo outro aparelho e junta com o que já está aqui.',
@@ -2535,7 +2537,7 @@ const ESCOPO_ESCRITA = 'https://www.googleapis.com/auth/drive';
 const tokenSyncValido = () => !!(tokenGoogle && tokenGoogle.escopo === ESCOPO_ESCRITA && tokenGoogle.expira > Date.now() + 60000);
 let ultimaSyncAuto = 0;
 async function sincronizarSozinho() {
-  if (sincronizando || !Cofre.aberto() || document.hidden || !senhaTroca || !tokenSyncValido()) return;
+  if (sincronizando || !Cofre.aberto() || !senhaTroca || !tokenSyncValido()) return; // versão 60: também com o app minimizado, enquanto o Android deixar
   if (!driveCfg().pastaSync || !driveCfg().clientId || Date.now() - ultimaSyncAuto < 60000) return;
   ultimaSyncAuto = Date.now();
   await sincronizarDrive({ silencioso: true });
@@ -2575,11 +2577,13 @@ async function sincronizarDrive(opcoes = {}) {
     }
     if (pacote) {
       await salvarAgora();
+      const antes = fotoParaAvisos();
       r = await mesclarRegistros(pacote.registros || {}, k => k.startsWith('x:'));
       mudou = (r.novos || 0) + (r.atualizados || 0) > 0;
       if (modo === 'adm' && pacote.registros?.['x:perfil'] && !pacote.registros['x:perfil'].assinaturaNoAdm) await Cofre.apagar('x:assinatura');
       await recarregarTudo();
       recebeu = true;
+      if (mudou) avisarNovidades(antes);
     }
     await salvarAgora();
     const registros = await registrosAdm(false);
@@ -3334,9 +3338,10 @@ async function enviarLembreteWhats(l) {
   abrirExterno(`https://wa.me/${n}?text=${encodeURIComponent(textoLembreteAdm(l))}`);
 }
 // Janela para escrever um lembrete ao administrativo (de um paciente ou geral).
-async function novoLembreteAdm(pid = null) {
+async function novoLembreteAdm(pid = null, textoInicial = '', depois = null) {
   const c = pid ? cadastroDe(pid) : null;
   const texto = el('textarea', { rows: '3', placeholder: c ? 'Ex.: confirmar o horário de quinta' : 'Ex.: comprar papel para a impressora' });
+  texto.value = textoInicial || '';
   const temNum = !!numeroWhats(perfil.whatsAdm || '');
   const cx = el('input', { type: 'checkbox', checked: true });
   // Versão 59: sem data (vale a partir de agora) e o celular do assistente pedido aqui mesmo, se ainda não estiver salvo.
@@ -3356,6 +3361,7 @@ async function novoLembreteAdm(pid = null) {
   const l = { id: crypto.randomUUID(), tipoRegistro: 'lembrete', pid: pid || null, texto: texto.value.trim(), desde: hojeISO(), feito: false, criadoEm: agora, atualizadoEm: agora };
   lembretesAdm.push(l); salvarLem(l);
   await salvarAgora();
+  if (depois) depois();
   if (cx.checked) await enviarLembreteWhats(l);
   indicarStatus('Lembrete enviado ao administrativo.');
   try { if (typeof sincronizarSozinho === 'function') sincronizarSozinho(); } catch { /* sincroniza na próxima vez */ }
@@ -3373,10 +3379,10 @@ async function apagarLembreteAdm(l) {
   render(history.state);
 }
 // Cartão na tela inicial do administrativo (nos dois aparelhos).
-function cartaoLembretesAdm() {
+function cartaoLembretesAdm(naTelaClinica = false) {
   const itens = lembretesAdmPendentes();
   const feitosRecentes = modo === 'dono' ? lembretesAdm.filter(l => l.feito && l.feitoEm && (Date.now() - new Date(l.feitoEm)) < 3 * 864e5) : [];
-  if (!itens.length && modo === 'adm') return null;
+  if (!itens.length && (modo === 'adm' || (naTelaClinica && !feitosRecentes.length))) return null; // na tela do consultório só aparece se houver lembrete
   const linha = l => {
     const c = l.pid ? cadastroDe(l.pid) : null;
     return el('div', { class: 'pag-linha' },
@@ -3394,4 +3400,57 @@ function cartaoLembretesAdm() {
         el('span', { class: 'suave pequeno', text: l.feitoPor === 'adm' ? 'Feito pelo assistente' : 'Marcado como feito' })),
       botaoIcone('Apagar', 'lixeira', () => apagarLembreteAdm(l)))),
     modo === 'dono' && el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => novoLembreteAdm() }, icone('mais'), el('span', { text: 'Novo lembrete para o administrativo' })));
+}
+
+
+// =====================================================================
+// Versão 60: avisos no celular (notificações) quando a sincronização traz novidade do outro aparelho.
+// Funcionam com o app aberto ou minimizado (enquanto o Android não o congela). O aviso não mostra nomes nem conteúdo:
+// diz só o que chegou; o detalhe fica dentro do app, atrás da senha. Com tudo fechado, o WhatsApp faz esse papel.
+// =====================================================================
+function fotoParaAvisos() {
+  return { lemPend: new Set(lembretesAdm.filter(l => !l.feito).map(l => l.id)), lemFeito: new Set(lembretesAdm.filter(l => l.feito).map(l => l.id)),
+    pags: new Set(pagamentos.map(g => g.id)), ats: new Map(atendimentos.map(a => [a.id, a.presenca || ''])) };
+}
+function avisarNovidades(antes) {
+  const partes = [];
+  if (modo === 'adm') {
+    const novos = lembretesAdm.filter(l => !l.feito && !antes.lemPend.has(l.id) && !antes.lemFeito.has(l.id)).length;
+    if (novos) partes.push(novos === 1 ? '1 lembrete novo do Rodrigo' : `${novos} lembretes novos do Rodrigo`);
+    const pres = atendimentos.filter(a => a.presenca && antes.ats.has(a.id) && antes.ats.get(a.id) !== a.presenca).length;
+    if (pres) partes.push(pres === 1 ? '1 presença marcada' : `${pres} presenças marcadas`);
+  } else {
+    const feitos = lembretesAdm.filter(l => l.feito && l.feitoPor === 'adm' && !antes.lemFeito.has(l.id)).length;
+    if (feitos) partes.push(feitos === 1 ? '1 lembrete feito pelo assistente' : `${feitos} lembretes feitos pelo assistente`);
+    const pags = pagamentos.filter(g => !antes.pags.has(g.id)).length;
+    if (pags) partes.push(pags === 1 ? '1 pagamento registrado' : `${pags} pagamentos registrados`);
+  }
+  if (!partes.length) return;
+  const texto = partes.join(' · ');
+  indicarStatus('Novidade: ' + texto);
+  mostrarNotificacao('Consultório', texto);
+}
+const avisosLigados = () => !!config.avisos && 'Notification' in window && Notification.permission === 'granted';
+async function mostrarNotificacao(titulo, corpo) {
+  if (!avisosLigados()) return;
+  try {
+    const reg = await navigator.serviceWorker?.ready;
+    const op = { body: corpo, tag: 'consultorio-novidade', renotify: true, icon: 'icone-192.png', badge: 'icone-192.png', vibrate: [200, 100, 200] };
+    if (reg?.showNotification) await reg.showNotification(titulo, op); else new Notification(titulo, op);
+  } catch { /* sem aviso: a novidade continua no app */ }
+}
+async function alternarAvisos() {
+  if (avisosLigados()) { config.avisos = false; await Cofre.salvarConfig(config); return render(history.state); }
+  if (!('Notification' in window)) return aviso('Sem avisos', 'Este navegador não permite avisos. Abra o Consultório pelo ícone instalado na tela inicial.');
+  const p = await Notification.requestPermission();
+  if (p !== 'granted') return aviso('Avisos bloqueados', 'O Android não deu permissão. Para liberar: Configurações do Android → Apps → Consultório (ou Chrome) → Notificações → Permitir. Depois toque em Ativar de novo.');
+  config.avisos = true; await Cofre.salvarConfig(config);
+  await mostrarNotificacao('Consultório', 'Avisos ativados. Você será avisado quando chegar novidade do outro aparelho.');
+  render(history.state);
+}
+function linhaAvisos(linha) {
+  return linha('sino', 'Avisos no celular',
+    avisosLigados() ? 'Ativados: avisa com som e vibração quando chega lembrete, presença ou pagamento do outro aparelho (com o app aberto ou minimizado).'
+      : 'Desativados. Ative para ser avisado quando chegar novidade do outro aparelho.',
+    el('button', { type: 'button', class: avisosLigados() ? 'secundario compacto' : 'primario compacto', text: avisosLigados() ? 'Desativar' : 'Ativar', onclick: alternarAvisos }));
 }
