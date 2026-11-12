@@ -2423,7 +2423,13 @@ const idDaPasta = link => ((link || '').match(/folders\/([\w-]{20,})/) || [])[1]
 function botaoSincronizar() {
   if (!driveCfg().pastaSync || !driveCfg().clientId) return null;
   carregarGoogle().catch(() => { });
-  return botaoIcone('Sincronizar com o outro aparelho', 'repetir', sincronizarDrive);
+  const b = botaoIcone(tokenSyncValido() && senhaTroca ? 'Sincronizar agora (já sincroniza sozinho)' : 'Sincronizar com o outro aparelho: toque para ligar a sincronização automática', 'repetir', () => sincronizarDrive());
+  if (!(tokenSyncValido() && senhaTroca)) {
+    b.style.position = 'relative';
+    b.append(el('span', { 'aria-hidden': 'true', style: 'position:absolute;top:4px;right:4px;width:10px;height:10px;border-radius:50%;background:#e0a526;border:2px solid #fff' }));
+  }
+  setTimeout(sincronizarSozinho, 800);
+  return b;
 }
 async function editarPastaSync() {
   const r = await dialogo({
@@ -2440,17 +2446,35 @@ async function driveApi(url, token, opcoes = {}) {
   return r;
 }
 let sincronizando = false;
-async function sincronizarDrive() {
+// Versão 35: depois do primeiro toque no 🔁 em cada sessão, a sincronização roda sozinha
+// (ao abrir uma tela, a cada 2 minutos e ao voltar para o app), sem janelas, enquanto a autorização do Google valer (1 hora).
+const ESCOPO_ESCRITA = 'https://www.googleapis.com/auth/drive';
+const tokenSyncValido = () => !!(tokenGoogle && tokenGoogle.escopo === ESCOPO_ESCRITA && tokenGoogle.expira > Date.now() + 60000);
+let ultimaSyncAuto = 0;
+async function sincronizarSozinho() {
+  if (sincronizando || !Cofre.aberto() || document.hidden || !senhaTroca || !tokenSyncValido()) return;
+  if (!driveCfg().pastaSync || !driveCfg().clientId || Date.now() - ultimaSyncAuto < 60000) return;
+  ultimaSyncAuto = Date.now();
+  await sincronizarDrive({ silencioso: true });
+}
+setInterval(sincronizarSozinho, 120000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(sincronizarSozinho, 1500); });
+async function sincronizarDrive(opcoes = {}) {
+  const silencioso = opcoes.silencioso === true;
   if (sincronizando) return;
   const cfg = driveCfg(), pasta = idDaPasta(cfg.pastaSync);
-  if (!cfg.clientId) return aviso('Falta a chave do Google', 'Em Configurações → Google Drive, cole a chave de conexão (ID do cliente).');
-  if (!pasta) return aviso('Falta a pasta', 'Em Configurações → Google Drive, cole o link da pasta compartilhada.');
-  const s = await senhaDosArquivos('A senha dos arquivos, a mesma nos dois aparelhos. Ela cifra tudo antes de ir para o Drive.');
+  if (!cfg.clientId) return silencioso ? null : aviso('Falta a chave do Google', 'Em Configurações → Google Drive, cole a chave de conexão (ID do cliente).');
+  if (!pasta) return silencioso ? null : aviso('Falta a pasta', 'Em Configurações → Google Drive, cole o link da pasta compartilhada.');
+  const s = silencioso ? (senhaTroca ? { senha: senhaTroca, nova: false } : null) : await senhaDosArquivos('A senha dos arquivos, a mesma nos dois aparelhos. Ela cifra tudo antes de ir para o Drive.');
   if (!s) return;
   let token;
-  try { await carregarGoogle(); token = await pedirTokenGoogle('https://www.googleapis.com/auth/drive'); }
-  catch (e) { return aviso('Sem conexão com o Google', e.message === 'sem-internet' ? 'Verifique a internet e tente de novo.' : 'O acesso ao Google não foi concedido. Toque em Sincronizar de novo e entre na conta.'); }
+  if (silencioso) { if (!tokenSyncValido()) return; token = tokenGoogle.valor; }
+  else {
+    try { await carregarGoogle(); token = await pedirTokenGoogle(ESCOPO_ESCRITA); }
+    catch (e) { return aviso('Sem conexão com o Google', e.message === 'sem-internet' ? 'Verifique a internet e tente de novo.' : 'O acesso ao Google não foi concedido. Toque em Sincronizar de novo e entre na conta.'); }
+  }
   sincronizando = true; indicarStatus('Sincronizando…');
+  let mudou = false;
   try {
     const eu = modo === 'dono' ? 'dono' : 'adm', outro = eu === 'dono' ? 'adm' : 'dono';
     const q = encodeURIComponent(`'${pasta}' in parents and trashed = false`);
@@ -2466,6 +2490,7 @@ async function sincronizarDrive() {
       if (pacote.formato !== 'consultorio-adm') throw new Error('arquivo-invalido');
       await salvarAgora();
       r = await mesclarRegistros(pacote.registros || {}, k => k.startsWith('x:'));
+      mudou = (r.novos || 0) + (r.atualizados || 0) > 0;
       if (modo === 'adm' && pacote.registros?.['x:perfil'] && !pacote.registros['x:perfil'].assinaturaNoAdm) await Cofre.apagar('x:assinatura');
       await recarregarTudo();
       recebeu = true;
@@ -2481,14 +2506,17 @@ async function sincronizarDrive() {
       await driveApi('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true', token, { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + limite }, body: corpo });
     }
     try { localStorage.setItem('consultorio-ultima-sync', agoraISO()); } catch { } // fora do perfil, para não sobrescrever dados do outro aparelho
+    if (silencioso) { indicarStatus('Sincronizado às ' + new Date().toTimeString().slice(0, 5)); return; }
     await oferecerLembrarSenha(s);
-    indicarStatus('Sincronizado');
+    if (!senhaTroca && s.senha) senhaTroca = s.senha;
+    indicarStatus('Sincronizado. Agora sincroniza sozinho enquanto o app estiver aberto.');
     await aviso('Sincronizado', recebeu
       ? `Recebidos do outro aparelho: ${r.novos} novos, ${r.atualizados} atualizados. Os seus dados também foram enviados.`
       : 'Os seus dados foram enviados. O outro aparelho ainda não sincronizou nenhuma vez.');
   } catch (e) {
     console.warn('sincronização', e);
     indicarStatus('');
+    if (silencioso) { if (e.message === 'sem-permissao') tokenGoogle = null; return; }
     if (e.message === 'sem-permissao') tokenGoogle = null;
     const msg = {
       'sem-permissao': 'A conta Google não tem acesso à pasta. Confira se a pasta foi compartilhada com esta conta como Editor.',
@@ -2499,7 +2527,9 @@ async function sincronizarDrive() {
     await aviso('Sincronização não concluída', msg);
   } finally {
     sincronizando = false;
-    if (Cofre.aberto()) render(history.state);
+    // Na sincronização automática, só redesenha a tela se chegou algo novo e a pessoa não está digitando.
+    const digitando = document.querySelector('dialog[open]') || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+    if (Cofre.aberto() && (!silencioso || (mudou && !digitando))) render(history.state);
   }
 }
 
