@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 72';
+const VERSAO = 'versão 73';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -585,7 +585,8 @@ function telaFicha(id, aba) {
   chips.push(`${ss.length} ${ss.length === 1 ? 'sessão' : 'sessões'}`);
 
   if (aba === 'mensagem' || aba === 'pagamentos') { ir({ tela: 'adm', id, aba: aba === 'mensagem' ? 'mensagem' : 'pagamentos' }, false); return; }
-  const abas = [['retomar', 'Retomar', 'retomar'], ['caderno', 'Anotações e evolução', 'nota'], ['sessoes', 'Sessões', 'sessoes'], ['ficha', 'Ficha', 'pessoa'], ['anamnese', 'Anamnese', 'texto'], ['buscar', 'Buscar', 'busca'],
+  if (aba === 'caderno') aba = 'sessoes';   // versão 73: as folhas ficam dentro de cada sessão
+  const abas = [['retomar', 'Retomar', 'retomar'], ['sessoes', 'Sessões e anotações', 'sessoes'], ['ficha', 'Ficha', 'pessoa'], ['anamnese', 'Anamnese', 'texto'], ['buscar', 'Buscar', 'busca'],
     ['recebidos', 'Recebidos', 'clipe'], ['emitidos', 'Emitidos', 'assinar']];
   const corpo = aba === 'sessoes' ? abaSessoes(p, ss)
     : aba === 'ficha' ? abaFicha(p)
@@ -676,14 +677,20 @@ function itemSessao(p, s, ss, compacto = false) {
       el('span', { class: 'num', text: `Sessão ${n}` }),
       el('span', { class: 'suave', text: `${dataCurta(s.data)}, ${diaSemana(s.data)}` }),
       s.status !== 'realizada' && selo(s.status)),
-    el('p', { class: 'trecho' + (s.relato ? '' : ' suave'), text: s.relato ? trecho(s.relato, compacto ? 140 : 220) : 'Sem relato.' }),
+    el('p', { class: 'trecho' + (s.relato ? '' : ' suave'), text: s.relato ? trecho(s.relato, compacto ? 140 : 220) : folhasDaSessao(p, s).length ? 'Anotação à mão.' : 'Sem relato.' }),
+    folhasDaSessao(p, s).length > 0 && el('span', { class: 'chip', text: `✍️ ${folhasDaSessao(p, s).length} ${folhasDaSessao(p, s).length === 1 ? 'folha' : 'folhas'}` }),
     !compacto && temas.length > 0 && el('div', { class: 'chips' }, temas.map(t => el('span', { class: 'chip', text: t }))));
 }
 
 function abaSessoes(p, ss) {
-  if (!ss.length) return vazioSessoes(p);
+  const soltas = folhasSoltas(p, ss);
+  const cartaoSoltas = soltas.length > 0 && cartao('Anotações à mão sem sessão registrada', 'nota',
+    el('p', { class: 'suave pequeno', text: 'Folhas de dias em que não há sessão registrada. Ao registrar a sessão desse dia, a folha passa a aparecer dentro dela.' }),
+    ...soltas.map(f => linhaFolha(p, f)));
+  if (!ss.length) return el('div', { class: 'pilha' }, vazioSessoes(p), cartaoSoltas);
   const ordem = recentesPrimeiro ? [...ss].reverse() : ss;
   return el('div', { class: 'pilha' },
+    el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => importarParaCaderno(p) }, icone('clipe'), el('span', { text: 'Trazer PDF ou imagem (Samsung Notes)' })),
     el('button', { type: 'button', class: 'link com-icone', onclick: () => { compiladoRasc = null; ir({ tela: 'compilado', pid: p.id }); } }, icone('arquivo'), el('span', { text: 'Gerar compilado da evolução (PDF)' })),
     el('div', { class: 'barra-lista' },
       el('span', { class: 'suave', text: `${ss.length} ${ss.length === 1 ? 'sessão' : 'sessões'}` }),
@@ -691,8 +698,17 @@ function abaSessoes(p, ss) {
         type: 'button', class: 'link com-icone',
         onclick: () => { recentesPrimeiro = !recentesPrimeiro; ir({ tela: 'ficha', id: p.id, aba: 'sessoes' }, false); }
       }, icone('ordenar'), el('span', { text: recentesPrimeiro ? 'Mais recentes primeiro' : 'Mais antigas primeiro' }))),
-    ordem.map(s => itemSessao(p, s, ss)));
+    ordem.map(s => itemSessao(p, s, ss)),
+    cartaoSoltas);
 }
+// Versão 73: cada folha fica na sessão do mesmo dia (ou na sessão em que foi criada).
+const folhasDaSessao = (p, s) => (p.folhas || []).filter(f => f.sid ? f.sid === s.id : f.data === s.data)
+  .sort((a, b) => (a.criadoEm || '').localeCompare(b.criadoEm || ''));
+const folhasSoltas = (p, ss) => (p.folhas || []).filter(f => !ss.some(s => f.sid ? f.sid === s.id : f.data === s.data)).sort((a, b) => b.data.localeCompare(a.data));
+const linhaFolha = (p, f) => el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => ir({ tela: 'caderno', pid: p.id, fid: f.id }) },
+  el('span', { class: 'ic-bolha' }, icone('nota')),
+  el('span', { class: 'pag-info' }, el('strong', { text: `${dataCurta(f.data)}${f.titulo ? ' · ' + f.titulo : ''}` }),
+    el('span', { class: 'suave pequeno', text: `${f.paginas || 1} ${(f.paginas || 1) === 1 ? 'página' : 'páginas'}${f.importada ? ' · trazida de arquivo' : ''}` })));
 
 function abaFicha(p) {
   const salvar = () => agendarSalvar('p:' + p.id, p);
@@ -1016,6 +1032,11 @@ function telaSessao(pid, sid) {
         cartao('Data e situação', 'calendario',
           el('div', { class: 'linha-data' }, data, el('span', { class: 'suave', text: `${diaSemana(s.data)}, ${relativo(s.data)}` })),
           segmento),
+        cartao('Anotações à mão', 'nota',
+          ...folhasDaSessao(p, s).map(f => linhaFolha(p, f)),
+          el('div', { class: 'botoes-linha' },
+            el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => novaFolha(p, { data: s.data, sid: s.id }) }, icone('nota'), el('span', { text: folhasDaSessao(p, s).length ? 'Mais uma folha' : 'Escrever com a caneta' })),
+            el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => importarParaCaderno(p, { data: s.data, sid: s.id }) }, icone('clipe'), el('span', { text: 'Trazer PDF ou imagem' })))),
         cartao('O que foi trazido', 'texto', area('O que foi trazido', 'relato', 'Relato da sessão', true),
           s.origem && el('small', { class: 'suave origem', text: 'Importado de ' + s.origem })),
         cartao('Para retomar', 'retomar', area('Para retomar', 'retomar', 'O que retomar no próximo atendimento', false)),
@@ -2027,6 +2048,7 @@ const MODELOS_MSG = [
   { nome: 'Remarcar', texto: 'Olá, {nome}. Precisarei remarcar nossa sessão de {data}, às {hora}. Você teria disponibilidade em outro horário?' },
   { nome: 'Não haverá sessão', texto: 'Olá, {nome}. Não poderei atender na {data}. Retomamos no horário habitual da semana seguinte.' },
   { nome: 'Documento', texto: 'Olá, {nome}. Segue o documento solicitado.' },
+  { nome: 'Lembrete com Pix', texto: 'Olá, {nome}! Passando para lembrar da nossa sessão de {data}, às {hora}. O valor da sessão é R$ {valor}. Para pagar por Pix, a chave é: {pix}' },
   { nome: 'Pagamento', texto: 'Olá, {nome}! Passando para lembrar do pagamento deste mês. Qualquer dúvida, estou à disposição.' },
   { nome: 'Aniversário', texto: 'Olá, {nome}! Feliz aniversário! Desejo a você um novo ano muito bom.' },
   { nome: 'Livre', texto: 'Olá, {nome}. ' }
@@ -2034,7 +2056,10 @@ const MODELOS_MSG = [
 const dataMsg = ymd => ymd ? `${paraData(ymd).toLocaleDateString('pt-BR', { weekday: 'long' })}, ${dataCurta(ymd).slice(0, 5)}` : '[data]';
 const horaMsg = h => { if (!h) return '[hora]'; const [hh, mm] = h.split(':'); return `${Number(hh)}h${mm === '00' ? '' : mm}`; };
 function montarMensagem(modelo, p, r) {
-  return modelo.replaceAll('{nome}', primeiroNome(p.nome)).replaceAll('{data}', dataMsg(r.data)).replaceAll('{hora}', horaMsg(r.hora));
+  // versão 73: {valor} = valor da sessão naquela data; {pix} = chave Pix da clínica (Dados profissionais)
+  const v = typeof valorNaData === 'function' ? valorNum(valorNaData(p, r.data)) : valorNum(p.valor);
+  return modelo.replaceAll('{nome}', primeiroNome(p.nome)).replaceAll('{data}', dataMsg(r.data)).replaceAll('{hora}', horaMsg(r.hora))
+    .replaceAll('{valor}', v ? reais(v) : '[valor]').replaceAll('{pix}', perfil.pixChave || '[chave Pix: coloque em Configurações → Dados profissionais]');
 }
 
 function abaMensagem(p) { // p aqui é o cadastro administrativo do paciente
@@ -2333,6 +2358,7 @@ function telaPerfil() {
           campo('Telefone', 'telefone', { tipo: 'tel' }),
           campo('E-mail', 'email', { tipo: 'email' }),
           campo('WhatsApp do assistente (para os lembretes)', 'whatsAdm', { tipo: 'tel', dica: '(21) 99999-9999' }),
+          campo('Chave Pix da clínica (vai na mensagem de lembrete)', 'pixChave', { dica: 'CNPJ, e-mail, celular ou chave aleatória' }),
           campo('Valor da sessão (R$)', 'valorSessao', { modo: 'decimal', dica: '200,00' }),
           campo('Seu CPF (não sai nos documentos; só ajuda a conferir notas fiscais)', 'cpf', { modo: 'numeric', largo: true }))),
       cartao('Logotipo', 'imagem',
@@ -3631,12 +3657,12 @@ async function paginasDoArquivo(f, aoProgredir) {
   }
   return res;
 }
-async function importarParaCaderno(p) {
+async function importarParaCaderno(p, op = {}) {
   const arquivos = await escolherArquivos({ multiplo: true, accept: 'application/pdf,.pdf,image/*' });
   if (!arquivos?.length) return;
   const nomeBase = arquivos[0].name.replace(/\.[^.]+$/, '');
-  const r = await dialogo({ titulo: 'Trazer para Anotações e evolução', texto: 'Cada página vira uma folha deste caderno, e você pode continuar escrevendo em cima com a caneta. Data do atendimento e título:',
-    campos: [{ rotulo: 'Data', tipo: 'date', valor: hojeISO() }, { rotulo: 'Título', valor: nomeBase }],
+  const r = await dialogo({ titulo: 'Trazer para a sessão', texto: 'Cada página vira uma folha, e você pode continuar escrevendo em cima com a caneta. A folha fica dentro da sessão do mesmo dia. Data do atendimento e título:',
+    campos: [{ rotulo: 'Data', tipo: 'date', valor: op.data || hojeISO() }, { rotulo: 'Título', valor: nomeBase }],
     botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Trazer', valor: true, estilo: 'primario' }] });
   if (!r) return;
   const [data, titulo] = r;
@@ -3651,6 +3677,7 @@ async function importarParaCaderno(p) {
   indicarStatus('');
   if (!paginas.length) return aviso('Nada encontrado', 'O arquivo não tem páginas.');
   const f = { id: crypto.randomUUID(), data: data || hojeISO(), titulo: (titulo || '').trim(), paginas: paginas.length, importada: true, criadoEm: agoraISO(), atualizadoEm: agoraISO() };
+  if (op.sid && (data || hojeISO()) === op.data) f.sid = op.sid;
   for (const [i, pg] of paginas.entries())
     await Cofre.salvar(chaveFundo(f.id, i), { tipoRegistro: 'fundo', b64: paraBase64(pg.bytes), w: pg.w, h: pg.h, atualizadoEm: f.atualizadoEm });
   await Cofre.salvar(chaveFolha(f.id), { tipoRegistro: 'folha', id: f.id, pid: p.id, paginas: paginas.map(() => []),
@@ -3680,13 +3707,17 @@ function abaCaderno(p) {
         el('p', { text: 'Nenhuma folha ainda. Toque em "Nova folha" para escrever com a caneta, como no Samsung Notes, ou em "Trazer PDF ou imagem" para guardar aqui anotações que já existem (por exemplo, o PDF de uma nota do Samsung Notes).' })),
     el('p', { class: 'suave pequeno', text: 'As folhas ficam só na área clínica, cifradas. O administrativo não tem acesso. Elas entram no backup e podem entrar no compilado da evolução.' }));
 }
-async function novaFolha(p) {
-  const r = await dialogo({ titulo: 'Nova folha', texto: 'Data do atendimento e, se quiser, um título.',
-    campos: [{ rotulo: 'Data', tipo: 'date', valor: hojeISO() }, { rotulo: 'Título (opcional)' }],
-    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Criar', valor: true, estilo: 'primario' }] });
-  if (!r) return;
-  const [data, titulo] = r;
+async function novaFolha(p, op = {}) {
+  let data = op.data, titulo = '';
+  if (!op.sid) {
+    const r = await dialogo({ titulo: 'Nova folha', texto: 'Data do atendimento e, se quiser, um título.',
+      campos: [{ rotulo: 'Data', tipo: 'date', valor: hojeISO() }, { rotulo: 'Título (opcional)' }],
+      botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Criar', valor: true, estilo: 'primario' }] });
+    if (!r) return;
+    [data, titulo] = r;
+  }
   const f = { id: crypto.randomUUID(), data: data || hojeISO(), titulo: (titulo || '').trim(), paginas: 1, criadoEm: agoraISO(), atualizadoEm: agoraISO() };
+  if (op.sid) f.sid = op.sid;
   (p.folhas ||= []).push(f);
   agendarSalvar('p:' + p.id, p);
   await Cofre.salvar(chaveFolha(f.id), { tipoRegistro: 'folha', id: f.id, pid: p.id, paginas: [[]], atualizadoEm: f.atualizadoEm });
