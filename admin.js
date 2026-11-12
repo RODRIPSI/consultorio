@@ -2590,6 +2590,9 @@ async function sincronizarDrive(opcoes = {}) {
       recebeu = true;
       if (mudou) avisarNovidades(antes);
     }
+    // Versão 66: quem preencheu o Google Forms entra (ou é atualizado) sozinho, a cada sincronização.
+    let doForms = null;
+    try { doForms = await autoImportarForms(token); } catch { doForms = null; }
     await salvarAgora();
     const registros = await registrosAdm(false);
     const conteudo = await Cofre.cifrarPacote(s.senha, { formato: 'consultorio-adm', versao: 1, de: modo, criadoEm: agoraISO(), registros });
@@ -2601,6 +2604,13 @@ async function sincronizarDrive(opcoes = {}) {
       await driveApi('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true', token, { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + limite }, body: corpo });
     }
     try { localStorage.setItem('consultorio-ultima-sync', agoraISO()); } catch { } // fora do perfil, para não sobrescrever dados do outro aparelho
+    if (doForms && (doForms.novos || doForms.atualizados)) {
+      const t = [doForms.novos ? `${doForms.novos} ${doForms.novos === 1 ? 'paciente novo' : 'pacientes novos'} do formulário` : '', doForms.atualizados ? `${doForms.atualizados} ${doForms.atualizados === 1 ? 'cadastro atualizado' : 'cadastros atualizados'} pelo formulário` : ''].filter(Boolean).join(' · ');
+      mostrarNotificacao('Consultório', t);
+      mudou = true;
+      if (silencioso) { indicarStatus(t); return; }
+      await aviso('Formulário', t + (doForms.nomes.length ? ': ' + listaNatural(doForms.nomes) + '.' : '.'));
+    }
     if (silencioso) { indicarStatus(outraSenha ? 'Enviado. O outro aparelho ainda usa outra senha.' : 'Sincronizado às ' + new Date().toTimeString().slice(0, 5)); return; }
     await oferecerLembrarSenha(s);
     if (!senhaTroca && s.senha) senhaTroca = s.senha;
@@ -3487,4 +3497,65 @@ async function alterarValorSessao(c, aoFim) {
   await salvarAgora();
   indicarStatus(`Valor de ${primeiroNome(c.nome)}: R$ ${reais(novo)} a partir de ${dataCurta(desde)}${mudadas ? ` (${mudadas} ${mudadas === 1 ? 'sessão atualizada' : 'sessões atualizadas'})` : ''}.`);
   if (aoFim) aoFim(); else render(history.state);
+}
+
+
+// =====================================================================
+// Versão 66: importação automática do Google Forms ("Informações dos pacientes").
+// A cada sincronização, se a planilha mudou: quem é novo vira cadastro (e ficha, no aparelho do Rodrigo);
+// quem já existe (mesmo CPF ou mesmo nome) é atualizado com a resposta mais recente do formulário.
+// O que foi editado no app só é trocado quando o paciente manda uma resposta nova no formulário.
+// Os dois aparelhos podem importar: o paciente novo recebe sempre o mesmo código, então não duplica.
+// =====================================================================
+function codigoForms(rec) {
+  const base = soDigitos(rec.cpf).length === 11 ? 'cpf' + soDigitos(rec.cpf) : 'nome' + norm(rec.nome);
+  let h1 = 0x811c9dc5, h2 = 0x01000193;
+  for (const ch of base) { h1 = Math.imul(h1 ^ ch.charCodeAt(0), 16777619) >>> 0; h2 = Math.imul(h2 + ch.charCodeAt(0), 2246822519) >>> 0; }
+  return 'forms-' + h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0');
+}
+const CAMPOS_FORMS = ['cpf', 'nascimento', 'email', 'telefone', 'telefone2', 'pix'];
+async function autoImportarForms(token) {
+  const id = idDoLink(driveCfg().fontes?.pacientes);
+  if (!id || !token) return null;
+  let ultimo = {}; try { ultimo = JSON.parse(localStorage.getItem('consultorio-forms') || '{}'); } catch { }
+  if (ultimo.em && Date.now() - ultimo.em < 5 * 60000) return null;   // no máximo a cada 5 minutos
+  const meta = await (await driveApi(`https://www.googleapis.com/drive/v3/files/${id}?fields=modifiedTime&supportsAllDrives=true`, token)).json();
+  const salvarUltimo = () => { try { localStorage.setItem('consultorio-forms', JSON.stringify({ em: Date.now(), mod: meta.modifiedTime })); } catch { } };
+  if (meta.modifiedTime && meta.modifiedTime === ultimo.mod) { salvarUltimo(); return null; }
+  const recs = await lerFonte('pacientes', await baixarDoDrive(id, token));
+  const agora = agoraISO();
+  let novos = 0, atualizados = 0; const nomes = [];
+  for (const r of recs) {
+    const assin = JSON.stringify([r.nome, ...CAMPOS_FORMS.map(k => r[k] || ''), r.valor || '', r.modo || '']);
+    let c = cadastros.find(x => (soDigitos(r.cpf).length === 11 && soDigitos(x.cpf) === soDigitos(r.cpf)) || norm(x.nome) === norm(r.nome)) || cadastroDe(codigoForms(r));
+    if (!c) {
+      const prov = cadastros.filter(x => x.provisorio && !soDigitos(x.cpf) && sugerirCadastro(x.nomeLista || x.nome, [{ id: 'ficha', nome: r.nome, apelidos: r.apelidos }]) === 'ficha');
+      if (prov.length === 1) c = prov[0];
+    }
+    if (!c) {
+      c = novoCadastro({ id: codigoForms(r), nome: r.nome, criadoEm: agora, atualizadoEm: agora });
+      for (const k of CAMPOS_FORMS) if (r[k]) c[k] = r[k];
+      if (r.valor) c.valor = r.valor;
+      if (r.valorMensal) c.valorMensal = r.valorMensal;
+      if (r.modo) c.modoPagamento = r.modo;
+      c.formsAssinatura = assin; c.origem = 'formulário';
+      cadastros.push(c); salvarCadastro(c); novos++; nomes.push(r.nome);
+      for (const ap of r.apelidos || []) apelidos()[norm(ap)] ||= c.id;
+      continue;
+    }
+    if (c.formsAssinatura === assin) continue;
+    const primeiraVez = !c.formsAssinatura;   // já existia antes da importação automática: só preenche o vazio
+    let mudou = false;
+    if (c.provisorio && r.nome) { if (!c.nomeLista) c.nomeLista = c.nome; c.nome = r.nome; c.provisorio = false; mudou = true; }
+    for (const k of CAMPOS_FORMS) if (r[k] && (primeiraVez ? !c[k] : c[k] !== r[k])) { c[k] = r[k]; mudou = true; }
+    if (r.valor && !valorNum(c.valor) && !c.valores?.length) { c.valor = r.valor; mudou = true; }
+    if (r.valorMensal && !valorNum(c.valorMensal)) { c.valorMensal = r.valorMensal; mudou = true; }
+    if (r.modo && !c.modoPagamento) { c.modoPagamento = r.modo; mudou = true; }
+    if (c.arquivado && !primeiraVez) { c.arquivado = false; mudou = true; }   // mandou o formulário de novo: voltou
+    c.formsAssinatura = assin; c.atualizadoEm = agora; salvarCadastro(c);
+    if (mudou && !primeiraVez) { atualizados++; nomes.push(c.nome); }
+  }
+  salvarUltimo();
+  if (novos || atualizados) { salvarPerfil(); await salvarAgora(); if (modo === 'dono') { await sincronizarCadastros(); await salvarAgora(); } }
+  return { novos, atualizados, nomes };
 }
