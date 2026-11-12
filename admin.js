@@ -1523,8 +1523,9 @@ function lerPresenca(texto) {
     const e = l.match(/^(?:✔️|✔)?\s*(\d{1,2})\s*h\s*(\d{2})?\s*[-–]\s*(.*)$/);
     if (!e || !dia) continue;
     const resto = e[3];
-    if (!/[💸💵💰✅❌⭕❓⁉💱]|\b1x\b/i.test(resto)) continue;
-    const nomeBruto = resto.split(/\s*[-–]\s*|[💸💵💰✅❌⭕❓⁉💱🟡🔴🟢📲]/u)[0];
+    // 📅 = horário de paciente sem forma de pagamento definida (usado nos arquivos de agenda montados à parte).
+    if (!/[💸💵💰✅❌⭕❓⁉💱📅]|\b1x\b/i.test(resto)) continue;
+    const nomeBruto = resto.split(/\s*[-–]\s*|[💸💵💰✅❌⭕❓⁉💱🟡🔴🟢📲📅]/u)[0];
     const tokens = nomeBruto.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(t => t && (/\p{L}/u.test(t) || /^\d$/.test(t)));
     const apelido = tokens.filter(t => !/^\d$/.test(t) || tokens.length > 1).join(' ');
     if (!/\p{L}{2}/u.test(apelido) || NAO_PACIENTE.test(norm(apelido))) continue;
