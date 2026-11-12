@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 41';
+const VERSAO = 'versão 42';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -1097,7 +1097,7 @@ async function fazerBackup() {
 }
 
 // Tipos aceitos para o arquivo de troca e o backup: texto, Word, PDF e qualquer outro (*/*), para o arquivo nunca aparecer cinza.
-const ACEITA_PACOTE = '*/*,.txt,.docx,.pdf,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const ACEITA_PACOTE = '.txt,.docx,.doc,.pdf,.odt,.cifrado,text/plain,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/octet-stream'; // só documentos: com imagem ou */*, o Android abre o seletor de fotos
 function escolherArquivos({ multiplo = false, accept = '' } = {}) {
   return new Promise(resolve => {
     const input = el('input', { type: 'file', accept, multiple: multiplo });
