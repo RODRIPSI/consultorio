@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 73';
+const VERSAO = 'versão 74';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -2048,8 +2048,8 @@ const MODELOS_MSG = [
   { nome: 'Remarcar', texto: 'Olá, {nome}. Precisarei remarcar nossa sessão de {data}, às {hora}. Você teria disponibilidade em outro horário?' },
   { nome: 'Não haverá sessão', texto: 'Olá, {nome}. Não poderei atender na {data}. Retomamos no horário habitual da semana seguinte.' },
   { nome: 'Documento', texto: 'Olá, {nome}. Segue o documento solicitado.' },
-  { nome: 'Lembrete com Pix', texto: 'Olá, {nome}! Passando para lembrar da nossa sessão de {data}, às {hora}. O valor da sessão é R$ {valor}. Para pagar por Pix, a chave é: {pix}' },
-  { nome: 'Pagamento', texto: 'Olá, {nome}! Passando para lembrar do pagamento deste mês. Qualquer dúvida, estou à disposição.' },
+  { nome: 'Lembrete de pagamento', texto: 'Olá, {nome}! Passando para lembrar do pagamento da sessão de {data}, no valor de R$ {valor}. Para pagar por Pix, a chave é: {pix}' },
+  { nome: 'Pagamento', texto: 'Olá, {nome}! Passando para lembrar do pagamento deste mês. Para pagar por Pix, a chave é: {pix}. Qualquer dúvida, estou à disposição.' },
   { nome: 'Aniversário', texto: 'Olá, {nome}! Feliz aniversário! Desejo a você um novo ano muito bom.' },
   { nome: 'Livre', texto: 'Olá, {nome}. ' }
 ];

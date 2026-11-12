@@ -294,16 +294,11 @@ function cartaoAgenda() {
     const a = atendimentos.find(x => x.pid === c.id && x.data === dia);
     let acoes;
     if (dia !== hoje) {
+      // versão 74: dois lembretes na véspera — da sessão e do pagamento (com valor e chave Pix)
+      const abrirModelo = nomeModelo => { rascunhoMsg[c.id] = { modelo: Math.max(0, MODELOS_MSG.findIndex(m => m.nome === nomeModelo)), data: dia, hora, texto: null }; ir({ tela: 'adm', id: c.id, aba: 'mensagem' }); };
       acoes = el('span', { class: 'chips' },
-        el('button', { type: 'button', class: 'chip acao', text: 'Confirmar', onclick: () => {
-          rascunhoMsg[c.id] = { modelo: 0, data: dia, hora, texto: null };
-          ir({ tela: 'adm', id: c.id, aba: 'mensagem' });
-        } }),
-        // versão 73: lembrete do dia anterior com o valor da sessão e a chave Pix
-        el('button', { type: 'button', class: 'chip acao', text: 'Lembrete + Pix', onclick: () => {
-          rascunhoMsg[c.id] = { modelo: Math.max(0, MODELOS_MSG.findIndex(m => m.nome === 'Lembrete com Pix')), data: dia, hora, texto: null };
-          ir({ tela: 'adm', id: c.id, aba: 'mensagem' });
-        } }));
+        el('button', { type: 'button', class: 'chip acao', text: 'Lembrete da sessão', onclick: () => abrirModelo('Lembrete') }),
+        el('button', { type: 'button', class: 'chip acao', text: 'Lembrete de pagamento', onclick: () => abrirModelo('Lembrete de pagamento') }));
     } else {
       // Versão 29: presença direto na linha de hoje (veio, faltou, desmarcou com a regra das 24h, remarcou).
       const o = ocorrenciasNoPeriodo(c, dia, dia).find(x => (x.hora || '') === (hora || '')) || { c, data: dia, hora: hora || '' };
@@ -2999,7 +2994,7 @@ async function acoesListaPaciente(o) {
   const botoes = [{ rotulo: 'Fechar', valor: null }];
   if (a?.pagamento === 'areceber') botoes.push({ rotulo: valorDe(a) ? `✅ Pagou esta sessão (R$ ${reais(valorDe(a))})` : '✅ Pagou esta sessão', valor: 'pagar', estilo: 'primario' });
   if (!mk.pres) {
-    if (o.data >= hojeISO()) botoes.push({ rotulo: '💬 Lembrete + Pix', valor: 'lembretePix' });   // versão 73
+    if (o.data >= hojeISO()) botoes.push({ rotulo: '💬 Lembrete da sessão', valor: 'lembreteSessao' }, { rotulo: '💲 Lembrete de pagamento', valor: 'lembretePix' });   // versão 74
     if (conf !== 'enviada' && conf !== 'confirmada') botoes.push({ rotulo: '📲 Mensagem enviada', valor: 'enviada' });
     if (conf !== 'confirmada') botoes.push({ rotulo: '🟢 Confirmou', valor: 'confirmada' });
     botoes.push({ rotulo: '✅ Veio', valor: 'realizada', estilo: 'primario' }, { rotulo: '❌ Desmarcou', valor: 'desmarcou' }, { rotulo: '⭕ Faltou', valor: 'falta' }, { rotulo: '💱 Reagendar', valor: 'reagendar' });
@@ -3015,7 +3010,7 @@ async function acoesListaPaciente(o) {
   if (!r) return;
   if (r === 'abrir') return ir(modo === 'dono' ? { tela: 'ficha', id: c.id, aba: 'retomar' } : { tela: 'adm', id: c.id, aba: 'atendimentos' });
   if (r === 'pagar') return pagarSessao(c, a);
-  if (r === 'lembretePix') { rascunhoMsg[c.id] = { modelo: Math.max(0, MODELOS_MSG.findIndex(m => m.nome === 'Lembrete com Pix')), data: o.data, hora: o.hora, texto: null }; return ir({ tela: 'adm', id: c.id, aba: 'mensagem' }); }
+  if (r === 'lembretePix' || r === 'lembreteSessao') { rascunhoMsg[c.id] = { modelo: Math.max(0, MODELOS_MSG.findIndex(m => m.nome === (r === 'lembretePix' ? 'Lembrete de pagamento' : 'Lembrete'))), data: o.data, hora: o.hora, texto: null }; return ir({ tela: 'adm', id: c.id, aba: 'mensagem' }); }
   if (r === 'enviada' || r === 'confirmada') { marcarConfirmacao(c, o.data, o.hora, r); return render(history.state); }
   if (r === 'realizada' || r === 'falta') return definirPresencaLista(o, r);
   if (r === 'desmarcou') {
