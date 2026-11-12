@@ -1159,7 +1159,9 @@ function secaoAdministrativo(linha, secao) {
     linha('retomar', 'Enviar dados ao administrativo', 'Gera um arquivo cifrado com agenda, cadastros e pagamentos, sem nada clínico, para o aparelho do administrativo.',
       el('button', { type: 'button', class: 'secundario compacto', text: 'Enviar', onclick: exportarAdm })),
     linha('clipe', 'Receber dados do administrativo', 'Traz os pagamentos e a agenda que ele registrou.',
-      el('button', { type: 'button', class: 'secundario compacto', text: 'Receber', onclick: importarAdm })));
+      el('button', { type: 'button', class: 'secundario compacto', text: 'Receber', onclick: importarAdm })),
+    senhaTroca && linha('cadeado', 'Senha dos arquivos lembrada', 'Usada ao enviar, receber e sincronizar. "Trocar" esquece a atual; na próxima vez o app pede uma nova.',
+      el('button', { type: 'button', class: 'secundario compacto', text: 'Trocar', onclick: esquecerSenhaTroca })));
 }
 let temSenhaAdmCache = false;
 const telaConfigOriginal = telaConfig;
