@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 39';
+const VERSAO = 'versão 40';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -1197,8 +1197,9 @@ async function textoDoPacote(arquivo) {
     for (let i = 1; i <= doc.numPages; i++) partes.push((await (await doc.getPage(i)).getTextContent()).items.map(x => x.str).join(''));
     await doc.destroy();
     t = partes.join('');
-  } else if (nome.endsWith('.docx') || nome.endsWith('.odt')) t = await extrairTexto(arquivo);
-  else t = await arquivo.text();
+  } else if (nome.endsWith('.docx') || nome.endsWith('.odt') || /wordprocessingml|opendocument\.text/.test(arquivo.type)) {
+    t = await extrairTexto(nome.endsWith('.docx') || nome.endsWith('.odt') ? arquivo : new File([arquivo], (arquivo.name || 'arquivo') + (/opendocument/.test(arquivo.type) ? '.odt' : '.docx'), { type: arquivo.type }));
+  } else t = await arquivo.text();
   const ini = t.indexOf('{'), fim = t.lastIndexOf('}');
   return (ini >= 0 && fim > ini ? t.slice(ini, fim + 1) : t).replace(/\s+/g, '').replace(/[“”]/g, '"');
 }
