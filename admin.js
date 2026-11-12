@@ -2899,7 +2899,7 @@ async function acoesListaPaciente(o) {
   const situacao = mk.pres ? PRESENCA[mk.pres] + (a?.abonada ? ' · abonada' : '') + (a?.pagamento === 'areceber' ? ' · será cobrada' : a?.pagamento === 'pago' ? ' · paga' : a?.pagamento === 'naocobrar' ? ' · não cobrada' : '')
     : conf === 'confirmada' ? '🟢 Confirmou' : conf === 'enviada' ? '📲 Mensagem enviada' : 'Ainda sem marcação';
   const botoes = [{ rotulo: 'Fechar', valor: null }];
-  if (a?.pagamento === 'areceber') botoes.push({ rotulo: `💲 Pagou esta sessão (R$ ${reais(valorDe(a))})`, valor: 'pagar', estilo: 'primario' });
+  if (a?.pagamento === 'areceber') botoes.push({ rotulo: `✅ Pagou esta sessão (R$ ${reais(valorDe(a))})`, valor: 'pagar', estilo: 'primario' });
   if (!mk.pres) {
     if (conf !== 'enviada' && conf !== 'confirmada') botoes.push({ rotulo: '📲 Mensagem enviada', valor: 'enviada' });
     if (conf !== 'confirmada') botoes.push({ rotulo: '🟢 Confirmou', valor: 'confirmada' });
@@ -3064,7 +3064,7 @@ function segmentoAbasMes(ym) {
 function devedores() {
   const ym = hojeISO().slice(0, 7);
   return cadastros.map(c => {
-    const pend = atendimentosDe(c.id).filter(a => a.pagamento === 'areceber' && a.data <= hojeISO());
+    const pend = atendimentosDe(c.id).filter(a => a.pagamento === 'areceber'); // marcou que veio (ou falta cobrada): já deve, mesmo que a data seja futura
     const total = pend.reduce((t, a) => t + valorDe(a), 0);
     const atraso = pend.filter(a => a.data.slice(0, 7) < ym).reduce((t, a) => t + valorDe(a), 0);
     return { c, pend, total, atraso, desde: pend.map(a => a.data).sort()[0] };
@@ -3160,8 +3160,16 @@ function telaMesAba(ym) {
 function chipPagamentoSessao(c, a) {
   if (!a || !a.pagamento) return null;
   if (a.pagamento === 'pago') return el('span', { class: 'chip pago-chip', text: `✅ Pago R$ ${reais(valorDe(a))}` });
-  if (a.pagamento === 'areceber') return el('button', { type: 'button', class: 'chip acao marcado', 'aria-label': `Registrar pagamento da sessão de ${c.nome}`, text: `R$ ${reais(valorDe(a))} · Pagou?`, onclick: e => { e.stopPropagation(); pagarSessao(c, a); } });
+  if (a.pagamento === 'areceber') return el('button', { type: 'button', class: 'chip acao marcado', 'aria-label': `Pagamento da sessão de ${c.nome}`, text: `⏳ A receber R$ ${reais(valorDe(a))}`, onclick: e => { e.stopPropagation(); perguntarPagamento(c, a); } });
   return a.presenca ? el('span', { class: 'chip', text: a.abonada ? '🤝 Abonada' : 'Não cobra' }) : null;
+}
+// Versão 45: o toque pergunta primeiro se pagou; "Ainda não" deixa a sessão em "Quem deve" e guarda que foi conferida.
+async function perguntarPagamento(c, a) {
+  const r = await janela(`${c.nome}`, [el('p', { text: `Sessão de ${dataComDia(a.data)}${a.hora ? ', ' + horaCurta(a.hora) : ''} · R$ ${reais(valorDe(a))}` }),
+    el('p', { class: 'suave', text: a.conferidaEm ? `Conferido em ${dataCurta(a.conferidaEm)}: ainda não tinha pago.` : 'Está em "Quem deve" até o pagamento ser registrado.' })],
+    [{ rotulo: 'Fechar', valor: null }, { rotulo: 'Ainda não pagou', valor: 'nao' }, { rotulo: '✅ Pagou', valor: 'sim', estilo: 'primario' }]);
+  if (r === 'sim') return pagarSessao(c, a);
+  if (r === 'nao') { a.conferidaEm = hojeISO(); salvarAt(a); indicarStatus('Continua em "Quem deve"'); render(history.state); }
 }
 async function pagarSessao(c, a) {
   const r = await dialogo({ titulo: 'Pagamento desta sessão', texto: `${c.nome} · sessão de ${dataComDia(a.data)}${a.hora ? ', ' + horaCurta(a.hora) : ''}.`,
