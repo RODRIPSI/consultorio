@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 62';
+const VERSAO = 'versão 63';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -34,6 +34,17 @@ let ultimaAtividade = Date.now();
 let config = { bloqueioMin: 5 };
 let ignorarOcultacao = false; // durante biometria, compartilhamento e escolha de arquivo
 let verArquivados = false;
+let filtroPacientes = 'atuais';   // versão 63: 'atuais' (atendendo agora) ou 'todos'
+// "Atendendo agora": tem horário fixo na agenda, sessão marcada daqui para frente, ou foi atendido nos últimos 45 dias.
+function atendendoAgora(p) {
+  if (p.arquivado) return false;
+  const limite = new Date(Date.now() - 45 * 864e5).toISOString().slice(0, 10);
+  if (sessoesDe(p.id).some(s => (s.data || '') >= limite)) return true;
+  const c = typeof cadastroDe === 'function' ? cadastroDe(p.id) : null;
+  if (!c || c.arquivado) return false;
+  if (typeof horariosDe === 'function' && horariosDe(c).some(h => h.hora)) return true;
+  return typeof atendimentosDe === 'function' && atendimentosDe(c.id).some(a => a.data >= limite && a.presenca !== 'cancelada');
+}
 let termoBusca = '';
 let recentesPrimeiro = true;
 let importacao = null;       // prévia da importação (só na memória)
@@ -436,6 +447,7 @@ function telaLista(todos = false) {
     const q = semAcento(busca.value.trim());
     let itens = pacientes
       .filter(p => !!p.arquivado === verArquivados)
+      .filter(p => !todos || verArquivados || filtroPacientes === 'todos' || atendendoAgora(p))
       .filter(p => !q || semAcento(p.nome).includes(q))
       .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
     if (!todos) {
@@ -458,6 +470,7 @@ function telaLista(todos = false) {
     }));
     if (!itens.length) {
       const texto = q ? 'Nenhum nome encontrado.'
+        : todos && !verArquivados && filtroPacientes === 'atuais' ? 'Ninguém com horário fixo ou sessão nos últimos 45 dias.'
         : verArquivados ? 'Nenhum paciente arquivado.' : 'Nenhum paciente cadastrado ainda.';
       lista.append(el('div', { class: 'vazio' }, el('p', { text: texto }),
         !q && !verArquivados && el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: novoPaciente }, icone('mais'), el('span', { text: 'Cadastrar paciente' }))));
@@ -473,6 +486,10 @@ function telaLista(todos = false) {
         botaoIcone('Bloquear agora', 'cadeado', trancar), botaoIcone('Configurações', 'ajustes', () => ir({ tela: 'config' }))]
     }),
     el('div', { class: 'conteudo' },
+      todos && !verArquivados && typeof segmentoEscolha === 'function' && segmentoEscolha(
+        { atuais: `Atendendo agora (${pacientes.filter(atendendoAgora).length})`, todos: `Todos (${ativos})` }, filtroPacientes,
+        k => { filtroPacientes = k; telaLista(true); }, 'dois'),
+      todos && !verArquivados && filtroPacientes === 'atuais' && el('p', { class: 'suave pequeno', text: 'Quem tem horário fixo na agenda, sessão marcada ou foi atendido nos últimos 45 dias.' }),
       !todos && cartaoLembretes(),
       !todos && typeof cartaoLembretesAdm === 'function' && cartaoLembretesAdm(true),
       !todos && cartaoAvisosAgenda(),
@@ -484,7 +501,7 @@ function telaLista(todos = false) {
       lista,
       !todos && el('button', { type: 'button', class: 'cartao paciente todos-pacientes', onclick: () => ir({ tela: 'pacientes' }) },
         el('span', { class: 'ic-bolha' }, icone('pessoa')),
-        el('span', { class: 'info' }, el('span', { class: 'nome', text: 'Todos os pacientes' }), el('span', { class: 'meta' }, el('span', { text: `${ativos} em acompanhamento · arquivados` }))),
+        el('span', { class: 'info' }, el('span', { class: 'nome', text: 'Todos os pacientes' }), el('span', { class: 'meta' }, el('span', { text: `${pacientes.filter(atendendoAgora).length} atendendo agora · ${ativos} cadastrados` }))),
         icone('seguinte')),
       el('div', { class: 'atalhos' },
         el('button', {
