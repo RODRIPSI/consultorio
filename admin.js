@@ -3068,7 +3068,7 @@ function devedores() {
     const total = pend.reduce((t, a) => t + valorDe(a), 0);
     const atraso = pend.filter(a => a.data.slice(0, 7) < ym).reduce((t, a) => t + valorDe(a), 0);
     return { c, pend, total, atraso, desde: pend.map(a => a.data).sort()[0] };
-  }).filter(x => x.total > 0).sort((a, b) => b.atraso - a.atraso || b.total - a.total);
+  }).filter(x => x.pend.length > 0).sort((a, b) => b.atraso - a.atraso || b.total - a.total); // aparece mesmo sem valor no cadastro
 }
 function cartaoPagamentosInicio(ym, tot) {
   const ds = devedores(), emAtraso = ds.filter(x => x.atraso > 0);
@@ -3103,8 +3103,9 @@ function telaMesAba(ym) {
         el('span', { class: 'info' }, el('span', { class: 'nome', text: x.c.nome }),
           el('span', { class: 'meta' },
             x.atraso > 0 ? el('span', { class: 'selo areceber', text: `Em atraso R$ ${reais(x.atraso)}` }) : el('span', { class: 'selo parcial', text: 'Deste mês' }),
-            el('span', { text: `${x.pend.length} ${x.pend.length === 1 ? 'sessão' : 'sessões'} desde ${ddmm(x.desde)}` }))),
-        el('strong', { class: 'valor-lista', text: 'R$ ' + reais(x.total) })))
+            el('span', { text: `${x.pend.length} ${x.pend.length === 1 ? 'sessão' : 'sessões'} desde ${ddmm(x.desde)}` }),
+            !valorNum(x.c.valor) && el('span', { class: 'selo nota', text: 'Sem valor no cadastro' }))),
+        el('strong', { class: 'valor-lista', text: x.total ? 'R$ ' + reais(x.total) : 'R$ ?' })))
         : el('div', { class: 'cartao vazio-cartao' }, el('span', { class: 'ic-bolha grande' }, icone('moeda')), el('p', { text: 'Ninguém devendo. 🎉' })),
       el('p', { class: 'suave pequeno', text: 'Toque no paciente para ver as sessões em aberto, registrar o pagamento ou mandar a mensagem de cobrança.' })];
   } else if (abaMes === 'lista') {
@@ -3160,7 +3161,7 @@ function telaMesAba(ym) {
 function chipPagamentoSessao(c, a) {
   if (!a || !a.pagamento) return null;
   if (a.pagamento === 'pago') return el('span', { class: 'chip pago-chip', text: `✅ Pago R$ ${reais(valorDe(a))}` });
-  if (a.pagamento === 'areceber') return el('button', { type: 'button', class: 'chip acao marcado', 'aria-label': `Pagamento da sessão de ${c.nome}`, text: `⏳ A receber R$ ${reais(valorDe(a))}`, onclick: e => { e.stopPropagation(); perguntarPagamento(c, a); } });
+  if (a.pagamento === 'areceber') return el('button', { type: 'button', class: 'chip acao marcado', 'aria-label': `Pagamento da sessão de ${c.nome}`, text: valorDe(a) ? `⏳ A receber R$ ${reais(valorDe(a))}` : '⏳ A receber (sem valor)', onclick: e => { e.stopPropagation(); perguntarPagamento(c, a); } });
   return a.presenca ? el('span', { class: 'chip', text: a.abonada ? '🤝 Abonada' : 'Não cobra' }) : null;
 }
 // Versão 45: o toque pergunta primeiro se pagou; "Ainda não" deixa a sessão em "Quem deve" e guarda que foi conferida.
