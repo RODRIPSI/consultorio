@@ -1372,7 +1372,7 @@ async function exportarAdm() {
   if (Cofre.aberto()) render(history.state);
 }
 async function importarAdm() {
-  const [arquivo] = await escolherArquivos({ accept: '.txt,text/plain' });
+  const [arquivo] = await escolherArquivos({}); // sem filtro: o WhatsApp e o Drive às vezes salvam o .txt com outro tipo, e o Android deixava o arquivo cinza
   if (!arquivo) return;
   const s = await senhaDosArquivos(arquivo.name);
   if (!s) return;
