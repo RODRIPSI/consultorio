@@ -508,3 +508,5 @@ html.app-oculto #app { filter: blur(22px); }
 .folha-quadro { border: 1px solid #222; padding: 6px 10px; margin: 10px 0 14px; }
 .folha .folha-quadro-titulo { text-align: center !important; font-weight: 700; margin: 0 0 4px; }
 .meta.valor-editavel { text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
+.meta.devendo { color: var(--perigo); font-weight: 600; }
+.meta.em-dia { text-decoration: none; }

@@ -1362,7 +1362,7 @@ async function registrosAdm(paraBackup) {
   if (copia && (paraBackup || perfil.assinaturaNoAdm)) r['x:assinatura'] = copia;
   return r;
 }
-const CAMPOS_PROFISSIONAIS = ['nome', 'titulo', 'crp', 'clinica', 'cnpj', 'cidade', 'endereco', 'telefone', 'email', 'logo', 'nfUrl', 'nfDescricao', 'assinaturaNoAdm', 'whatsAdm'];
+const CAMPOS_PROFISSIONAIS = ['nome', 'titulo', 'crp', 'clinica', 'cnpj', 'cidade', 'endereco', 'telefone', 'email', 'logo', 'nfUrl', 'nfDescricao', 'assinaturaNoAdm', 'whatsAdm', 'whatsDono'];
 async function mesclarRegistros(registros, filtro) {
   let novos = 0, atualizados = 0, mantidos = 0;
   const conteudo = k => k.startsWith('a:') || k.startsWith('x:f:');
@@ -3331,54 +3331,54 @@ async function pagarSessao(c, a) {
 // e, se ele quiser, também abre o WhatsApp do assistente com o texto pronto.
 // Ficam fora da área clínica: o aviso pede para não escrever nada clínico.
 // =====================================================================
-const lembretesAdmPendentes = () => lembretesAdm.filter(l => !l.feito && (l.desde || '') <= hojeISO())
+// Versão 67: recados nos dois sentidos. l.para = 'adm' (do Rodrigo para o assistente) ou 'dono' (do assistente para o Rodrigo).
+const paraMim = l => (l.para || 'adm') === (modo === 'adm' ? 'adm' : 'dono');
+const lembretesAdmPendentes = () => lembretesAdm.filter(l => !l.feito && paraMim(l) && (l.desde || '') <= hojeISO())
   .sort((a, b) => (a.desde || '').localeCompare(b.desde || '') || (a.criadoEm || '').localeCompare(b.criadoEm || ''));
-async function numeroDoAssistente(perguntar = true) {
-  if (numeroWhats(perfil.whatsAdm || '')) return numeroWhats(perfil.whatsAdm);
-  if (!perguntar) return null;
-  const r = await dialogo({ titulo: 'WhatsApp do assistente', texto: 'Digite o celular do assistente administrativo, com DDD. Fica guardado; dá para trocar em Configurações → Dados profissionais.',
-    campos: [{ rotulo: 'Celular do assistente', valor: '', inputmode: 'tel', placeholder: '(21) 99999-9999' }],
-    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }] });
-  if (!r || !numeroWhats(r)) return null;
-  perfil.whatsAdm = r.trim(); perfil.atualizadoEm = agoraISO(); await Cofre.salvar('x:perfil', perfil);
-  return numeroWhats(perfil.whatsAdm);
+const enviadosPendentes = () => lembretesAdm.filter(l => !l.feito && !paraMim(l)).sort((a, b) => (a.criadoEm || '').localeCompare(b.criadoEm || ''));
+const campoWhatsDestino = () => modo === 'adm' ? 'whatsDono' : 'whatsAdm';
+const nomeDestino = () => modo === 'adm' ? 'o Rodrigo' : 'o assistente';
+function numeroDestino() {
+  const v = perfil[campoWhatsDestino()] || (modo === 'adm' ? perfil.telefone : '') || '';
+  return numeroWhats(v) || null;
 }
 function textoLembreteAdm(l) {
   const c = l.pid ? cadastroDe(l.pid) : null;
-  return `📌 Lembrete${c ? ' · ' + c.nome : ''}${(l.desde || '') > hojeISO() ? ' (para ' + dataCurta(l.desde) + ')' : ''}\n${l.texto}`;
+  return `📌 ${(l.para || 'adm') === 'dono' ? 'Recado do administrativo' : 'Lembrete'}${c ? ' · ' + c.nome : ''}\n${l.texto}`;
 }
 async function enviarLembreteWhats(l) {
-  const n = await numeroDoAssistente();
-  if (!n) return;
+  const n = numeroDestino();
+  if (!n) return aviso('Falta o número', `Coloque o WhatsApp de ${nomeDestino()} na janela do recado.`);
   abrirExterno(`https://wa.me/${n}?text=${encodeURIComponent(textoLembreteAdm(l))}`);
 }
-// Janela para escrever um lembrete ao administrativo (de um paciente ou geral).
+// Janela para escrever um recado ao outro lado (de um paciente ou geral).
 async function novoLembreteAdm(pid = null, textoInicial = '', depois = null) {
   const c = pid ? cadastroDe(pid) : null;
-  const texto = el('textarea', { rows: '3', placeholder: c ? 'Ex.: confirmar o horário de quinta' : 'Ex.: comprar papel para a impressora' });
+  const doAdm = modo === 'adm';
+  const texto = el('textarea', { rows: '3', placeholder: doAdm ? 'Ex.: a paciente pediu para trocar o horário de quinta' : c ? 'Ex.: confirmar o horário de quinta' : 'Ex.: comprar papel para a impressora' });
   texto.value = textoInicial || '';
-  const temNum = !!numeroWhats(perfil.whatsAdm || '');
   const cx = el('input', { type: 'checkbox', checked: true });
-  // Versão 59: sem data (vale a partir de agora) e o celular do assistente pedido aqui mesmo, se ainda não estiver salvo.
-  const telAdm = el('input', { type: 'tel', inputmode: 'tel', value: perfil.whatsAdm || '', placeholder: '(21) 99999-9999' });
-  const r = await janela(c ? `Lembrete para o administrativo · ${c.nome}` : 'Lembrete para o administrativo', [
-    el('p', { class: 'faixa', text: 'O assistente vai ler este texto. Não escreva nada clínico.' }),
-    el('label', { class: 'campo' }, el('span', { text: 'Lembrete' }), texto),
-    el('label', { class: 'marcar' }, cx, el('span', { text: 'Enviar também pelo WhatsApp do assistente' })),
-    el('label', { class: 'campo' }, el('span', { text: temNum ? 'WhatsApp do assistente' : 'WhatsApp do assistente (digite uma vez; fica guardado)' }), telAdm),
-    el('p', { class: 'suave pequeno', text: 'Ele aparece na tela inicial do celular do assistente depois da sincronização (🔁), e lá ele marca "Feito".' })
-  ], [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Enviar lembrete', valor: true, estilo: 'primario' }]);
+  const campoTel = campoWhatsDestino();
+  const tel = el('input', { type: 'tel', inputmode: 'tel', value: perfil[campoTel] || (doAdm ? perfil.telefone || '' : ''), placeholder: '(21) 99999-9999' });
+  const titulo = doAdm ? 'Recado para o Rodrigo' : 'Lembrete para o administrativo';
+  const r = await janela(c ? `${titulo} · ${c.nome}` : titulo, [
+    !doAdm && el('p', { class: 'faixa', text: 'O assistente vai ler este texto. Não escreva nada clínico.' }),
+    el('label', { class: 'campo' }, el('span', { text: doAdm ? 'Recado' : 'Lembrete' }), texto),
+    el('label', { class: 'marcar' }, cx, el('span', { text: `Enviar também pelo WhatsApp de ${nomeDestino()}` })),
+    el('label', { class: 'campo' }, el('span', { text: `WhatsApp de ${nomeDestino()} (fica guardado)` }), tel),
+    el('p', { class: 'suave pequeno', text: `Aparece na tela inicial de ${nomeDestino()} depois da sincronização (🔁), e lá ${doAdm ? 'ele' : 'ele'} marca "Feito".` })
+  ], [{ rotulo: 'Cancelar', valor: null }, { rotulo: doAdm ? 'Enviar recado' : 'Enviar lembrete', valor: true, estilo: 'primario' }]);
   if (!r || !texto.value.trim()) return;
-  if (telAdm.value.trim() !== (perfil.whatsAdm || '') && numeroWhats(telAdm.value)) {
-    perfil.whatsAdm = telAdm.value.trim(); perfil.atualizadoEm = agoraISO(); await Cofre.salvar('x:perfil', perfil);
+  if (tel.value.trim() !== (perfil[campoTel] || '') && numeroWhats(tel.value)) {
+    perfil[campoTel] = tel.value.trim(); perfil.atualizadoEm = agoraISO(); await Cofre.salvar('x:perfil', perfil);
   }
   const agora = agoraISO();
-  const l = { id: crypto.randomUUID(), tipoRegistro: 'lembrete', pid: pid || null, texto: texto.value.trim(), desde: hojeISO(), feito: false, criadoEm: agora, atualizadoEm: agora };
+  const l = { id: crypto.randomUUID(), tipoRegistro: 'lembrete', para: doAdm ? 'dono' : 'adm', pid: pid || null, texto: texto.value.trim(), desde: hojeISO(), feito: false, criadoEm: agora, atualizadoEm: agora };
   lembretesAdm.push(l); salvarLem(l);
   await salvarAgora();
   if (depois) depois();
   if (cx.checked) await enviarLembreteWhats(l);
-  indicarStatus('Lembrete enviado ao administrativo.');
+  indicarStatus(doAdm ? 'Recado enviado ao Rodrigo.' : 'Lembrete enviado ao administrativo.');
   try { if (typeof sincronizarSozinho === 'function') sincronizarSozinho(); } catch { /* sincroniza na próxima vez */ }
   render(history.state);
 }
@@ -3387,34 +3387,40 @@ function concluirLembreteAdm(l) {
   render(history.state);
 }
 async function apagarLembreteAdm(l) {
-  const ok = await dialogo({ titulo: 'Apagar lembrete?', texto: l.texto, botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Apagar', valor: true, estilo: 'perigo' }] });
+  const ok = await dialogo({ titulo: 'Apagar?', texto: l.texto, botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Apagar', valor: true, estilo: 'perigo' }] });
   if (!ok) return;
   l.excluido = true; salvarLem(l);
   lembretesAdm = lembretesAdm.filter(x => x !== l);
   render(history.state);
 }
-// Cartão na tela inicial do administrativo (nos dois aparelhos).
+// Cartão "Recados": o que chegou para mim (com Feito), o que mandei e ainda espera, e o que o outro lado concluiu nos últimos 3 dias.
 function cartaoLembretesAdm(naTelaClinica = false) {
-  const itens = lembretesAdmPendentes();
-  const feitosRecentes = modo === 'dono' ? lembretesAdm.filter(l => l.feito && l.feitoEm && (Date.now() - new Date(l.feitoEm)) < 3 * 864e5) : [];
-  if (!itens.length && (modo === 'adm' || (naTelaClinica && !feitosRecentes.length))) return null; // na tela do consultório só aparece se houver lembrete
-  const linha = l => {
-    const c = l.pid ? cadastroDe(l.pid) : null;
-    return el('div', { class: 'pag-linha' },
-      el('span', { class: 'pag-info' }, c && el('strong', { text: c.nome }), el('span', { text: l.texto }),
-        el('span', { class: 'suave pequeno', text: `Do Rodrigo · ${dataCurta((l.criadoEm || '').slice(0, 10) || hojeISO())}` })),
-      modo === 'dono' && botaoIcone('Enviar pelo WhatsApp do assistente', 'mensagem', () => enviarLembreteWhats(l)),
-      el('button', { type: 'button', class: 'secundario compacto', text: 'Feito', onclick: () => concluirLembreteAdm(l) }));
-  };
+  const recebidos = lembretesAdmPendentes(), enviados = enviadosPendentes();
+  const concluidos = lembretesAdm.filter(l => l.feito && !paraMim(l) && l.feitoEm && (Date.now() - new Date(l.feitoEm)) < 3 * 864e5);
+  if (naTelaClinica && !recebidos.length && !enviados.length && !concluidos.length) return null;
+  const outro = modo === 'adm' ? 'Rodrigo' : 'assistente';
+  const nomePac = l => { const c = l.pid ? cadastroDe(l.pid) : null; return c && el('strong', { text: c.nome }); };
+  const linhaRecebido = l => el('div', { class: 'pag-linha' },
+    el('span', { class: 'pag-info' }, nomePac(l), el('span', { text: l.texto }),
+      el('span', { class: 'suave pequeno', text: `${modo === 'adm' ? 'Do Rodrigo' : 'Do assistente'} · ${dataCurta((l.criadoEm || '').slice(0, 10) || hojeISO())}` })),
+    el('button', { type: 'button', class: 'secundario compacto', text: 'Feito', onclick: () => concluirLembreteAdm(l) }));
+  const linhaEnviado = l => el('div', { class: 'pag-linha' },
+    el('span', { class: 'pag-info' }, nomePac(l), el('span', { text: l.texto }), el('span', { class: 'suave pequeno', text: `⏳ Aguardando o ${outro}` })),
+    botaoIcone('Mandar de novo pelo WhatsApp', 'mensagem', () => enviarLembreteWhats(l)),
+    botaoIcone('Apagar', 'lixeira', () => apagarLembreteAdm(l)));
+  const linhaConcluido = l => el('div', { class: 'pag-linha' },
+    el('span', { class: 'pag-info' }, el('span', { class: 'suave', text: `✅ ${l.texto}` }), el('span', { class: 'suave pequeno', text: `Feito pelo ${outro}` })),
+    botaoIcone('Apagar', 'lixeira', () => apagarLembreteAdm(l)));
+  const sub = t => el('p', { class: 'suave pequeno', text: t });
   return el('section', { class: 'cartao lembretes-adm' },
     el('h3', { class: 'cartao-titulo' }, el('span', { class: 'ic-bolha' }, icone('sino')),
-      el('span', { text: modo === 'adm' ? `Lembretes do Rodrigo (${itens.length})` : `Lembretes para o administrativo (${itens.length})` })),
-    ...itens.map(linha),
-    ...feitosRecentes.map(l => el('div', { class: 'pag-linha' },
-      el('span', { class: 'pag-info' }, el('span', { class: 'suave', text: `✅ ${l.texto}` }),
-        el('span', { class: 'suave pequeno', text: l.feitoPor === 'adm' ? 'Feito pelo assistente' : 'Marcado como feito' })),
-      botaoIcone('Apagar', 'lixeira', () => apagarLembreteAdm(l)))),
-    modo === 'dono' && el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => novoLembreteAdm() }, icone('mais'), el('span', { text: 'Novo lembrete para o administrativo' })));
+      el('span', { text: `Recados ${modo === 'adm' ? 'com o Rodrigo' : 'com o administrativo'}${recebidos.length ? ` (${recebidos.length} para você)` : ''}` })),
+    recebidos.length > 0 && sub(modo === 'adm' ? 'Do Rodrigo para você' : 'Do assistente para você'), ...recebidos.map(linhaRecebido),
+    enviados.length > 0 && sub('Você mandou'), ...enviados.map(linhaEnviado),
+    ...concluidos.map(linhaConcluido),
+    !recebidos.length && !enviados.length && !concluidos.length && sub('Nenhum recado agora.'),
+    el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => novoLembreteAdm() }, icone('mais'),
+      el('span', { text: modo === 'adm' ? 'Novo recado para o Rodrigo' : 'Novo lembrete para o administrativo' })));
 }
 
 
@@ -3430,12 +3436,16 @@ function fotoParaAvisos() {
 function avisarNovidades(antes) {
   const partes = [];
   if (modo === 'adm') {
-    const novos = lembretesAdm.filter(l => !l.feito && !antes.lemPend.has(l.id) && !antes.lemFeito.has(l.id)).length;
+    const novos = lembretesAdm.filter(l => !l.feito && paraMim(l) && !antes.lemPend.has(l.id) && !antes.lemFeito.has(l.id)).length;
     if (novos) partes.push(novos === 1 ? '1 lembrete novo do Rodrigo' : `${novos} lembretes novos do Rodrigo`);
+    const feitosR = lembretesAdm.filter(l => l.feito && !paraMim(l) && !antes.lemFeito.has(l.id)).length;
+    if (feitosR) partes.push(feitosR === 1 ? '1 recado visto pelo Rodrigo' : `${feitosR} recados vistos pelo Rodrigo`);
     const pres = atendimentos.filter(a => a.presenca && antes.ats.has(a.id) && antes.ats.get(a.id) !== a.presenca).length;
     if (pres) partes.push(pres === 1 ? '1 presença marcada' : `${pres} presenças marcadas`);
   } else {
-    const feitos = lembretesAdm.filter(l => l.feito && l.feitoPor === 'adm' && !antes.lemFeito.has(l.id)).length;
+    const recados = lembretesAdm.filter(l => !l.feito && paraMim(l) && !antes.lemPend.has(l.id) && !antes.lemFeito.has(l.id)).length;
+    if (recados) partes.push(recados === 1 ? '1 recado do assistente' : `${recados} recados do assistente`);
+    const feitos = lembretesAdm.filter(l => l.feito && l.feitoPor === 'adm' && !paraMim(l) && !antes.lemFeito.has(l.id)).length;
     if (feitos) partes.push(feitos === 1 ? '1 lembrete feito pelo assistente' : `${feitos} lembretes feitos pelo assistente`);
     const pags = pagamentos.filter(g => !antes.pags.has(g.id)).length;
     if (pags) partes.push(pags === 1 ? '1 pagamento registrado' : `${pags} pagamentos registrados`);
