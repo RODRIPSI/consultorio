@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 54';
+const VERSAO = 'versão 55';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -2127,6 +2127,7 @@ function abaEmitidos(p) {
   return el('div', { class: 'pilha' },
     el('div', { class: 'botoes-linha' },
       el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => novaDeclaracao(p) }, icone('assinar'), el('span', { text: 'Nova declaração' })),
+      el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => novaDeclaracao(p, { modelo: 'reembolso' }) }, icone('assinar'), el('span', { text: 'Declaração de reembolso' })),
       el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => adicionarDocumentos(p, 'emitido') }, icone('clipe'), el('span', { text: 'Guardar arquivo' })),
       el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: emitirNfse }, icone('moeda'), el('span', { text: 'Emitir NFS-e' })),
       el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => { compiladoRasc = null; ir({ tela: 'compilado', pid: p.id }); } }, icone('sessoes'), el('span', { text: 'Compilado da evolução' }))),
@@ -2389,7 +2390,7 @@ const MODELOS_DOC = {
   comparecimento: 'Declaração de comparecimento',
   pessoal: 'Declaração de análise ou psicoterapia pessoal',
   relatorio: 'Relatório psicológico para reembolso',
-  reembolso: 'Relatório para reembolso em quadros (paciente, diagnóstico, justificativa)',
+  reembolso: 'Declaração de reembolso (quadros: paciente, diagnóstico, justificativa)',
   recibo: 'Recibo para reembolso'
 };
 const DOC_ADM = ['comparecimento', 'recibo'];                       // os únicos que o administrativo emite e vê

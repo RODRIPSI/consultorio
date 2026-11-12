@@ -1106,7 +1106,9 @@ function abaDocumentosAdm(c) {
   return el('div', { class: 'pilha' },
     el('div', { class: 'botoes-linha' },
       el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => novaDeclaracao(c) }, icone('assinar'), el('span', { text: 'Declaração de comparecimento' })),
-      el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => novaDeclaracao(c, { modelo: 'recibo' }) }, icone('moeda'), el('span', { text: 'Recibo' }))),
+      el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => novaDeclaracao(c, { modelo: 'recibo' }) }, icone('moeda'), el('span', { text: 'Recibo' })),
+      // Versão 55: a declaração de reembolso tem diagnóstico; por sigilo, só aparece no aparelho do Rodrigo.
+      modo === 'dono' && el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => novaDeclaracao(c, { modelo: 'reembolso' }) }, icone('assinar'), el('span', { text: 'Declaração de reembolso' }))),
     modo === 'adm' && !assinatura && el('p', { class: 'faixa', text: 'Os documentos saem sem a imagem da assinatura, para Rodrigo assinar à mão ou pelo gov.br.' }),
     lista.length ? lista.map(d => itemDocumento(c, d))
       : el('div', { class: 'cartao vazio-cartao' }, el('span', { class: 'ic-bolha grande' }, icone('assinar')),
