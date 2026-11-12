@@ -470,3 +470,7 @@ button.lista-linha:hover, button.lista-linha:focus-visible { background: rgba(12
 .lista-emoji { min-width: 2rem; text-align: center; }
 details.cartao > summary { cursor: pointer; font-weight: 600; }
 @media (min-width: 700px) { .lista-legenda { grid-template-columns: 1fr 1fr; } }
+
+/* Versão 27: título do dia tocável na agenda */
+.dia-botao { display: flex; align-items: center; gap: .6rem; width: 100%; background: transparent; border: 0; padding: 0; color: inherit; font: 600 1.02rem/1.3 var(--sans); text-align: left; cursor: pointer; }
+.dia-botao .dia-mais { margin-left: auto; font-size: 1.5rem; line-height: 1; color: var(--granada); padding: 0 .4rem; }

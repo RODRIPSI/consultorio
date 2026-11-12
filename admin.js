@@ -1657,7 +1657,13 @@ function prepararImportacao(dados, erros) {
   const novos = [], completados = [];
   const candidatos = cadastros.map(c => ({ id: c.id, nome: c.nome, apelidos: [] }));
   for (const r of dados.pacientes || []) {
-    const c = cadastros.find(x => (soDigitos(r.cpf).length === 11 && soDigitos(x.cpf) === soDigitos(r.cpf)) || norm(x.nome) === norm(r.nome));
+    let c = cadastros.find(x => (soDigitos(r.cpf).length === 11 && soDigitos(x.cpf) === soDigitos(r.cpf)) || norm(x.nome) === norm(r.nome));
+    // Versão 28: paciente criado antes só com o apelido da lista (cadastro provisório) é completado pela ficha do Forms, sem duplicar.
+    if (!c) {
+      const prov = cadastros.filter(x => x.provisorio && !soDigitos(x.cpf) && !completados.some(k => k.c === x)
+        && sugerirCadastro(x.nomeLista || x.nome, [{ id: 'ficha', nome: r.nome, apelidos: r.apelidos }]) === 'ficha');
+      if (prov.length === 1) c = prov[0];
+    }
     if (c) completados.push({ c, r });
     else { const id = crypto.randomUUID(); novos.push({ id, r }); candidatos.push({ id, nome: r.nome, apelidos: r.apelidos, novo: true }); }
   }
@@ -1687,7 +1693,7 @@ function telaImportarDrive() {
   const linhaApelido = k => {
     const { apelido, n } = m.nomes.get(k);
     const sel = el('select', { 'aria-label': 'Paciente para ' + apelido },
-      el('option', { value: '', text: 'Escolha…' }), el('option', { value: 'novo', text: '+ Novo paciente com este nome' }), el('option', { value: 'ignorar', text: 'Não é paciente / ignorar' }),
+      el('option', { value: '', text: 'Escolha…' }), el('option', { value: 'novo', text: '+ Novo paciente (provisório: completa quando preencher o Forms)' }), el('option', { value: 'ignorar', text: 'Não é paciente / ignorar' }),
       opcoes.map(c => el('option', { value: c.id, text: c.nome + (c.novo ? ' (novo)' : '') })));
     sel.value = m.escolhas[k] || '';
     sel.addEventListener('change', () => { m.escolhas[k] = sel.value; resumo(); });
@@ -1735,6 +1741,7 @@ async function concluirImportacaoDrive() {
   let criados = 0, completos = 0, atNovos = 0, atAtualizados = 0, horariosDef = 0, arquivados = 0, modos = 0;
   const preencher = (c, r) => {
     let mudou = false;
+    if (c.provisorio && r.nome) { if (!c.nomeLista) c.nomeLista = c.nome; c.nome = r.nome; c.provisorio = false; mudou = true; }
     for (const k of ['cpf', 'nascimento', 'email', 'telefone', 'telefone2', 'pix', 'valor', 'valorMensal']) if (r[k] && !c[k]) { c[k] = r[k]; mudou = true; }
     if (r.modo && !c.modoPagamento) { c.modoPagamento = r.modo; mudou = true; }
     return mudou;
@@ -1748,12 +1755,14 @@ async function concluirImportacaoDrive() {
     const e = m.escolhas[k];
     if (!e || e === 'ignorar') return null;
     if (e === 'novo') {
-      if (!idsNovos.has(k)) { const c = novoCadastro({ nome: m.nomes.get(k).apelido }); cadastros.push(c); salvarCadastro(c); idsNovos.set(k, c); criados++; }
+      if (!idsNovos.has(k)) { const ap = m.nomes.get(k).apelido; const c = novoCadastro({ nome: ap, nomeLista: ap, provisorio: true }); cadastros.push(c); salvarCadastro(c); idsNovos.set(k, c); criados++; }
       return idsNovos.get(k);
     }
     return cadastroDe(e);
   };
   for (const k of m.nomes.keys()) if (m.escolhas[k]) mapa[k] = m.escolhas[k] === 'novo' ? (alvo(k)?.id || '') : m.escolhas[k];
+  // O nome curto usado pelo administrativo vira o "Nome na lista da semana", se ainda estiver vazio.
+  for (const k of m.nomes.keys()) { const c = alvo(k); if (c && !c.nomeLista && norm(c.nome) !== k) { c.nomeLista = m.nomes.get(k).apelido; salvarCadastro(c); } }
   for (const { id, r } of m.novos) for (const ap of r.apelidos) mapa[norm(ap)] ||= id;
   for (const { c, r } of m.completados) for (const ap of r.apelidos) mapa[norm(ap)] ||= c.id;
   // Presença
@@ -1780,6 +1789,7 @@ async function concluirImportacaoDrive() {
     for (const i of itens) {
       if (i.data < inicio || i.status === 'cancelada' || i.modo === 'avulso') continue;
       const c = alvo(norm(i.apelido));
+      if (c && i.modo && !c.modoPagamento) { c.modoPagamento = i.modo; salvarCadastro(c); modos++; }
       if (!c || horariosDe(c).length) continue;
       const lista = porPaciente.get(c) || [];
       const dia = paraData(i.data).getDay();
@@ -2127,8 +2137,10 @@ function telaAgenda(inicio) {
     const doDia = ocs.filter(o => o.data === d).sort((a, b) => a.hora.localeCompare(b.hora) || a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
     if (diaDaSemana(d) === 0 && !doDia.length && !sem) return null;
     return el('section', { class: 'cartao' + (d === hoje ? ' destaque' : '') },
-      el('h3', { class: 'cartao-titulo' }, el('span', { class: 'ic-bolha' }, icone('calendario')),
-        el('span', { text: `${DIAS[diaDaSemana(d)]}, ${dataCurta(d).slice(0, 5)}${d === hoje ? ' (hoje)' : ''}` })),
+      el('button', { type: 'button', class: 'cartao-titulo dia-botao', 'aria-label': `Opções de ${DIAS[diaDaSemana(d)]}, ${dataCurta(d).slice(0, 5)}`, onclick: () => acoesDiaAgenda(d) },
+        el('span', { class: 'ic-bolha' }, icone('calendario')),
+        el('span', { text: `${DIAS[diaDaSemana(d)]}, ${dataCurta(d).slice(0, 5)}${d === hoje ? ' (hoje)' : ''}` }),
+        el('span', { class: 'dia-mais', 'aria-hidden': 'true', text: '+' })),
       sem && el('p', { class: 'faixa', text: `${sem.feriado ? 'Feriado' : 'Sem atendimento'}: ${sem.nome}` }),
       doDia.length ? doDia.map(o => {
         const riscado = o.feriado || o.cancelada;
@@ -2137,7 +2149,7 @@ function telaAgenda(inicio) {
           el('span', { class: 'pag-info' },
             el('strong', { style: riscado ? 'text-decoration:line-through;opacity:.6' : null, text: `${horaCurta(o.hora) || '—'}  ${o.c.nome}` }),
             el('span', { class: 'suave', text: etiqueta + (o.feriadoAviso ? ` · atenção: ${o.feriadoAviso}` : '') + (!riscado && estadoConfirmacao(o.c, o.data, o.hora) ? ' · ' + ROTULO_CONF[estadoConfirmacao(o.c, o.data, o.hora)] : '') })));
-      }) : el('p', { class: 'suave pequeno', text: 'Nenhum atendimento.' }));
+      }) : el('button', { type: 'button', class: 'link', text: 'Nenhum atendimento. Toque para agendar neste dia.', onclick: () => acoesDiaAgenda(d) }));
   });
   mostrar(
     cabecalho('Agenda', { voltar: true, sub: `${fmt(seg)} a ${fmt(dom)}`, acoes: [botaoIcone('Feriados e dias sem atendimento', 'ajustes', () => ir({ tela: 'feriados' }))] }),
@@ -2933,4 +2945,14 @@ function telaExpediente() {
         el('div', { class: 'botoes-linha' },
           el('button', { type: 'button', class: 'secundario compacto', text: '+ ⚠️ Compromisso', onclick: () => novo('comp') }),
           el('button', { type: 'button', class: 'secundario compacto', text: '+ 🔴 Sem atendimento', onclick: () => novo('bloq') })))));
+}
+
+// Versão 27: tocar no dia da agenda abre as opções daquele dia.
+async function acoesDiaAgenda(d) {
+  const r = await janela(dataComDia(d), [el('p', { class: 'suave', text: 'O que deseja fazer neste dia?' })],
+    [{ rotulo: 'Fechar', valor: null }, { rotulo: 'Ver na Lista da semana', valor: 'lista' }, { rotulo: 'Feriados e dias sem atendimento', valor: 'feriados' },
+      { rotulo: '+ Agendar neste dia', valor: 'agendar', estilo: 'primario' }]);
+  if (r === 'agendar') { agendamentoRasc = { pid: '', data: d, hora: '', repetir: 'semanal', sessoes: String(MAX_SESSOES_SERIE), extras: [], ajustado: true }; ir({ tela: 'agendar' }); }
+  if (r === 'lista') ir({ tela: 'listaSemana', semana: d });
+  if (r === 'feriados') ir({ tela: 'feriados' });
 }
