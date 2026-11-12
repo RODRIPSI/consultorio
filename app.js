@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 71';
+const VERSAO = 'versão 72';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -486,8 +486,11 @@ function telaLista(todos = false) {
             return [
               el('span', { class: 'meta valor-editavel', role: 'button', tabindex: '0', onclick: e => { e.stopPropagation(); alterarValorSessao(c, () => telaLista(true)); } },
                 icone('moeda'), el('span', { text: t + ' ✏️' })),
-              porMes && el('span', { class: 'meta' }, icone('calendario'),
-                el('span', { text: `Paga por mês · ${nomeMes(ym).split(' ')[0].toLowerCase()}: R$ ${reais(totalMes)}${valorNum(c.valorMensal) ? ' (valor mensal)' : ` (${doMes.length} ${doMes.length === 1 ? 'sessão' : 'sessões'})`}` })),
+              // versão 72: forma de pagamento e dia combinado, para todos
+              el('span', { class: 'meta' }, icone('calendario'), el('span', { text:
+                (c.modoPagamento ? `Paga ${{ sessao: 'por sessão', semanal: 'por semana', quinzenal: 'a cada quinze dias', mensal: 'por mês' }[c.modoPagamento] || c.modoPagamento}` : 'Forma de pagamento não definida')
+                + (c.diaPagamento ? ` · dia ${c.diaPagamento}` : c.modoPagamento && c.modoPagamento !== 'sessao' ? ' · dia não definido' : '')
+                + (porMes ? ` · ${nomeMes(ym).split(' ')[0].toLowerCase()}: R$ ${reais(totalMes)}${valorNum(c.valorMensal) ? ' (valor mensal)' : ` (${doMes.length} ${doMes.length === 1 ? 'sessão' : 'sessões'})`}` : '') })),
               el('span', { class: 'meta valor-editavel ' + (deve || pend.length ? 'devendo' : 'em-dia'), role: 'button', tabindex: '0', onclick: irPag },
                 el('span', { text: pend.length ? `⚠️ Devendo R$ ${reais(deve)}${deve ? '' : ' (valor a definir)'} — ver sessões` : '✅ Em dia' })),
               // versão 70: encerrar (parou de vir) ou retomar, direto da lista
