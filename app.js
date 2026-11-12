@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 57';
+const VERSAO = 'versão 58';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -2260,6 +2260,7 @@ function telaPerfil() {
           campo('Endereço do consultório', 'endereco', { largo: true }),
           campo('Telefone', 'telefone', { tipo: 'tel' }),
           campo('E-mail', 'email', { tipo: 'email' }),
+          campo('WhatsApp do assistente (para os lembretes)', 'whatsAdm', { tipo: 'tel', dica: '(21) 99999-9999' }),
           campo('Valor da sessão (R$)', 'valorSessao', { modo: 'decimal', dica: '200,00' }),
           campo('Seu CPF (não sai nos documentos; só ajuda a conferir notas fiscais)', 'cpf', { modo: 'numeric', largo: true }))),
       cartao('Logotipo', 'imagem',
@@ -3060,9 +3061,15 @@ async function janelaLembretes(p) {
   const texto = el('textarea', { rows: '3', placeholder: 'Ex.: perguntar como foi a consulta médica' });
   const desde = el('input', { type: 'date', value: hojeISO() });
   const tel = numeroWhats(telefoneDoPaciente(p));
+  // Versão 58: dois tipos — só para mim (fica aqui, cifrado com a ficha) ou para o administrativo.
+  const lAdm = typeof lembretesAdm !== 'undefined' ? lembretesAdm.filter(l => l.pid === p.id && !l.feito) : [];
   const r = await janela(`Lembretes · ${p.nome}`, [
     lista,
-    el('label', { class: 'campo' }, el('span', { text: 'Novo lembrete' }), texto),
+    lAdm.length > 0 && el('div', { class: 'pilha-pequena' }, el('strong', { text: 'Para o administrativo' }),
+      ...lAdm.map(l => el('div', { class: 'pag-linha' }, el('span', { class: 'pag-info' }, el('span', { text: l.texto }), el('span', { class: 'suave', text: 'Aguardando o assistente' }))))),
+    typeof novoLembreteAdm === 'function' && cadastroDe(p.id) && el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => { fecharDialogos(); novoLembreteAdm(p.id); } },
+      icone('sino'), el('span', { text: 'Lembrete para o administrativo' })),
+    el('label', { class: 'campo' }, el('span', { text: 'Novo lembrete só para mim' }), texto),
     el('label', { class: 'campo' }, el('span', { text: 'Mostrar a partir de' }), desde),
     el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => abrirWhatsPaciente(p) }, icone('mensagem'),
       el('span', { text: tel ? `Abrir conversa no WhatsApp` : 'WhatsApp: celular não cadastrado' }))

@@ -8,6 +8,7 @@
 
 let cadastros = [];      // x:p:<id>
 let atendimentos = [];   // x:a:<pid>:<id>  (data, hora, presença, pagamento, valor)
+let lembretesAdm = [];   // x:l:<id>  (versão 58: lembretes do Rodrigo para o administrativo; sem dados clínicos)
 let pagamentos = [];     // x:g:<pid>:<id>  (data, valor, atendimentos pagos, comprovante, nota fiscal)
 const lapides = new Map(); // registros excluídos, guardados só como marca para a troca entre aparelhos
 let senhaTroca = null;   // senha dos arquivos trocados com o outro aparelho (guardada dentro do cofre)
@@ -25,6 +26,8 @@ const cadastroDe = id => cadastros.find(c => c.id === id) || null;
 const salvarCadastro = c => agendarSalvar(chaveCad(c), c);
 const salvarAt = a => agendarSalvar(chaveAt(a), a);
 const salvarPag = g => agendarSalvar(chavePag(g), g);
+const chaveLem = l => 'x:l:' + l.id;
+const salvarLem = l => { l.atualizadoEm = agoraISO(); agendarSalvar(chaveLem(l), l); };
 const valorPadrao = c => c?.valor || perfil?.valorSessao || '';
 const valorDe = a => valorNum(a.valor) || valorNum(valorPadrao(cadastroDe(a.pid)));
 const agoraISO = () => new Date().toISOString();
@@ -36,18 +39,19 @@ function atendimentosDe(pid) {
 const pagamentosDe = pid => pagamentos.filter(g => g.pid === pid).sort((x, y) => y.data.localeCompare(x.data) || (y.criadoEm || '').localeCompare(x.criadoEm || ''));
 
 function limparAdm() {
-  cadastros = []; atendimentos = []; pagamentos = []; lapides.clear();
+  cadastros = []; atendimentos = []; pagamentos = []; lembretesAdm = []; lapides.clear();
   senhaTroca = null; entradaIds = []; pagamentoRasc = null; verTodosAtend = false; tokenGoogle = null; importacaoDrive = null; notaRasc = null;
 }
 
 // ---------- Carregar e entrar ----------
 async function carregarAdm() {
-  const [cs, as, gs, ds] = await Promise.all([Cofre.lerTodos('x:p:'), Cofre.lerTodos('x:a:'), Cofre.lerTodos('x:g:'), Cofre.lerTodos('x:d:')]);
+  const [cs, as, gs, ds, ls] = await Promise.all([Cofre.lerTodos('x:p:'), Cofre.lerTodos('x:a:'), Cofre.lerTodos('x:g:'), Cofre.lerTodos('x:d:'), Cofre.lerTodos('x:l:')]);
   lapides.clear();
   const separar = (lista, chave) => lista.filter(o => { if (o.excluido) { lapides.set(chave(o), o); return false; } return true; });
   cadastros = cs;
   atendimentos = separar(as, chaveAt);
   pagamentos = separar(gs, chavePag);
+  lembretesAdm = ls.filter(l => !l.excluido);
   perfil = Object.assign(PERFIL_PADRAO(), (await Cofre.ler('x:perfil')) || {});
   if (modo === 'adm') assinatura = await Cofre.ler('x:assinatura');
   senhaTroca = (await Cofre.ler('x:senhatroca'))?.senha || null;
@@ -413,6 +417,7 @@ function telaInicioAdm(todos = false) {
         botaoIcone('Bloquear agora', 'cadeado', trancar), botaoIcone('Configurações', 'ajustes', () => ir({ tela: 'config' }))]
     }),
     el('div', { class: 'conteudo' },
+      !todos && cartaoLembretesAdm(),
       !todos && cartaoAvisosAgenda(),
       !todos && cartaoEntrada(),
       !todos && cartaoAniversarios(),
@@ -1338,6 +1343,7 @@ async function registrosAdm(paraBackup) {
   cadastros.forEach(c => { r[chaveCad(c)] = c; });
   atendimentos.forEach(a => { r[chaveAt(a)] = a; });
   pagamentos.forEach(g => { r[chavePag(g)] = g; });
+  lembretesAdm.forEach(l => { r[chaveLem(l)] = l; });
   for (const [k, o] of lapides) r[k] = o;
   r['x:perfil'] = perfil.atualizadoEm ? perfil : { ...perfil, atualizadoEm: '2000-01-01T00:00:00.000Z' }; // vai sempre (sem data, não passa por cima do outro lado)
   for (const d of documentos.filter(x => x.adm)) {
@@ -1349,7 +1355,7 @@ async function registrosAdm(paraBackup) {
   if (copia && (paraBackup || perfil.assinaturaNoAdm)) r['x:assinatura'] = copia;
   return r;
 }
-const CAMPOS_PROFISSIONAIS = ['nome', 'titulo', 'crp', 'clinica', 'cnpj', 'cidade', 'endereco', 'telefone', 'email', 'logo', 'nfUrl', 'nfDescricao', 'assinaturaNoAdm'];
+const CAMPOS_PROFISSIONAIS = ['nome', 'titulo', 'crp', 'clinica', 'cnpj', 'cidade', 'endereco', 'telefone', 'email', 'logo', 'nfUrl', 'nfDescricao', 'assinaturaNoAdm', 'whatsAdm'];
 async function mesclarRegistros(registros, filtro) {
   let novos = 0, atualizados = 0, mantidos = 0;
   const conteudo = k => k.startsWith('a:') || k.startsWith('x:f:');
@@ -3297,4 +3303,91 @@ async function pagarSessao(c, a) {
     [{ rotulo: 'Agora não', valor: null }, { rotulo: '📄 Recibo', valor: 'recibo' }, { rotulo: '🏛️ Nota fiscal (gov.br)', valor: 'nota', estilo: c.nf ? 'primario' : undefined }]);
   if (r2 === 'recibo') novaDeclaracao(c, { modelo: 'recibo', soPagas: true, de: a.data.slice(0, 8) + '01', ate: a.data > hojeISO() ? a.data : hojeISO() });
   if (r2 === 'nota' && g) abrirNotaFiscal(c, g);
+}
+
+
+// =====================================================================
+// Versão 58: lembretes para o administrativo.
+// O Rodrigo escreve; o lembrete vai pela sincronização para a tela inicial do celular do assistente
+// e, se ele quiser, também abre o WhatsApp do assistente com o texto pronto.
+// Ficam fora da área clínica: o aviso pede para não escrever nada clínico.
+// =====================================================================
+const lembretesAdmPendentes = () => lembretesAdm.filter(l => !l.feito && (l.desde || '') <= hojeISO())
+  .sort((a, b) => (a.desde || '').localeCompare(b.desde || '') || (a.criadoEm || '').localeCompare(b.criadoEm || ''));
+async function numeroDoAssistente(perguntar = true) {
+  if (numeroWhats(perfil.whatsAdm || '')) return numeroWhats(perfil.whatsAdm);
+  if (!perguntar) return null;
+  const r = await dialogo({ titulo: 'WhatsApp do assistente', texto: 'Digite o celular do assistente administrativo, com DDD. Fica guardado; dá para trocar em Configurações → Dados profissionais.',
+    campos: [{ rotulo: 'Celular do assistente', valor: '', inputmode: 'tel', placeholder: '(21) 99999-9999' }],
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }] });
+  if (!r || !numeroWhats(r)) return null;
+  perfil.whatsAdm = r.trim(); perfil.atualizadoEm = agoraISO(); await Cofre.salvar('x:perfil', perfil);
+  return numeroWhats(perfil.whatsAdm);
+}
+function textoLembreteAdm(l) {
+  const c = l.pid ? cadastroDe(l.pid) : null;
+  return `📌 Lembrete${c ? ' · ' + c.nome : ''}${(l.desde || '') > hojeISO() ? ' (para ' + dataCurta(l.desde) + ')' : ''}\n${l.texto}`;
+}
+async function enviarLembreteWhats(l) {
+  const n = await numeroDoAssistente();
+  if (!n) return;
+  abrirExterno(`https://wa.me/${n}?text=${encodeURIComponent(textoLembreteAdm(l))}`);
+}
+// Janela para escrever um lembrete ao administrativo (de um paciente ou geral).
+async function novoLembreteAdm(pid = null) {
+  const c = pid ? cadastroDe(pid) : null;
+  const texto = el('textarea', { rows: '3', placeholder: c ? 'Ex.: confirmar o horário de quinta' : 'Ex.: comprar papel para a impressora' });
+  const desde = el('input', { type: 'date', value: hojeISO() });
+  const temNum = !!numeroWhats(perfil.whatsAdm || '');
+  const cx = el('input', { type: 'checkbox', checked: true });
+  const r = await janela(c ? `Lembrete para o administrativo · ${c.nome}` : 'Lembrete para o administrativo', [
+    el('p', { class: 'faixa', text: 'O assistente vai ler este texto. Não escreva nada clínico.' }),
+    el('label', { class: 'campo' }, el('span', { text: 'Lembrete' }), texto),
+    el('label', { class: 'campo' }, el('span', { text: 'Mostrar a partir de' }), desde),
+    el('label', { class: 'marcar' }, cx, el('span', { text: temNum ? 'Enviar também pelo WhatsApp do assistente' : 'Enviar também pelo WhatsApp do assistente (vai pedir o número uma vez)' })),
+    el('p', { class: 'suave pequeno', text: 'Ele aparece na tela inicial do celular do assistente depois da sincronização (🔁), e lá ele marca "Feito".' })
+  ], [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Enviar lembrete', valor: true, estilo: 'primario' }]);
+  if (!r || !texto.value.trim()) return;
+  const agora = agoraISO();
+  const l = { id: crypto.randomUUID(), tipoRegistro: 'lembrete', pid: pid || null, texto: texto.value.trim(), desde: desde.value || hojeISO(), feito: false, criadoEm: agora, atualizadoEm: agora };
+  lembretesAdm.push(l); salvarLem(l);
+  await salvarAgora();
+  if (cx.checked) await enviarLembreteWhats(l);
+  indicarStatus('Lembrete enviado ao administrativo.');
+  try { if (typeof sincronizarSozinho === 'function') sincronizarSozinho(); } catch { /* sincroniza na próxima vez */ }
+  render(history.state);
+}
+function concluirLembreteAdm(l) {
+  l.feito = true; l.feitoEm = agoraISO(); l.feitoPor = modo; salvarLem(l);
+  render(history.state);
+}
+async function apagarLembreteAdm(l) {
+  const ok = await dialogo({ titulo: 'Apagar lembrete?', texto: l.texto, botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Apagar', valor: true, estilo: 'perigo' }] });
+  if (!ok) return;
+  l.excluido = true; salvarLem(l);
+  lembretesAdm = lembretesAdm.filter(x => x !== l);
+  render(history.state);
+}
+// Cartão na tela inicial do administrativo (nos dois aparelhos).
+function cartaoLembretesAdm() {
+  const itens = lembretesAdmPendentes();
+  const feitosRecentes = modo === 'dono' ? lembretesAdm.filter(l => l.feito && l.feitoEm && (Date.now() - new Date(l.feitoEm)) < 3 * 864e5) : [];
+  if (!itens.length && modo === 'adm') return null;
+  const linha = l => {
+    const c = l.pid ? cadastroDe(l.pid) : null;
+    return el('div', { class: 'pag-linha' },
+      el('span', { class: 'pag-info' }, c && el('strong', { text: c.nome }), el('span', { text: l.texto }),
+        el('span', { class: 'suave pequeno', text: `Do Rodrigo · ${dataCurta((l.criadoEm || '').slice(0, 10) || hojeISO())}` })),
+      modo === 'dono' && botaoIcone('Enviar pelo WhatsApp do assistente', 'mensagem', () => enviarLembreteWhats(l)),
+      el('button', { type: 'button', class: 'secundario compacto', text: 'Feito', onclick: () => concluirLembreteAdm(l) }));
+  };
+  return el('section', { class: 'cartao lembretes-adm' },
+    el('h3', { class: 'cartao-titulo' }, el('span', { class: 'ic-bolha' }, icone('sino')),
+      el('span', { text: modo === 'adm' ? `Lembretes do Rodrigo (${itens.length})` : `Lembretes para o administrativo (${itens.length})` })),
+    ...itens.map(linha),
+    ...feitosRecentes.map(l => el('div', { class: 'pag-linha' },
+      el('span', { class: 'pag-info' }, el('span', { class: 'suave', text: `✅ ${l.texto}` }),
+        el('span', { class: 'suave pequeno', text: l.feitoPor === 'adm' ? 'Feito pelo assistente' : 'Marcado como feito' })),
+      botaoIcone('Apagar', 'lixeira', () => apagarLembreteAdm(l)))),
+    modo === 'dono' && el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => novoLembreteAdm() }, icone('mais'), el('span', { text: 'Novo lembrete para o administrativo' })));
 }
