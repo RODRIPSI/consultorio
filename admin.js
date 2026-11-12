@@ -61,7 +61,7 @@ async function entrarAdm() {
   aparelhoComClinica = await Cofre.temClinica();
   await Cofre.garantirChavesEntrada();
   await carregarAdm();
-  history.replaceState({ tela: 'listaSemana' }, '');
+  history.replaceState({ tela: 'lista' }, '');
   if (!(await abrirEntradaSePendente())) telaInicioAdm();
 }
 
@@ -458,7 +458,7 @@ async function entrarNaClinica() {
 // ---------- Paciente, na área administrativa ----------
 function telaAdm(id, aba) {
   const c = cadastroDe(id);
-  if (!c) { render({ tela: 'listaSemana' }); return; }
+  if (!c) { render({ tela: 'lista' }); return; }
   const chips = [];
   const hs = horariosDe(c).filter(h => h.hora);
   if (hs.length) chips.push(hs.map(h => `${DIAS[h.dia].slice(0, 3)} ${horaCurta(h.hora)}`).join(', '));
@@ -1689,7 +1689,7 @@ function prepararImportacao(dados, erros) {
   }
   const datas = (dados.presenca || []).map(i => i.data).sort();
   importacaoDrive = { dados, erros, novos, completados, candidatos, nomes, escolhas, jaSalvos: new Set([...nomes.keys()].filter(k => mapa[k])),
-    controleDesde: hojeISO().slice(0, 8) + '01', arquivarInativos: !!dados.presenca, de: datas[0], ate: datas[datas.length - 1] };
+    controleDesde: hojeISO().slice(0, 8) + '01', arquivarInativos: false, de: datas[0], ate: datas[datas.length - 1] };
   ir({ tela: 'driveImportar' });
 }
 
@@ -1713,9 +1713,9 @@ function telaImportarDrive() {
   const resumo = () => {
     const faltam = [...m.nomes.keys()].filter(k => !m.escolhas[k]).length;
     const at = (m.dados.presenca || []).filter(i => i.status !== 'cancelada' && m.escolhas[norm(i.apelido)] && m.escolhas[norm(i.apelido)] !== 'ignorar').length;
-    caixaResumo.replaceChildren(
+    caixaResumo.replaceChildren(...[
       faltam ? el('p', { class: 'faixa', text: `${faltam} ${faltam === 1 ? 'nome ainda sem paciente escolhido: ele fica' : 'nomes ainda sem paciente escolhido: eles ficam'} de fora desta vez.` }) : null,
-      m.dados.presenca && el('p', { class: 'suave pequeno', text: `${at} atendimentos serão conferidos${m.de ? `, de ${dataCurta(m.de)} a ${dataCurta(m.ate)}` : ''}. Os que já estão no app não são duplicados.` }));
+      m.dados.presenca && el('p', { class: 'suave pequeno', text: `${at} atendimentos serão conferidos${m.de ? `, de ${dataCurta(m.de)} a ${dataCurta(m.ate)}` : ''}. Os que já estão no app não são duplicados.` })].filter(Boolean));
   };
   resumo();
   mostrar(
@@ -1745,7 +1745,7 @@ async function concluirImportacaoDrive() {
   const agora = agoraISO();
   const mapa = apelidos();
   const idsNovos = new Map();
-  let criados = 0, completos = 0, atNovos = 0, atAtualizados = 0, horariosDef = 0, arquivados = 0, modos = 0;
+  let criados = 0, completos = 0, atNovos = 0, atAtualizados = 0, horariosDef = 0, arquivados = 0, modos = 0, reativados = 0;
   const preencher = (c, r) => {
     let mudou = false;
     if (c.provisorio && r.nome) { if (!c.nomeLista) c.nomeLista = c.nome; c.nome = r.nome; c.provisorio = false; mudou = true; }
@@ -1804,9 +1804,13 @@ async function concluirImportacaoDrive() {
       porPaciente.set(c, lista);
     }
     for (const [c, hs] of porPaciente) { c.horarios = hs; salvarCadastro(c); horariosDef++; }
+    // Versão 34: quem aparece na lista importada está em atendimento: volta a ficar ativo se estava arquivado.
+    const naLista = new Set();
+    for (const i of itens) { const c = alvo(norm(i.apelido)); if (c) naLista.add(c.id); }
+    for (const id of naLista) { const c = cadastroDe(id); if (c?.arquivado) { c.arquivado = false; salvarCadastro(c); reativados++; const p = pacientes.find(x => x.id === id); if (p?.arquivado) { p.arquivado = false; agendarSalvar('p:' + p.id, p); } } }
     if (m.arquivarInativos) {
       const limite = somarDias(hoje, -60);
-      const ativos = new Set(atendimentos.filter(a => a.data >= limite).map(a => a.pid));
+      const ativos = new Set([...atendimentos.filter(a => a.data >= limite).map(a => a.pid), ...naLista, ...cadastros.filter(c => (c.horarios || []).length).map(c => c.id)]);
       for (const c of cadastros) if (!c.arquivado && !ativos.has(c.id)) { c.arquivado = true; salvarCadastro(c); arquivados++; }
     }
   }
@@ -1828,9 +1832,10 @@ async function concluirImportacaoDrive() {
   await aviso('Importação concluída', [
     `${criados} ${criados === 1 ? 'paciente novo' : 'pacientes novos'}, ${completos} completados.`,
     itens.length ? `${atNovos} atendimentos novos, ${atAtualizados} atualizados, horários fixos definidos para ${horariosDef}.` : '',
+    reativados ? `${reativados} ${reativados === 1 ? 'paciente arquivado voltou' : 'pacientes arquivados voltaram'} para os ativos.` : '',
     arquivados ? `${arquivados} sem atendimento nos últimos 60 dias foram arquivados (dá para desarquivar).` : '',
     modos ? `Modo ou dia de pagamento definido em ${modos} cadastros.` : ''].filter(Boolean).join(' '));
-  history.replaceState({ tela: 'listaSemana' }, ''); render(history.state);
+  history.replaceState({ tela: 'lista' }, ''); render(history.state);
 }
 
 // ---------- Tela de configuração do Drive ----------
