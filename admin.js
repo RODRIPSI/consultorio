@@ -528,6 +528,8 @@ function cartaoHorarios(c) {
               if (ok) { hs.splice(i, 1); salvar(); desenhar(); }
             }));
         }
+        if (h.fim && h.fim <= hojeISO()) return el('div', { class: 'pag-linha' },
+          el('span', { class: 'pag-info' }, el('strong', { text: `${DIAS[h.dia]}, ${horaCurta(h.hora || '')}` }), el('span', { class: 'suave', text: `Horário encerrado em ${dataCurta(h.fim)}` })));
         return el('div', { class: 'horario-linha' },
           (() => {
             const sel = el('select', { 'aria-label': 'Dia da semana' }, [1, 2, 3, 4, 5, 6, 0].map(d => el('option', { value: String(d), text: DIAS[d] })));
@@ -553,7 +555,11 @@ function cartaoHorarios(c) {
   freq.value = freqDe(c);
   freq.addEventListener('change', () => { c.frequencia = freq.value; salvar(); explicacao.textContent = FREQ_DICA[freq.value]; });
   return cartao('Horários e sessões agendadas', 'relogio',
-    el('label', { class: 'campo' }, el('span', { text: 'Frequência' }), freq), explicacao, caixa);
+    c.encerradoEm && el('p', { class: 'faixa', text: `Atendimento encerrado em ${dataCurta(c.encerradoEm)}. O paciente não aparece mais na agenda nem em "Atendendo agora"; o que ele deve continua em "Quem deve".` }),
+    el('label', { class: 'campo' }, el('span', { text: 'Frequência' }), freq), explicacao, caixa,
+    c.encerradoEm
+      ? el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => retomarAtendimento(c) }, icone('retomar'), el('span', { text: 'Retomar atendimento' }))
+      : el('button', { type: 'button', class: 'secundario perigo-texto com-icone centralizado', onclick: () => encerrarAtendimento(c) }, icone('lixeira'), el('span', { text: 'Encerrar atendimento (parou de vir)' })));
 }
 
 function abaAtendimentos(c) {
@@ -3669,4 +3675,40 @@ async function pdfFechamento(prefixo, f, titulo) {
   linhas.shift(); linhas.shift();
   const bytes = gerarPdfDocumento({ titulo: `Fechamento — ${titulo}`, texto: linhas.join('\n'), emissao: hojeISO() });
   await compartilharDocumento({ nome: `fechamento-${prefixo}.pdf`, mime: 'application/pdf', descricao: `Fechamento — ${titulo}` }, bytes);
+}
+
+
+// =====================================================================
+// Versão 70: encerrar o atendimento de quem parou de vir.
+// Os horários ganham data final, as sessões futuras saem da agenda e o paciente sai de "Atendendo agora".
+// Não é arquivado: continua em "Todos", e o que deve continua em "Quem deve" e no Fechamento, com data e valor.
+// =====================================================================
+async function encerrarAtendimento(c, aoFim) {
+  const r = await dialogo({ titulo: `Encerrar o atendimento de ${c.nome}?`,
+    texto: 'A partir da data escolhida: os horários fixos acabam, as sessões marcadas daqui para frente saem da agenda e o paciente sai de "Atendendo agora". Ele continua na lista de todos os pacientes, e o que estiver devendo continua em "Quem deve", com as datas e os valores. Dá para retomar depois.',
+    campos: [{ rotulo: 'Encerrar a partir de', tipo: 'date', valor: hojeISO() }],
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Encerrar', valor: true, estilo: 'perigo' }] });
+  if (!r) return;
+  const desde = (Array.isArray(r) ? r[0] : r) || hojeISO();
+  for (const h of horariosDe(c)) if (!h.fim || h.fim > desde) { h.fimAntes = h.fim || null; h.fim = desde; }
+  c.avulsosEncerrados = (c.avulsos || []).filter(a => a.data >= desde);
+  c.avulsos = (c.avulsos || []).filter(a => a.data < desde);
+  // sessões futuras sem presença marcada e não pagas saem; as cobradas/pagas ficam (são dívida ou histórico)
+  for (const a of atendimentosDe(c.id).filter(a => a.data >= desde && !a.presenca && a.pagamento !== 'pago' && a.pagamento !== 'areceber')) await excluirAtendimento(a);
+  c.encerradoEm = desde; c.atualizadoEm = agoraISO(); salvarCadastro(c);
+  await salvarAgora();
+  indicarStatus(`Atendimento de ${primeiroNome(c.nome)} encerrado a partir de ${dataCurta(desde)}.`);
+  if (aoFim) aoFim(); else render(history.state);
+}
+async function retomarAtendimento(c, aoFim) {
+  const ok = await dialogo({ titulo: `Retomar o atendimento de ${c.nome}?`, texto: 'Os horários fixos voltam a valer e o paciente volta para "Atendendo agora". As sessões avulsas que estavam marcadas voltam para a agenda.',
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Retomar', valor: true, estilo: 'primario' }] });
+  if (!ok) return;
+  for (const h of horariosDe(c)) if (h.fim === c.encerradoEm) { h.fim = h.fimAntes || undefined; if (!h.fim) delete h.fim; delete h.fimAntes; }
+  if (c.avulsosEncerrados?.length) { c.avulsos = [...(c.avulsos || []), ...c.avulsosEncerrados.filter(a => a.data >= hojeISO())]; }
+  delete c.avulsosEncerrados; delete c.encerradoEm;
+  c.atualizadoEm = agoraISO(); salvarCadastro(c);
+  await salvarAgora();
+  indicarStatus(`Atendimento de ${primeiroNome(c.nome)} retomado.`);
+  if (aoFim) aoFim(); else render(history.state);
 }
