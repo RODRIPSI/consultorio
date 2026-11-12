@@ -1160,8 +1160,8 @@ function secaoAdministrativo(linha, secao) {
       el('button', { type: 'button', class: 'secundario compacto', text: 'Enviar', onclick: exportarAdm })),
     linha('clipe', 'Receber dados do administrativo', 'Traz os pagamentos e a agenda que ele registrou.',
       el('button', { type: 'button', class: 'secundario compacto', text: 'Receber', onclick: importarAdm })),
-    senhaTroca && linha('cadeado', 'Senha dos arquivos lembrada', 'Usada ao enviar, receber e sincronizar. "Trocar" esquece a atual; na próxima vez o app pede uma nova.',
-      el('button', { type: 'button', class: 'secundario compacto', text: 'Trocar', onclick: esquecerSenhaTroca })));
+    linha('cadeado', 'Senha dos arquivos de troca', senhaTroca ? 'Definida e guardada neste aparelho. O administrativo digita a mesma senha uma vez, no celular dele.' : 'Ainda não definida. Crie aqui antes de enviar os dados ao administrativo.',
+      el('button', { type: 'button', class: 'secundario compacto', text: senhaTroca ? 'Trocar' : 'Criar', onclick: definirSenhaTroca })));
 }
 let temSenhaAdmCache = false;
 const telaConfigOriginal = telaConfig;
@@ -1335,6 +1335,22 @@ async function oferecerLembrarSenha(s) {
   if (!ok) return;
   senhaTroca = s.senha;
   await Cofre.salvar('x:senhatroca', { tipoRegistro: 'senhatroca', senha: s.senha, atualizadoEm: agoraISO() });
+}
+// Versão 38: criar ou trocar a senha dos arquivos direto em Configurações, já guardada neste aparelho.
+async function definirSenhaTroca() {
+  const r = await dialogo({ titulo: senhaTroca ? 'Trocar a senha dos arquivos' : 'Criar a senha dos arquivos',
+    texto: 'Ela protege o arquivo que vai para o celular do administrativo e a sincronização pelo Drive. Ele digita a mesma senha uma vez, no celular dele. Anote-a.',
+    campos: [{ rotulo: 'Nova senha (8 ou mais caracteres)', tipo: 'password', autocomplete: 'off' }, { rotulo: 'Repita a senha', tipo: 'password', autocomplete: 'off' }],
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }] });
+  if (!r) return;
+  const [a, b] = r;
+  if ((a || '').length < 8) return aviso('Senha curta', 'Use pelo menos 8 caracteres.');
+  if (a !== b) return aviso('As senhas não conferem', 'Digite a mesma senha nos dois campos.');
+  senhaTroca = a;
+  await Cofre.salvar('x:senhatroca', { tipoRegistro: 'senhatroca', senha: a, atualizadoEm: agoraISO() });
+  await salvarAgora();
+  await aviso('Senha salva', 'Agora toque em "Enviar dados ao administrativo" e mande o arquivo para ele. No celular dele, a mesma senha é pedida uma única vez.');
+  render(history.state);
 }
 async function esquecerSenhaTroca() {
   await Cofre.apagar('x:senhatroca');
