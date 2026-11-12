@@ -3337,19 +3337,23 @@ async function enviarLembreteWhats(l) {
 async function novoLembreteAdm(pid = null) {
   const c = pid ? cadastroDe(pid) : null;
   const texto = el('textarea', { rows: '3', placeholder: c ? 'Ex.: confirmar o horário de quinta' : 'Ex.: comprar papel para a impressora' });
-  const desde = el('input', { type: 'date', value: hojeISO() });
   const temNum = !!numeroWhats(perfil.whatsAdm || '');
   const cx = el('input', { type: 'checkbox', checked: true });
+  // Versão 59: sem data (vale a partir de agora) e o celular do assistente pedido aqui mesmo, se ainda não estiver salvo.
+  const telAdm = el('input', { type: 'tel', inputmode: 'tel', value: perfil.whatsAdm || '', placeholder: '(21) 99999-9999' });
   const r = await janela(c ? `Lembrete para o administrativo · ${c.nome}` : 'Lembrete para o administrativo', [
     el('p', { class: 'faixa', text: 'O assistente vai ler este texto. Não escreva nada clínico.' }),
     el('label', { class: 'campo' }, el('span', { text: 'Lembrete' }), texto),
-    el('label', { class: 'campo' }, el('span', { text: 'Mostrar a partir de' }), desde),
-    el('label', { class: 'marcar' }, cx, el('span', { text: temNum ? 'Enviar também pelo WhatsApp do assistente' : 'Enviar também pelo WhatsApp do assistente (vai pedir o número uma vez)' })),
+    el('label', { class: 'marcar' }, cx, el('span', { text: 'Enviar também pelo WhatsApp do assistente' })),
+    el('label', { class: 'campo' }, el('span', { text: temNum ? 'WhatsApp do assistente' : 'WhatsApp do assistente (digite uma vez; fica guardado)' }), telAdm),
     el('p', { class: 'suave pequeno', text: 'Ele aparece na tela inicial do celular do assistente depois da sincronização (🔁), e lá ele marca "Feito".' })
   ], [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Enviar lembrete', valor: true, estilo: 'primario' }]);
   if (!r || !texto.value.trim()) return;
+  if (telAdm.value.trim() !== (perfil.whatsAdm || '') && numeroWhats(telAdm.value)) {
+    perfil.whatsAdm = telAdm.value.trim(); perfil.atualizadoEm = agoraISO(); await Cofre.salvar('x:perfil', perfil);
+  }
   const agora = agoraISO();
-  const l = { id: crypto.randomUUID(), tipoRegistro: 'lembrete', pid: pid || null, texto: texto.value.trim(), desde: desde.value || hojeISO(), feito: false, criadoEm: agora, atualizadoEm: agora };
+  const l = { id: crypto.randomUUID(), tipoRegistro: 'lembrete', pid: pid || null, texto: texto.value.trim(), desde: hojeISO(), feito: false, criadoEm: agora, atualizadoEm: agora };
   lembretesAdm.push(l); salvarLem(l);
   await salvarAgora();
   if (cx.checked) await enviarLembreteWhats(l);

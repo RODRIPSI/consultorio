@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 58';
+const VERSAO = 'versão 59';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -3059,7 +3059,6 @@ async function janelaLembretes(p) {
     : [el('p', { class: 'suave pequeno', text: 'Nenhum lembrete para este paciente.' })]));
   desenhar();
   const texto = el('textarea', { rows: '3', placeholder: 'Ex.: perguntar como foi a consulta médica' });
-  const desde = el('input', { type: 'date', value: hojeISO() });
   const tel = numeroWhats(telefoneDoPaciente(p));
   // Versão 58: dois tipos — só para mim (fica aqui, cifrado com a ficha) ou para o administrativo.
   const lAdm = typeof lembretesAdm !== 'undefined' ? lembretesAdm.filter(l => l.pid === p.id && !l.feito) : [];
@@ -3070,12 +3069,11 @@ async function janelaLembretes(p) {
     typeof novoLembreteAdm === 'function' && cadastroDe(p.id) && el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => { fecharDialogos(); novoLembreteAdm(p.id); } },
       icone('sino'), el('span', { text: 'Lembrete para o administrativo' })),
     el('label', { class: 'campo' }, el('span', { text: 'Novo lembrete só para mim' }), texto),
-    el('label', { class: 'campo' }, el('span', { text: 'Mostrar a partir de' }), desde),
     el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => abrirWhatsPaciente(p) }, icone('mensagem'),
       el('span', { text: tel ? `Abrir conversa no WhatsApp` : 'WhatsApp: celular não cadastrado' }))
   ], [{ rotulo: 'Fechar', valor: null }, { rotulo: 'Salvar lembrete', valor: true, estilo: 'primario' }]);
   if (r && texto.value.trim()) {
-    (p.lembretes ||= []).push({ id: crypto.randomUUID(), texto: texto.value.trim(), desde: desde.value || hojeISO(), criadoEm: new Date().toISOString() });
+    (p.lembretes ||= []).push({ id: crypto.randomUUID(), texto: texto.value.trim(), desde: hojeISO(), criadoEm: new Date().toISOString() });
     agendarSalvar('p:' + p.id, p);
   }
   render(history.state);
