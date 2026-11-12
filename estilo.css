@@ -503,3 +503,7 @@ html.app-oculto #app { filter: blur(22px); }
 .lista-linha-pag > .chip { flex: none; white-space: nowrap; }
 .chip.pago-chip { color: var(--verde, #3a9a5b); }
 .mes-titulo { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; padding: .3rem 0; border-bottom: 1px solid rgba(128,128,128,.25); }
+
+/* Versão 50: quadros do relatório para reembolso (prévia) */
+.folha-quadro { border: 1px solid #222; padding: 6px 10px; margin: 10px 0 14px; }
+.folha .folha-quadro-titulo { text-align: center !important; font-weight: 700; margin: 0 0 4px; }

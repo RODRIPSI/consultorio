@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 49';
+const VERSAO = 'versão 50';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -2389,11 +2389,13 @@ const MODELOS_DOC = {
   comparecimento: 'Declaração de comparecimento',
   pessoal: 'Declaração de análise ou psicoterapia pessoal',
   relatorio: 'Relatório psicológico para reembolso',
+  reembolso: 'Relatório para reembolso em quadros (paciente, diagnóstico, justificativa)',
   recibo: 'Recibo para reembolso'
 };
 const DOC_ADM = ['comparecimento', 'recibo'];                       // os únicos que o administrativo emite e vê
 const DOC_SESSOES = ['comparecimento', 'recibo', 'pessoal', 'relatorio']; // usam os atendimentos do período
-const tituloPdf = k => ({ horarios: 'Declaração de acompanhamento', pessoal: 'Declaração', relatorio: 'Relatório psicológico', recibo: 'Recibo' }[k] || MODELOS_DOC[k] || '');
+const tituloPdf = k => ({ horarios: 'Declaração de acompanhamento', pessoal: 'Declaração', relatorio: 'Relatório psicológico', reembolso: 'Relatório psicológico para fins de reembolso', recibo: 'Recibo' }[k] || MODELOS_DOC[k] || '');
+const CONFIDENCIAL = ['relatorio', 'reembolso'];
 const DIAS_FRASE = ['aos domingos', 'às segundas-feiras', 'às terças-feiras', 'às quartas-feiras', 'às quintas-feiras', 'às sextas-feiras', 'aos sábados'];
 
 function diasHorariosDe(c) {
@@ -2423,7 +2425,9 @@ function novaDeclaracao(p, opcoes = {}) {
     // análise ou psicoterapia pessoal
     instituicao: '', processo: 'análise pessoal', emAndamento: true,
     // relatório
-    finalidadeRel: '', frequenciaRel: 'semanais', duracao: '50', demanda: '', analise: '', conclusao: '', cid: ''
+    finalidadeRel: '', frequenciaRel: 'semanais', duracao: '50', demanda: '', analise: '', conclusao: '', cid: '',
+    // relatório em quadros (versão 50)
+    estadoCivil: '', diagnostico: 'De acordo com o CID 10: ', justificativa: '', historico: '', planejamento: ''
   };
   if (modo !== 'dono' && !DOC_ADM.includes(declaracao.modelo)) declaracao.modelo = 'comparecimento';
   ir({ tela: 'declaracao', pid: p.id });
@@ -2456,6 +2460,20 @@ function textoDeclaracao(c, dc) {
     const qtd = n ? `${n} (${porExtenso(n)}) ${n === 1 ? 'sessão' : 'sessões'}` : '[número de sessões]';
     const andamento = dc.emAndamento ? '\n\nO processo encontra-se em andamento até a presente data.' : '';
     return `Declaro, para fins de comprovação${inst ? ` junto a ${inst}` : ''}, que ${id} realizou ${dc.processo} sob meus cuidados profissionais no período de ${dataCurta(dc.de)} a ${dataCurta(dc.ate)}, totalizando ${qtd}.${andamento}${fecho}`;
+  }
+  if (dc.modelo === 'reembolso') {
+    // Cada quadro é um parágrafo que começa com "### TÍTULO"; as linhas seguintes são o conteúdo do quadro.
+    const pc = pacientes.find(x => x.id === c.id) || { dados: {} };
+    const nasc = pc.dados?.nascimento || c.nascimento || '';
+    let idade = '';
+    if (nasc) { const h = new Date(), d = paraData(nasc); let a = h.getFullYear() - d.getFullYear(); if (h.getMonth() < d.getMonth() || (h.getMonth() === d.getMonth() && h.getDate() < d.getDate())) a--; idade = `${a} anos`; }
+    const dadosLinha = [nasc && `Nascimento: ${dataCurta(nasc)}`, idade && `Idade: ${idade}`, dc.estadoCivil.trim() && `Estado civil: ${dc.estadoCivil.trim()}`, dc.incluirCpf && cpf && `CPF: ${typeof formatarCpf === 'function' ? formatarCpf(cpf) : cpf}`].filter(Boolean).join('  ·  ');
+    return [
+      `### PACIENTE\nNome: ${c.nome}${dadosLinha ? '\n' + dadosLinha : ''}`,
+      `### DIAGNÓSTICO\n${dc.diagnostico.trim() || '[diagnóstico]'}`,
+      `### DESCRIÇÃO E JUSTIFICATIVA\n${dc.justificativa.trim() || '[descrição e justificativa]'}`,
+      `### HISTÓRICO\n${dc.historico.trim() || '[histórico]'}`,
+      `### PLANEJAMENTO TERAPÊUTICO\n${dc.planejamento.trim() || '[planejamento terapêutico]'}`].join('\n\n');
   }
   if (dc.modelo === 'relatorio') {
     const pc = pacientes.find(x => x.id === c.id) || { dados: {} };
@@ -2565,7 +2583,7 @@ function telaDeclaracao(pid) {
       })));
   }
 
-  const ehDeclaracao = !['recibo', 'relatorio'].includes(dc.modelo);
+  const ehDeclaracao = !['recibo', 'relatorio', 'reembolso'].includes(dc.modelo);
   const blocosModelo = [];
   if (['inicio', 'acompanhamento', 'horarios', 'relatorio'].includes(dc.modelo))
     blocosModelo.push(cartao('Início do acompanhamento', 'calendario', el('div', { class: 'grade duas' }, campoData('Data de início', 'inicio', false))));
@@ -2588,6 +2606,13 @@ function telaDeclaracao(pid) {
       campoTexto('Instituição (opcional)', 'instituicao', { placeholder: 'Ex.: instituição de formação' }),
       marcar('O processo continua em andamento', 'emAndamento'))));
   }
+  if (dc.modelo === 'reembolso')
+    blocosModelo.push(cartao('Quadros do relatório', 'texto', el('div', { class: 'grade' },
+      campoTexto('Estado civil do paciente', 'estadoCivil', { placeholder: 'Ex.: Solteiro' }),
+      caixa('Diagnóstico', 'diagnostico', 'Ex.: De acordo com o CID 10: F41.2 – …'),
+      caixa('Descrição e justificativa', 'justificativa'),
+      caixa('Histórico', 'historico'),
+      caixa('Planejamento terapêutico', 'planejamento', 'Ex.: 40 (quarenta) sessões.'))));
   if (dc.modelo === 'relatorio')
     blocosModelo.push(cartao('Partes do relatório', 'texto', el('div', { class: 'grade' },
       campoTexto('Operadora ou plano de saúde', 'finalidadeRel', { largo: true }),
@@ -2599,7 +2624,7 @@ function telaDeclaracao(pid) {
       campoTexto('CID (opcional)', 'cid', { largo: true, placeholder: 'Deixe vazio para não incluir' }))));
   if (dc.modelo !== 'recibo') {
     const extras = [];
-    if (p.cpf) extras.push(marcar(dc.modelo === 'relatorio' ? 'Incluir o CPF do paciente' : 'Incluir o CPF do paciente no texto', 'incluirCpf'));
+    if (p.cpf) extras.push(marcar(CONFIDENCIAL.includes(dc.modelo) ? 'Incluir o CPF do paciente' : 'Incluir o CPF do paciente no texto', 'incluirCpf'));
     if (ehDeclaracao) extras.push(campoTexto('Finalidade (opcional)', 'finalidade', { largo: true, placeholder: 'Ex.: apresentação ao empregador' }));
     if (extras.length) blocosModelo.push(cartao('Opções', 'tag', el('div', { class: 'grade' }, extras)));
   }
@@ -2663,8 +2688,9 @@ function folhaPrevia(p, texto, dc = null) {
   return el('div', { class: 'folha' },
     topo,
     titulo && el('h4', { text: titulo.toUpperCase() }),
-    dc?.modelo === 'relatorio' && el('p', { class: 'centro', style: 'font-style:italic;margin-top:-6px', text: 'Confidencial' }),
-    pars.map(par => par.startsWith('## ') ? el('p', { style: 'font-weight:700;margin-bottom:2px', text: par.slice(3) }) : el('p', { style: 'white-space:pre-line', text: par })),
+    CONFIDENCIAL.includes(dc?.modelo) && el('p', { class: 'centro', style: 'font-style:italic;margin-top:-6px', text: 'Confidencial' }),
+    pars.map(par => par.startsWith('### ') ? el('div', { class: 'folha-quadro' }, el('p', { class: 'folha-quadro-titulo', text: par.slice(4).split('\n')[0] }), el('p', { style: 'white-space:pre-line', text: par.split('\n').slice(1).join('\n') }))
+      : par.startsWith('## ') ? el('p', { style: 'font-weight:700;margin-bottom:2px', text: par.slice(3) }) : el('p', { style: 'white-space:pre-line', text: par })),
     dc && el('p', { class: 'folha-data', text: localEData(dc.emissao) }),
     assin,
     el('div', { class: 'folha-nome' }, el('span', { text: perfil.nome }), perfil.titulo && el('span', { text: perfil.titulo }), perfil.crp && el('span', { text: 'CRP ' + perfil.crp })),
@@ -2687,7 +2713,7 @@ async function emitirDeclaracao(p) {
     const seguir = await dialogo({ titulo: 'Sem carimbo e assinatura', texto: 'O documento sairá sem a imagem do carimbo e da assinatura. Gerar assim mesmo?', botoes: [{ rotulo: 'Voltar', valor: null }, { rotulo: 'Gerar assim', valor: true, estilo: 'primario' }] });
     if (!seguir) return;
   }
-  const bytes = gerarPdfDocumento({ titulo: tituloPdf(dc.modelo), subtitulo: dc.modelo === 'relatorio' ? 'Confidencial' : '', texto: dc.texto, emissao: dc.emissao });
+  const bytes = gerarPdfDocumento({ titulo: tituloPdf(dc.modelo), subtitulo: CONFIDENCIAL.includes(dc.modelo) ? 'Confidencial' : '', texto: dc.texto, emissao: dc.emissao });
   const titulo = MODELOS_DOC[dc.modelo];
   const periodo = !DOC_SESSOES.includes(dc.modelo) ? '' : (dc.de.slice(0, 7) === dc.ate.slice(0, 7) ? ` (${mesAno(dc.de)})` : ` (${dataCurta(dc.de)} a ${dataCurta(dc.ate)})`);
   const nomeArq = `${titulo} - ${p.nome} - ${dc.emissao}.pdf`.replace(/[\\/:*?"<>|]/g, '-');
@@ -2784,6 +2810,30 @@ function gerarPdfDocumento({ titulo, subtitulo = '', texto, emissao, anexos = []
   const TAM = 11.5, ENTRE = 18;
   const pars = texto.split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
   for (const par of pars) {
+    if (par.startsWith('### ')) { // quadro com borda: título centralizado em negrito e o conteúdo dentro (relatório para reembolso)
+      const [tit, ...resto] = par.slice(4).split('\n');
+      const PAD = 10, larguraInterna = LARG - 2 * PAD;
+      const linhas = quebrarLinhas(resto.join('\n'), TAM - 0.5, larguraInterna);
+      const altura = PAD + 16 + linhas.length * (ENTRE - 2) + PAD;
+      if (y - altura < MI + 40) { rodape(); novaPagina(); cabeca(); }
+      const topo = y + 4;
+      ops.push(`0.8 w ${ME} ${(topo - altura).toFixed(2)} ${LARG} ${altura.toFixed(2)} re S`);
+      const ct = codigos1252(tit.trim());
+      let yy = topo - PAD - 9;
+      ops.push(`BT /F2 ${TAM - 1} Tf 0 Tw ${((W - largura(ct, TAM - 1, true)) / 2).toFixed(2)} ${yy.toFixed(2)} Td ${literalPdf(ct)} Tj ET`);
+      yy -= 18;
+      const centralizar = linhas.length === 1;
+      for (const ln of linhas) {
+        const cods = codigos1252(ln.palavras.join(' '));
+        const espacos = ln.palavras.length - 1;
+        const tw = !ln.fim && espacos > 0 ? (larguraInterna - largura(cods, TAM - 0.5)) / espacos : 0;
+        const x = centralizar ? (W - largura(cods, TAM - 0.5)) / 2 : ME + PAD;
+        ops.push(`BT /F1 ${TAM - 0.5} Tf ${tw.toFixed(3)} Tw ${x.toFixed(2)} ${yy.toFixed(2)} Td ${literalPdf(cods)} Tj ET`);
+        yy -= ENTRE - 2;
+      }
+      y = topo - altura - 16;
+      continue;
+    }
     if (par.startsWith('## ')) { // subtítulo de seção (relatório)
       if (y < MI + 80) { rodape(); novaPagina(); cabeca(); }
       y -= 4;
