@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 40';
+const VERSAO = 'versão 41';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -1096,6 +1096,8 @@ async function fazerBackup() {
   }
 }
 
+// Tipos aceitos para o arquivo de troca e o backup: texto, Word, PDF e qualquer outro (*/*), para o arquivo nunca aparecer cinza.
+const ACEITA_PACOTE = '*/*,.txt,.docx,.pdf,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 function escolherArquivos({ multiplo = false, accept = '' } = {}) {
   return new Promise(resolve => {
     const input = el('input', { type: 'file', accept, multiple: multiplo });
@@ -1109,7 +1111,7 @@ function escolherArquivos({ multiplo = false, accept = '' } = {}) {
 }
 
 async function restaurarBackup() {
-  const [arquivo] = await escolherArquivos({}); // sem filtro: o WhatsApp e o Drive às vezes salvam o .txt com outro tipo, e o Android deixava o arquivo cinza
+  const [arquivo] = await escolherArquivos({ accept: ACEITA_PACOTE }); // aceita qualquer arquivo, mas abre o seletor de documentos (sem filtro, o Android abria só fotos e vídeos)
   if (!arquivo) return;
   const senha = await dialogo({
     titulo: 'Restaurar backup',
