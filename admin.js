@@ -1305,7 +1305,7 @@ async function registrosAdm(paraBackup) {
   atendimentos.forEach(a => { r[chaveAt(a)] = a; });
   pagamentos.forEach(g => { r[chavePag(g)] = g; });
   for (const [k, o] of lapides) r[k] = o;
-  if (perfil.atualizadoEm) r['x:perfil'] = perfil;
+  r['x:perfil'] = perfil.atualizadoEm ? perfil : { ...perfil, atualizadoEm: '2000-01-01T00:00:00.000Z' }; // vai sempre (sem data, não passa por cima do outro lado)
   for (const d of documentos.filter(x => x.adm)) {
     r[chaveDoc(d)] = d;
     const cont = await Cofre.ler(chaveConteudo(d));
@@ -1315,6 +1315,7 @@ async function registrosAdm(paraBackup) {
   if (copia && (paraBackup || perfil.assinaturaNoAdm)) r['x:assinatura'] = copia;
   return r;
 }
+const CAMPOS_PROFISSIONAIS = ['nome', 'titulo', 'crp', 'clinica', 'cnpj', 'cidade', 'endereco', 'telefone', 'email', 'logo', 'nfUrl', 'nfDescricao', 'assinaturaNoAdm'];
 async function mesclarRegistros(registros, filtro) {
   let novos = 0, atualizados = 0, mantidos = 0;
   const conteudo = k => k.startsWith('a:') || k.startsWith('x:f:');
@@ -1325,6 +1326,17 @@ async function mesclarRegistros(registros, filtro) {
     let atual = null;
     try { atual = await Cofre.ler(k); } catch { continue; }
     if (!atual) { await Cofre.salvar(k, o); novos++; }
+    else if (k === 'x:perfil') {
+      // Versão 51: o perfil é juntado campo a campo. Os dados profissionais (nome, CRP, logo, endereço…) valem os do aparelho do Rodrigo;
+      // nos demais campos vale o mais recente, e campo vazio nunca apaga campo preenchido.
+      const novo = (o.atualizadoEm || '') > (atual.atualizadoEm || '');
+      const [maisNovo, maisVelho] = novo ? [o, atual] : [atual, o];
+      const junto = { ...maisNovo };
+      for (const [campo, v] of Object.entries(maisVelho)) if ((junto[campo] === undefined || junto[campo] === '' || junto[campo] === null) && v !== '' && v != null) junto[campo] = v;
+      const doRodrigo = modo === 'dono' ? atual : o;
+      for (const campo of CAMPOS_PROFISSIONAIS) if (doRodrigo[campo] !== undefined && doRodrigo[campo] !== '' && doRodrigo[campo] !== null) junto[campo] = doRodrigo[campo];
+      if (JSON.stringify(junto) !== JSON.stringify(atual)) { await Cofre.salvar(k, junto); atualizados++; } else mantidos++;
+    }
     else if (!conteudo(k) && (o.atualizadoEm || '') > (atual.atualizadoEm || '')) { await Cofre.salvar(k, o); atualizados++; }
     else mantidos++;
   }
