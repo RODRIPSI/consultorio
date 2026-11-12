@@ -496,3 +496,10 @@ html.app-oculto #app { filter: blur(22px); }
 .tabela-pag td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .tabela-pag.mensais td.marca, .tabela-pag.mensais th:nth-child(n+3) { text-align: center; }
 @media (max-width: 520px) { .pag-numeros { grid-template-columns: 1fr; } }
+
+/* Versão 44: pagamento por sessão */
+.lista-linha-pag { display: flex; align-items: center; gap: .4rem; }
+.lista-linha-pag > .lista-linha { flex: 1; min-width: 0; }
+.lista-linha-pag > .chip { flex: none; white-space: nowrap; }
+.chip.pago-chip { color: var(--verde, #3a9a5b); }
+.mes-titulo { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; padding: .3rem 0; border-bottom: 1px solid rgba(128,128,128,.25); }

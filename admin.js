@@ -293,8 +293,8 @@ function cartaoAgenda() {
         const feita = sessoesDe(c.id).find(s => s.data === hoje);
         const chipSessao = feita ? el('button', { type: 'button', class: 'chip acao', text: 'Anotação feita', onclick: () => ir({ tela: 'sessao', pid: c.id, sid: feita.id }) })
           : el('button', { type: 'button', class: 'chip acao', text: 'Anotar sessão', onclick: () => { const p = pacientes.find(x => x.id === c.id); if (p) novaSessao(p); } });
-        acoes = el('span', { class: 'chips' }, chipPres, chipSessao);
-      } else acoes = chipPres;
+        acoes = el('span', { class: 'chips' }, chipPres, chipPagamentoSessao(c, atDaOcorrencia(c, dia, hora)), chipSessao);
+      } else acoes = el('span', { class: 'chips' }, chipPres, chipPagamentoSessao(c, atDaOcorrencia(c, dia, hora)));
     }
     return el('div', { class: 'agenda-linha' },
       el('span', { class: 'agenda-hora', text: horaCurta(hora) || '—' }),
@@ -684,17 +684,21 @@ function abaPagamentosAdm(c) {
       el('div', { class: 'cartao numero' }, el('small', { text: 'Recebido este mês' }), el('strong', { text: 'R$ ' + reais(r.pago) }), el('span', { class: 'suave pequeno', text: `${r.gs.length} ${r.gs.length === 1 ? 'pagamento' : 'pagamentos'}` }))),
     el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => novaDeclaracao(c, { modelo: 'recibo', soPagas: true }) }, icone('assinar'), el('span', { text: 'Recibo do mês (atendimentos pagos)' })),
     c.nf && r.nfPendente && el('p', { class: 'faixa', text: 'Há pagamento deste mês sem nota fiscal emitida. Toque no pagamento para emitir.' }),
-    cartao('A receber', 'moeda',
-      pend.length ? pend.map(a => el('div', { class: 'pag-linha' },
-        el('span', { class: 'pag-info' }, el('strong', { text: `${dataCurta(a.data)}, ${diaSemana(a.data)}` }),
-          el('span', { class: 'suave', text: `R$ ${reais(valorDe(a))}${a.presenca === 'falta' ? ' (falta cobrada)' : ''}` })),
-        el('span', { class: 'selo areceber', text: 'A receber' }))) : el('p', { class: 'suave', text: 'Nada pendente.' })),
+    cartao('Consultas ainda não pagas', 'moeda',
+      pend.length ? Object.entries(pend.reduce((m, a) => ((m[a.data.slice(0, 7)] ||= []).push(a), m), {})).sort((x, y) => y[0].localeCompare(x[0])).map(([mes, lista]) =>
+        el('div', { class: 'pilha-pequena' },
+          el('div', { class: 'mes-titulo' }, el('strong', { text: nomeMes(mes) }), el('span', { class: 'suave', text: `${lista.length} ${lista.length === 1 ? 'consulta' : 'consultas'} · R$ ${reais(lista.reduce((t, a) => t + valorDe(a), 0))}` })),
+          ...lista.sort((x, y) => x.data.localeCompare(y.data)).map(a => el('div', { class: 'pag-linha' },
+            el('span', { class: 'pag-info' }, el('strong', { text: `${dataCurta(a.data)}, ${diaSemana(a.data)}` }),
+              el('span', { class: 'suave', text: `R$ ${reais(valorDe(a))}${a.presenca === 'falta' ? ' (faltou: cobrada)' : a.presenca === 'tardia' ? ' (desmarcou em cima da hora: cobrada)' : ''}` })),
+            el('button', { type: 'button', class: 'chip acao marcado', text: 'Pagou', onclick: () => pagarSessao(c, a) })))))
+        : el('p', { class: 'suave', text: 'Nada pendente. 🎉' })),
     cartao('Pagamentos recebidos', 'sessoes',
       gs.length ? gs.slice(0, 24).map(g => el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => dialogoPagamento(c, g) },
         el('span', { class: 'pag-info' }, el('strong', { text: `R$ ${reais(valorNum(g.valor))}` }),
           el('span', { class: 'suave', text: `${dataCurta(g.data)} · ${g.atendimentos?.length || 0} ${g.atendimentos?.length === 1 ? 'atendimento' : 'atendimentos'}${g.comprovanteId ? ' · com comprovante' : ''}` })),
         (c.nf || g.nf?.emitida) && el('span', { class: 'selo ' + (g.nf?.emitida ? 'pago' : 'nota'), text: g.nf?.emitida ? 'Nota emitida' : 'Nota pendente' }))) : el('p', { class: 'suave', text: 'Nenhum pagamento registrado.' })),
-    el('p', { class: 'suave pequeno', text: 'Atendimentos com presença entram como "a receber" com o valor do cadastro. Faltas entram como "não cobrar"; dá para mudar tocando no atendimento, na aba Agenda.' }));
+    el('p', { class: 'suave pequeno', text: 'Sessões em que o paciente veio, faltou ou desmarcou com menos de 24h entram como "a receber" com o valor do cadastro. Toque em "Pagou" quando o paciente pagar. O Rodrigo pode abonar uma sessão.' }));
 }
 
 async function registrarPagamento(c, { valor, data, ids, arquivo }) {
@@ -2848,7 +2852,9 @@ function telaListaSemana(inicio) {
   const linhaEl = l => {
     const cls = 'lista-linha' + (l.saiu ? ' saiu' : '') + (l.tipo !== 'paciente' ? ' ' + l.tipo : '');
     const quando = l.tipo === 'paciente' ? () => acoesListaPaciente(l.o) : l.tipo === 'vago' ? () => acoesListaVago(l.d, l.h) : l.tipo === 'bloqueado' ? () => acoesListaBloqueado(l.d, l.h) : null;
-    return quando ? el('button', { type: 'button', class: cls, onclick: quando, text: l.texto }) : el('div', { class: cls, text: l.texto });
+    const linha = quando ? el('button', { type: 'button', class: cls, onclick: quando, text: l.texto }) : el('div', { class: cls, text: l.texto });
+    const chip = l.tipo === 'paciente' ? chipPagamentoSessao(l.o.c, l.mk.a) : null;
+    return chip ? el('div', { class: 'lista-linha-pag' }, linha, chip) : linha;
   };
   const cartaoResumo = el('section', { class: 'cartao' },
     el('h3', { class: 'secao-titulo', text: '⚠️ Resumo semanal' }),
@@ -2893,6 +2899,7 @@ async function acoesListaPaciente(o) {
   const situacao = mk.pres ? PRESENCA[mk.pres] + (a?.abonada ? ' · abonada' : '') + (a?.pagamento === 'areceber' ? ' · será cobrada' : a?.pagamento === 'pago' ? ' · paga' : a?.pagamento === 'naocobrar' ? ' · não cobrada' : '')
     : conf === 'confirmada' ? '🟢 Confirmou' : conf === 'enviada' ? '📲 Mensagem enviada' : 'Ainda sem marcação';
   const botoes = [{ rotulo: 'Fechar', valor: null }];
+  if (a?.pagamento === 'areceber') botoes.push({ rotulo: `💲 Pagou esta sessão (R$ ${reais(valorDe(a))})`, valor: 'pagar', estilo: 'primario' });
   if (!mk.pres) {
     if (conf !== 'enviada' && conf !== 'confirmada') botoes.push({ rotulo: '📲 Mensagem enviada', valor: 'enviada' });
     if (conf !== 'confirmada') botoes.push({ rotulo: '🟢 Confirmou', valor: 'confirmada' });
@@ -2908,6 +2915,7 @@ async function acoesListaPaciente(o) {
     pago && mk.pres && el('p', { class: 'suave pequeno', text: 'Já está paga: para mudar, desfaça o pagamento na aba Pagamentos.' })], botoes);
   if (!r) return;
   if (r === 'abrir') return ir(modo === 'dono' ? { tela: 'ficha', id: c.id, aba: 'retomar' } : { tela: 'adm', id: c.id, aba: 'atendimentos' });
+  if (r === 'pagar') return pagarSessao(c, a);
   if (r === 'enviada' || r === 'confirmada') { marcarConfirmacao(c, o.data, o.hora, r); return render(history.state); }
   if (r === 'realizada' || r === 'falta') return definirPresencaLista(o, r);
   if (r === 'desmarcou') {
@@ -3142,4 +3150,27 @@ function telaMesAba(ym) {
   mostrar(cabecalho('Pagamentos', { voltar: true }),
     el('div', { class: 'conteudo pilha' }, segmentoAbasMes(ym), abaMes !== 'devendo' && nav, ...corpo),
     el('button', { type: 'button', class: 'fab estendido', onclick: () => { pagamentoRasc = null; ir({ tela: 'pagar' }); } }, icone('mais'), el('span', { text: 'Registrar pagamento' })));
+}
+
+// =====================================================================
+// Versão 44: pagamento de cada sessão, direto onde a presença é marcada.
+// Veio / faltou / desmarcou em cima da hora → a sessão fica "a receber" com o valor do cadastro;
+// um toque em "Pagou" registra o pagamento daquela sessão (entra na Lista do mês e sai de "Quem deve").
+// =====================================================================
+function chipPagamentoSessao(c, a) {
+  if (!a || !a.pagamento) return null;
+  if (a.pagamento === 'pago') return el('span', { class: 'chip pago-chip', text: `✅ Pago R$ ${reais(valorDe(a))}` });
+  if (a.pagamento === 'areceber') return el('button', { type: 'button', class: 'chip acao marcado', 'aria-label': `Registrar pagamento da sessão de ${c.nome}`, text: `R$ ${reais(valorDe(a))} · Pagou?`, onclick: e => { e.stopPropagation(); pagarSessao(c, a); } });
+  return a.presenca ? el('span', { class: 'chip', text: a.abonada ? '🤝 Abonada' : 'Não cobra' }) : null;
+}
+async function pagarSessao(c, a) {
+  const r = await dialogo({ titulo: 'Pagamento desta sessão', texto: `${c.nome} · sessão de ${dataComDia(a.data)}${a.hora ? ', ' + horaCurta(a.hora) : ''}.`,
+    campos: [{ rotulo: 'Valor pago (R$)', valor: reais(valorDe(a)) }, { rotulo: 'Data do pagamento', tipo: 'date', valor: hojeISO() }],
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Registrar', valor: true, estilo: 'primario' }] });
+  if (!r) return;
+  const [valor, data] = r;
+  if (!valorNum(valor)) return aviso('Falta o valor', 'Digite quanto foi pago.');
+  await registrarPagamento(c, { valor, data: data || hojeISO(), ids: [a.id] });
+  indicarStatus('Pagamento registrado');
+  render(history.state);
 }
