@@ -510,3 +510,11 @@ html.app-oculto #app { filter: blur(22px); }
 .meta.valor-editavel { text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
 .meta.devendo { color: var(--perigo); font-weight: 600; }
 .meta.em-dia { text-decoration: none; }
+/* versão 68: fechamento mensal e anual */
+.barra-fechamento { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, currentColor 12%, transparent); width: 100%; margin-top: 6px; }
+.barra-preenchida.ok { background: #3fae6a; }
+.barra-preenchida.alerta { background: #d9534f; }
+.linha-fechamento { display: grid; grid-template-columns: 3rem 1fr; gap: 4px 12px; align-items: center; width: 100%; padding: 10px 0; background: none; border: 0; border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.linha-fechamento .barra-fechamento { margin: 0; }
+.linha-fechamento > span.pequeno { grid-column: 2; }
+.texto-alerta { color: var(--perigo, #d9534f); }

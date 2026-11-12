@@ -655,7 +655,7 @@ function totaisMes(ym) {
 
 let filtroMes = 'todos';
 let abaMes = 'resumo';
-const ABAS_MES = { resumo: 'Resumo', devendo: 'Quem deve', lista: 'Lista do mês', mensais: 'Mensais', recibos: 'Recibos' };
+const ABAS_MES = { fechamento: 'Fechamento', resumo: 'Resumo', devendo: 'Quem deve', lista: 'Lista do mês', mensais: 'Mensais', recibos: 'Recibos' };
 const pedeRecibo = c => !c.arquivado && !!(c.recibo || c.nf);
 function telaMes(ym) {
   if (abaMes !== 'resumo') return telaMesAba(ym);
@@ -3168,6 +3168,7 @@ function cartaoPagamentosInicio(ym, tot) {
       caixa('Em atraso (meses anteriores)', tot.anteriores, emAtraso.length ? `${emAtraso.length} ${emAtraso.length === 1 ? 'paciente' : 'pacientes'}` : 'ninguém', tot.anteriores > 0 ? 'alerta' : '')),
     el('div', { class: 'botoes-linha' },
       el('button', { type: 'button', class: 'secundario compacto', text: `Quem deve (${ds.length})`, onclick: () => { abaMes = 'devendo'; ir({ tela: 'mes' }); } }),
+      el('button', { type: 'button', class: 'primario compacto', text: 'Fechamento', onclick: () => { abaMes = 'fechamento'; ir({ tela: 'mes' }); } }),
       el('button', { type: 'button', class: 'secundario compacto', text: 'Lista do mês', onclick: () => { abaMes = 'lista'; ir({ tela: 'mes' }); } }),
       el('button', { type: 'button', class: 'secundario compacto', text: 'Mensais', onclick: () => { abaMes = 'mensais'; ir({ tela: 'mes' }); } }),
       el('button', { type: 'button', class: 'secundario compacto', text: `Recibos (${cadastros.filter(pedeRecibo).length})`, onclick: () => { abaMes = 'recibos'; ir({ tela: 'mes' }); } })));
@@ -3180,7 +3181,8 @@ function telaMesAba(ym) {
     el('strong', { text: abaMes === 'mensais' ? 'Últimos 12 meses' : nomeMes(ym) }),
     el('button', { type: 'button', class: 'secundario compacto com-icone', disabled: ym >= hojeISO().slice(0, 7), onclick: () => ir({ tela: 'mes', ym: somarMeses(ym, 1) }, false) }, el('span', { text: 'Seguinte' }), icone('seguinte')));
   let corpo;
-  if (abaMes === 'devendo') {
+  if (abaMes === 'fechamento') corpo = corpoFechamento(ym);
+  else if (abaMes === 'devendo') {
     const ds = devedores(), total = ds.reduce((t, x) => t + x.total, 0);
     corpo = [
       el('div', { class: 'cartao destaque total-clinica' }, el('small', { text: 'Total em aberto (sessões já realizadas ou cobradas)' }), el('strong', { text: 'R$ ' + reais(total) }),
@@ -3267,7 +3269,7 @@ function telaMesAba(ym) {
       el('p', { class: 'suave pequeno', text: 'É o quadro de "Pagamentos mensais", preenchido sozinho. DT é o dia combinado de pagamento (no cadastro do paciente).' })];
   }
   mostrar(cabecalho('Pagamentos', { voltar: true }),
-    el('div', { class: 'conteudo pilha' }, segmentoAbasMes(ym), abaMes !== 'devendo' && nav, ...corpo),
+    el('div', { class: 'conteudo pilha' }, segmentoAbasMes(ym), abaMes !== 'devendo' && abaMes !== 'fechamento' && nav, ...corpo),
     el('button', { type: 'button', class: 'fab estendido', onclick: () => { pagamentoRasc = null; ir({ tela: 'pagar' }); } }, icone('mais'), el('span', { text: 'Registrar pagamento' })));
 }
 
@@ -3568,4 +3570,103 @@ async function autoImportarForms(token) {
   salvarUltimo();
   if (novos || atualizados) { salvarPerfil(); await salvarAgora(); if (modo === 'dono') { await sincronizarCadastros(); await salvarAgora(); } }
   return { novos, atualizados, nomes };
+}
+
+
+// =====================================================================
+// Versão 68: Fechamento — mensal e anual.
+// Previsto = sessões cobráveis do período (veio, faltou, desmarcou em cima da hora; não conta "Não cobra").
+// Recebido = dessas sessões, as que já foram pagas. Não recebido = as que continuam a receber.
+// Entrou no caixa = pagamentos registrados no período (inclui o que pagaram de meses anteriores).
+// =====================================================================
+let fechamentoAno = false;
+function calcularFechamento(prefixo) {   // prefixo 'aaaa-mm' (mês) ou 'aaaa' (ano)
+  const ats = atendimentos.filter(a => a.data.startsWith(prefixo) && !cadastroDe(a.pid)?.excluido);
+  const cobraveis = ats.filter(a => a.pagamento === 'areceber' || a.pagamento === 'pago');
+  const soma = l => l.reduce((t, a) => t + valorDe(a), 0);
+  const pagas = cobraveis.filter(a => a.pagamento === 'pago'), abertas = cobraveis.filter(a => a.pagamento === 'areceber');
+  const naoCobradas = ats.filter(a => a.pagamento === 'naocobrar' && ['realizada', 'falta', 'tardia'].includes(a.presenca));
+  const r = {
+    previsto: soma(cobraveis), recebido: soma(pagas), naoRecebido: soma(abertas), qtdPrevisto: cobraveis.length, qtdAbertas: abertas.length,
+    naoCobradas: soma(naoCobradas), qtdNaoCobradas: naoCobradas.length,
+    desmarcadas: ats.filter(a => a.presenca === 'cancelada' || a.presenca === 'remarcada').length,
+    realizadas: ats.filter(a => a.presenca === 'realizada').length, faltas: ats.filter(a => a.presenca === 'falta' || a.presenca === 'tardia').length,
+    caixa: pagamentos.filter(g => g.data.startsWith(prefixo)).reduce((t, g) => t + valorNum(g.valor), 0)
+  };
+  const porPac = new Map();
+  for (const a of abertas) { const x = porPac.get(a.pid) || { c: cadastroDe(a.pid), total: 0, n: 0 }; x.total += valorDe(a); x.n++; porPac.set(a.pid, x); }
+  r.devedores = [...porPac.values()].filter(x => x.c).sort((a, b) => b.total - a.total);
+  r.pct = r.previsto ? Math.round(r.recebido / r.previsto * 100) : 0;
+  return r;
+}
+function corpoFechamento(ym) {
+  const ano = ym.slice(0, 4), hojeYm = hojeISO().slice(0, 7);
+  const prefixo = fechamentoAno ? ano : ym;
+  const f = calcularFechamento(prefixo);
+  const titulo = fechamentoAno ? `Ano de ${ano}` : nomeMes(ym);
+  const passo = fechamentoAno ? 12 : 1;
+  const nav = el('div', { class: 'navega' },
+    el('button', { type: 'button', class: 'secundario compacto com-icone', onclick: () => ir({ tela: 'mes', ym: somarMeses(ym, -passo) }, false) }, icone('voltar'), el('span', { text: 'Anterior' })),
+    el('strong', { text: titulo }),
+    el('button', { type: 'button', class: 'secundario compacto com-icone', disabled: fechamentoAno ? ano >= hojeYm.slice(0, 4) : ym >= hojeYm, onclick: () => { const alvo = somarMeses(ym, passo); ir({ tela: 'mes', ym: alvo > hojeYm ? hojeYm : alvo }, false); } }, el('span', { text: 'Seguinte' }), icone('seguinte')));
+  const caixa = (rot, valor, extra, cls = '') => el('div', { class: 'cartao numero ' + cls }, el('small', { text: rot }), el('strong', { text: 'R$ ' + reais(valor) }), extra && el('span', { class: 'suave pequeno', text: extra }));
+  const barra = (pct, cls) => { const b = el('span', { class: 'barra-preenchida ' + cls }); b.style.width = Math.max(0, Math.min(100, pct)) + '%'; return b; };
+  const partes = [
+    segmentoEscolha({ mes: 'Mensal', ano: 'Anual' }, fechamentoAno ? 'ano' : 'mes', k => { fechamentoAno = k === 'ano'; telaMes(ym); }, 'dois'),
+    nav,
+    el('div', { class: 'cartao destaque total-clinica' },
+      el('small', { text: `Recebido das sessões de ${fechamentoAno ? ano : nomeMes(ym).split(' ')[0].toLowerCase()}` }),
+      el('strong', { text: 'R$ ' + reais(f.recebido) }),
+      el('span', { text: f.previsto ? `${f.pct}% do previsto (R$ ${reais(f.previsto)})` : 'Nenhuma sessão cobrável no período' }),
+      f.previsto > 0 && el('span', { class: 'barra-fechamento' }, barra(f.pct, 'ok'), barra(100 - f.pct, 'alerta'))),
+    el('div', { class: 'resumo-fin' },
+      caixa('Previsto', f.previsto, `${f.qtdPrevisto} ${f.qtdPrevisto === 1 ? 'sessão cobrável' : 'sessões cobráveis'}`),
+      caixa('Não recebido', f.naoRecebido, f.qtdAbertas ? `${f.qtdAbertas} ${f.qtdAbertas === 1 ? 'sessão' : 'sessões'} · ${f.devedores.length} ${f.devedores.length === 1 ? 'paciente' : 'pacientes'}` : 'tudo pago', f.naoRecebido ? 'alerta' : 'ok')),
+    el('div', { class: 'resumo-fin' },
+      caixa('Entrou no caixa', f.caixa, 'pagamentos feitos no período, inclusive de meses anteriores'),
+      caixa('Não cobradas', f.naoCobradas, f.qtdNaoCobradas ? `${f.qtdNaoCobradas} ${f.qtdNaoCobradas === 1 ? 'sessão abonada' : 'sessões abonadas'}` : 'nenhuma')),
+    el('p', { class: 'suave pequeno', text: `Sessões: ${f.realizadas} ${f.realizadas === 1 ? 'realizada' : 'realizadas'} · ${f.faltas} ${f.faltas === 1 ? 'falta cobrável' : 'faltas cobráveis'} · ${f.desmarcadas} ${f.desmarcadas === 1 ? 'desmarcada com aviso ou remarcada' : 'desmarcadas com aviso ou remarcadas'} (não entram na conta).` })];
+  if (fechamentoAno) {
+    const linhasMes = [];
+    for (let m = 1; m <= 12; m++) {
+      const p = `${ano}-${String(m).padStart(2, '0')}`;
+      if (p > hojeYm) break;
+      const x = calcularFechamento(p);
+      linhasMes.push(el('button', { type: 'button', class: 'linha-fechamento', onclick: () => { fechamentoAno = false; ir({ tela: 'mes', ym: p }, false); } },
+        el('strong', { text: MESES_CURTOS[m - 1] }),
+        el('span', { class: 'barra-fechamento' }, x.previsto ? barra(x.pct, 'ok') : null, x.previsto ? barra(100 - x.pct, 'alerta') : null),
+        el('span', { class: 'pequeno', text: x.previsto ? `R$ ${reais(x.recebido)} de R$ ${reais(x.previsto)}` : '—' }),
+        el('span', { class: 'pequeno ' + (x.naoRecebido ? 'texto-alerta' : 'suave'), text: x.naoRecebido ? `falta R$ ${reais(x.naoRecebido)}` : x.previsto ? 'tudo pago' : '' })));
+    }
+    partes.push(cartao('Mês a mês', 'calendario', el('p', { class: 'suave pequeno', text: 'Verde: recebido. Vermelho: não recebido. Toque no mês para ver o fechamento dele.' }), ...linhasMes));
+  }
+  partes.push(cartao(fechamentoAno ? `Quem não pagou em ${ano}` : 'Quem não pagou neste mês', 'moeda',
+    f.devedores.length ? f.devedores.map(x => el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => ir({ tela: 'adm', id: x.c.id, aba: 'pagamentos' }) },
+      el('span', { class: 'pag-info' }, el('strong', { text: x.c.nome }), el('span', { class: 'suave', text: `${x.n} ${x.n === 1 ? 'sessão' : 'sessões'}` })),
+      el('strong', { class: 'texto-alerta', text: x.total ? 'R$ ' + reais(x.total) : 'valor a definir' })))
+      : el('p', { class: 'suave', text: 'Ninguém deve sessões deste período. 🎉' })));
+  partes.push(el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => pdfFechamento(prefixo, f, titulo) }, icone('assinar'), el('span', { text: 'Gerar PDF do fechamento' })));
+  return partes;
+}
+async function pdfFechamento(prefixo, f, titulo) {
+  const linhas = [`Fechamento — ${titulo}`, perfil.clinica || perfil.nome || '', '',
+    `Previsto (sessões cobráveis): R$ ${reais(f.previsto)} (${f.qtdPrevisto} sessões)`,
+    `Recebido dessas sessões: R$ ${reais(f.recebido)} (${f.pct}%)`,
+    `Não recebido: R$ ${reais(f.naoRecebido)} (${f.qtdAbertas} sessões)`,
+    `Entrou no caixa no período: R$ ${reais(f.caixa)}`,
+    `Não cobradas (abonadas): R$ ${reais(f.naoCobradas)} (${f.qtdNaoCobradas} sessões)`,
+    `Sessões: ${f.realizadas} realizadas · ${f.faltas} faltas cobráveis · ${f.desmarcadas} desmarcadas/remarcadas`, ''];
+  if (prefixo.length === 4) {
+    linhas.push('Mês a mês:');
+    for (let m = 1; m <= 12; m++) { const p = `${prefixo}-${String(m).padStart(2, '0')}`; if (p > hojeISO().slice(0, 7)) break; const x = calcularFechamento(p);
+      linhas.push(`  ${MESES_CURTOS[m - 1]}: previsto R$ ${reais(x.previsto)} · recebido R$ ${reais(x.recebido)} · não recebido R$ ${reais(x.naoRecebido)}`); }
+    linhas.push('');
+  }
+  linhas.push('Quem não pagou:');
+  for (const x of f.devedores) linhas.push(`  ${x.c.nome}: R$ ${reais(x.total)} (${x.n} ${x.n === 1 ? 'sessão' : 'sessões'})`);
+  if (!f.devedores.length) linhas.push('  ninguém');
+  linhas.push('', `Gerado em ${dataCurta(hojeISO())}.`);
+  linhas.shift(); linhas.shift();
+  const bytes = gerarPdfDocumento({ titulo: `Fechamento — ${titulo}`, texto: linhas.join('\n'), emissao: hojeISO() });
+  await compartilharDocumento({ nome: `fechamento-${prefixo}.pdf`, mime: 'application/pdf', descricao: `Fechamento — ${titulo}` }, bytes);
 }
