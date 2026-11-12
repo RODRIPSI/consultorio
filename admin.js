@@ -695,7 +695,7 @@ function abaPagamentosAdm(c) {
     el('div', { class: 'resumo-fin' },
       el('div', { class: 'cartao numero' }, el('small', { text: 'A receber' }), el('strong', { text: 'R$ ' + reais(totalPend) }), el('span', { class: 'suave pequeno', text: `${pend.length} ${pend.length === 1 ? 'atendimento' : 'atendimentos'}` })),
       el('div', { class: 'cartao numero' }, el('small', { text: 'Recebido este mês' }), el('strong', { text: 'R$ ' + reais(r.pago) }), el('span', { class: 'suave pequeno', text: `${r.gs.length} ${r.gs.length === 1 ? 'pagamento' : 'pagamentos'}` }))),
-    el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => novaDeclaracao(c, { modelo: 'recibo', soPagas: true }) }, icone('assinar'), el('span', { text: 'Recibo do mês (atendimentos pagos)' })),
+    el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => escolherRecibo(c, { soPagas: true }) }, icone('assinar'), el('span', { text: 'Recibo ou nota fiscal' })),
     c.nf && r.nfPendente && el('p', { class: 'faixa', text: 'Há pagamento deste mês sem nota fiscal emitida. Toque no pagamento para emitir.' }),
     cartao('Consultas ainda não pagas', 'moeda',
       pend.length ? Object.entries(pend.reduce((m, a) => ((m[a.data.slice(0, 7)] ||= []).push(a), m), {})).sort((x, y) => y[0].localeCompare(x[0])).map(([mes, lista]) =>
@@ -887,6 +887,31 @@ function descricaoNota(c, g) {
   const ats = atendimentos.filter(a => (g.atendimentos || []).includes(a.id)).sort((a, b) => a.data.localeCompare(b.data));
   const datas = ats.length ? listaNatural(ats.map(a => dataCurta(a.data))) : dataCurta(g.data);
   return (perfil.nfDescricao || '').replaceAll('{datas}', datas).replaceAll('{nome}', c.nome).replaceAll('{mes}', nomeMes(g.data.slice(0, 7)).toLowerCase());
+}
+// Versão 56: "Recibo" oferece os dois jeitos — recibo feito no aplicativo ou nota fiscal no site do governo (Emissor Nacional).
+async function escolherRecibo(c, opcoes = {}) {
+  const r = await janela('Recibo', [el('p', { text: c.nome }),
+    el('p', { class: 'suave pequeno', text: 'Recibo do aplicativo: sai em PDF com seu logo e dados, pronto para enviar. Nota fiscal: abre o site do governo; depois de emitir, anexe a nota e envie ao paciente pelo WhatsApp.' })],
+    [{ rotulo: 'Fechar', valor: null }, { rotulo: '🏛️ Nota fiscal (site)', valor: 'nota' }, { rotulo: '📄 Recibo do aplicativo', valor: 'recibo', estilo: 'primario' }]);
+  if (r === 'recibo') return novaDeclaracao(c, { modelo: 'recibo', soPagas: !!opcoes.soPagas });
+  if (r !== 'nota') return;
+  const gs = pagamentosDe(c.id);
+  const semNota = gs.filter(g => !g.nf?.emitida);
+  const candidatos = (semNota.length ? semNota : gs).slice(0, 5);
+  if (candidatos.length === 1) return abrirNotaFiscal(c, candidatos[0]);
+  if (!candidatos.length) {   // nenhum pagamento registrado: só abre o site e depois oferece guardar a nota
+    abrirExterno(/^https:\/\//.test(perfil.nfUrl || '') ? perfil.nfUrl : 'https://www.nfse.gov.br/EmissorNacional/Login');
+    setTimeout(async () => {
+      if (!Cofre.aberto()) return;
+      const q = await janela('Nota emitida?', [el('p', { text: 'Se já emitiu, anexe o PDF da nota: ela fica guardada e dá para enviar ao paciente.' })],
+        [{ rotulo: 'Agora não', valor: null }, { rotulo: 'Anexar a nota', valor: true, estilo: 'primario' }]);
+      if (q) anexarNota(c, null);
+    }, 1500);
+    return;
+  }
+  const g = await janela('Nota de qual pagamento?', [el('p', { class: 'suave pequeno', text: semNota.length ? 'Pagamentos ainda sem nota fiscal:' : 'Todos já têm nota. Escolha um para emitir de novo:' })],
+    [{ rotulo: 'Fechar', valor: null }, ...candidatos.map(x => ({ rotulo: `${dataCurta(x.data)} · R$ ${reais(valorNum(x.valor))}`, valor: x }))]);
+  if (g) abrirNotaFiscal(c, g);
 }
 async function abrirNotaFiscal(c, g) {
   const tomador = (c.pagador || '').trim() || c.nome;
@@ -1106,7 +1131,7 @@ function abaDocumentosAdm(c) {
   return el('div', { class: 'pilha' },
     el('div', { class: 'botoes-linha' },
       el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => novaDeclaracao(c) }, icone('assinar'), el('span', { text: 'Declaração de comparecimento' })),
-      el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => novaDeclaracao(c, { modelo: 'recibo' }) }, icone('moeda'), el('span', { text: 'Recibo' })),
+      el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => escolherRecibo(c) }, icone('moeda'), el('span', { text: 'Recibo' })),
       // Versão 55: a declaração de reembolso tem diagnóstico; por sigilo, só aparece no aparelho do Rodrigo.
       modo === 'dono' && el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => novaDeclaracao(c, { modelo: 'reembolso' }) }, icone('assinar'), el('span', { text: 'Declaração de reembolso' }))),
     modo === 'adm' && !assinatura && el('p', { class: 'faixa', text: 'Os documentos saem sem a imagem da assinatura, para Rodrigo assinar à mão ou pelo gov.br.' }),
