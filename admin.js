@@ -77,6 +77,7 @@ async function recarregarTudo() {
 function renderAdm(s) {
   if (s.tela === 'adm') { telaAdm(s.id, s.aba || 'atendimentos'); return true; }
   if (s.tela === 'admInicio') { telaInicioAdm(); return true; }
+  if (s.tela === 'admPacientes') { telaInicioAdm(true); return true; }
   if (s.tela === 'mes') { telaMes(s.ym || hojeISO().slice(0, 7)); return true; }
   if (s.tela === 'pagar') { telaPagar(s); return true; }
   if (s.tela === 'notaRecebida') { telaNotaRecebida(s); return true; }
@@ -375,14 +376,20 @@ async function abrirEntradaSePendente() {
 }
 
 // ---------- Tela inicial do administrativo ----------
-function telaInicioAdm() {
+// Versão 48: a tela inicial mostra só o resumo; a lista completa fica em "Todos os pacientes".
+function telaInicioAdm(todos = false) {
+  if (!todos) verArquivadosAdm = false;
   const busca = el('input', { type: 'search', placeholder: 'Procurar pelo nome', 'aria-label': 'Procurar paciente pelo nome' });
   const lista = el('div', { class: 'cartoes' });
   const ym = hojeISO().slice(0, 7);
   const desenhar = () => {
     const q = semAcento(busca.value.trim());
-    const itens = cadastros.filter(c => !!c.arquivado === verArquivadosAdm && (!q || semAcento(c.nome).includes(q)))
+    let itens = cadastros.filter(c => !!c.arquivado === verArquivadosAdm && (!q || semAcento(c.nome).includes(q)))
       .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    if (!todos && cadastros.length) {
+      if (!q) { lista.replaceChildren(); return; }   // na tela inicial, os nomes só aparecem quando a pessoa digita
+      itens = itens.slice(0, 8);
+    }
     lista.replaceChildren(...itens.map(c => {
       const px = proximoHorario(c);
       const r = resumoMes(c, ym);
@@ -400,27 +407,31 @@ function telaInicioAdm() {
   busca.addEventListener('input', desenhar);
   const tot = totaisMes(ym);
   mostrar(
-    cabecalho(modo === 'adm' ? 'Consultório' : 'Administrativo', {
+    todos ? cabecalho(verArquivadosAdm ? 'Arquivados' : 'Todos os pacientes', { voltar: true, sub: `${cadastros.filter(c => !c.arquivado).length} ativos` }) : cabecalho(modo === 'adm' ? 'Consultório' : 'Administrativo', {
       grande: modo === 'adm', voltar: modo === 'dono', sub: modo === 'adm' ? 'Área administrativa' : null,
       acoes: [botaoSincronizar(), botaoConfirmacoes(), botaoAgenda(), botaoIcone('Pagamentos do mês', 'moeda', () => ir({ tela: 'mes' })),
         botaoIcone('Bloquear agora', 'cadeado', trancar), botaoIcone('Configurações', 'ajustes', () => ir({ tela: 'config' }))]
     }),
     el('div', { class: 'conteudo' },
-      !verArquivadosAdm && cartaoAvisosAgenda(),
-      !verArquivadosAdm && cartaoEntrada(),
-      !verArquivadosAdm && cartaoAniversarios(),
-      !verArquivadosAdm && cartaoVencidos(),
-      !verArquivadosAdm && cartaoSemNota(),
-      !verArquivadosAdm && cartaoAgenda(),
-      !verArquivadosAdm && cartaoPagamentosInicio(ym, tot),
+      !todos && cartaoAvisosAgenda(),
+      !todos && cartaoEntrada(),
+      !todos && cartaoAniversarios(),
+      !todos && cartaoVencidos(),
+      !todos && cartaoSemNota(),
+      !todos && cartaoAgenda(),
+      !todos && cartaoPagamentosInicio(ym, tot),
       el('label', { class: 'campo-busca' }, icone('busca'), busca),
       lista,
+      !todos && cadastros.length > 0 && el('button', { type: 'button', class: 'cartao paciente todos-pacientes', onclick: () => ir({ tela: 'admPacientes' }) },
+        el('span', { class: 'ic-bolha' }, icone('pessoa')),
+        el('span', { class: 'info' }, el('span', { class: 'nome', text: 'Todos os pacientes' }), el('span', { class: 'meta' }, el('span', { text: `${cadastros.filter(c => !c.arquivado).length} ativos · arquivados` }))),
+        icone('seguinte')),
       el('div', { class: 'atalhos' },
-        el('button', { type: 'button', class: 'atalho', onclick: () => { verArquivadosAdm = !verArquivadosAdm; telaInicioAdm(); } },
+        el('button', { type: 'button', class: 'atalho', onclick: () => { if (!todos) { verArquivadosAdm = true; ir({ tela: 'admPacientes' }); return; } verArquivadosAdm = !verArquivadosAdm; telaInicioAdm(true); } },
           el('span', { class: 'ic-bolha' }, icone(verArquivadosAdm ? 'pessoa' : 'caixa')), el('span', { text: verArquivadosAdm ? 'Pacientes ativos' : 'Arquivados' })),
-        el('button', { type: 'button', class: 'atalho', onclick: () => ir({ tela: 'drive' }) },
+        !todos && el('button', { type: 'button', class: 'atalho', onclick: () => ir({ tela: 'drive' }) },
           el('span', { class: 'ic-bolha' }, icone('retomar')), el('span', { text: 'Google Drive' })),
-        modo === 'adm' && aparelhoComClinica && el('button', { type: 'button', class: 'atalho', onclick: entrarNaClinica },
+        !todos && modo === 'adm' && aparelhoComClinica && el('button', { type: 'button', class: 'atalho', onclick: entrarNaClinica },
           el('span', { class: 'ic-bolha' }, icone('cadeado')), el('span', { text: 'Área clínica' })))),
     !verArquivadosAdm && el('button', { type: 'button', class: 'fab', 'aria-label': 'Novo paciente', title: 'Novo paciente', onclick: novoPacienteAdm }, icone('mais'))
   );
