@@ -2899,7 +2899,7 @@ async function acoesListaPaciente(o) {
   const situacao = mk.pres ? PRESENCA[mk.pres] + (a?.abonada ? ' · abonada' : '') + (a?.pagamento === 'areceber' ? ' · será cobrada' : a?.pagamento === 'pago' ? ' · paga' : a?.pagamento === 'naocobrar' ? ' · não cobrada' : '')
     : conf === 'confirmada' ? '🟢 Confirmou' : conf === 'enviada' ? '📲 Mensagem enviada' : 'Ainda sem marcação';
   const botoes = [{ rotulo: 'Fechar', valor: null }];
-  if (a?.pagamento === 'areceber') botoes.push({ rotulo: `✅ Pagou esta sessão (R$ ${reais(valorDe(a))})`, valor: 'pagar', estilo: 'primario' });
+  if (a?.pagamento === 'areceber') botoes.push({ rotulo: valorDe(a) ? `✅ Pagou esta sessão (R$ ${reais(valorDe(a))})` : '✅ Pagou esta sessão', valor: 'pagar', estilo: 'primario' });
   if (!mk.pres) {
     if (conf !== 'enviada' && conf !== 'confirmada') botoes.push({ rotulo: '📲 Mensagem enviada', valor: 'enviada' });
     if (conf !== 'confirmada') botoes.push({ rotulo: '🟢 Confirmou', valor: 'confirmada' });
@@ -3104,8 +3104,8 @@ function telaMesAba(ym) {
           el('span', { class: 'meta' },
             x.atraso > 0 ? el('span', { class: 'selo areceber', text: `Em atraso R$ ${reais(x.atraso)}` }) : el('span', { class: 'selo parcial', text: 'Deste mês' }),
             el('span', { text: `${x.pend.length} ${x.pend.length === 1 ? 'sessão' : 'sessões'} desde ${ddmm(x.desde)}` }),
-            !valorNum(x.c.valor) && el('span', { class: 'selo nota', text: 'Sem valor no cadastro' }))),
-        el('strong', { class: 'valor-lista', text: x.total ? 'R$ ' + reais(x.total) : 'R$ ?' })))
+            )),
+        el('strong', { class: 'valor-lista', text: x.total ? 'R$ ' + reais(x.total) : 'valor a definir' })))
         : el('div', { class: 'cartao vazio-cartao' }, el('span', { class: 'ic-bolha grande' }, icone('moeda')), el('p', { text: 'Ninguém devendo. 🎉' })),
       el('p', { class: 'suave pequeno', text: 'Toque no paciente para ver as sessões em aberto, registrar o pagamento ou mandar a mensagem de cobrança.' })];
   } else if (abaMes === 'lista') {
@@ -3161,12 +3161,12 @@ function telaMesAba(ym) {
 function chipPagamentoSessao(c, a) {
   if (!a || !a.pagamento) return null;
   if (a.pagamento === 'pago') return el('span', { class: 'chip pago-chip', text: `✅ Pago R$ ${reais(valorDe(a))}` });
-  if (a.pagamento === 'areceber') return el('button', { type: 'button', class: 'chip acao marcado', 'aria-label': `Pagamento da sessão de ${c.nome}`, text: valorDe(a) ? `⏳ A receber R$ ${reais(valorDe(a))}` : '⏳ A receber (sem valor)', onclick: e => { e.stopPropagation(); perguntarPagamento(c, a); } });
+  if (a.pagamento === 'areceber') return el('button', { type: 'button', class: 'chip acao marcado', 'aria-label': `Pagamento da sessão de ${c.nome}`, text: valorDe(a) ? `⏳ A receber R$ ${reais(valorDe(a))}` : '⏳ A receber', onclick: e => { e.stopPropagation(); perguntarPagamento(c, a); } });
   return a.presenca ? el('span', { class: 'chip', text: a.abonada ? '🤝 Abonada' : 'Não cobra' }) : null;
 }
 // Versão 45: o toque pergunta primeiro se pagou; "Ainda não" deixa a sessão em "Quem deve" e guarda que foi conferida.
 async function perguntarPagamento(c, a) {
-  const r = await janela(`${c.nome}`, [el('p', { text: `Sessão de ${dataComDia(a.data)}${a.hora ? ', ' + horaCurta(a.hora) : ''} · R$ ${reais(valorDe(a))}` }),
+  const r = await janela(`${c.nome}`, [el('p', { text: `Sessão de ${dataComDia(a.data)}${a.hora ? ', ' + horaCurta(a.hora) : ''}${valorDe(a) ? ' · R$ ' + reais(valorDe(a)) : ''}` }),
     el('p', { class: 'suave', text: a.conferidaEm ? `Conferido em ${dataCurta(a.conferidaEm)}: ainda não tinha pago.` : 'Está em "Quem deve" até o pagamento ser registrado.' })],
     [{ rotulo: 'Fechar', valor: null }, { rotulo: 'Ainda não pagou', valor: 'nao' }, { rotulo: '✅ Pagou', valor: 'sim', estilo: 'primario' }]);
   if (r === 'sim') return pagarSessao(c, a);
@@ -3174,11 +3174,13 @@ async function perguntarPagamento(c, a) {
 }
 async function pagarSessao(c, a) {
   const r = await dialogo({ titulo: 'Pagamento desta sessão', texto: `${c.nome} · sessão de ${dataComDia(a.data)}${a.hora ? ', ' + horaCurta(a.hora) : ''}.`,
-    campos: [{ rotulo: 'Valor pago (R$)', valor: reais(valorDe(a)) }, { rotulo: 'Data do pagamento', tipo: 'date', valor: hojeISO() }],
+    // O valor pode variar: vem sugerido do cadastro (se houver) e o administrativo digita o que foi pago.
+    campos: [{ rotulo: 'Valor pago (R$)', valor: valorDe(a) ? reais(valorDe(a)) : '' }, { rotulo: 'Data do pagamento', tipo: 'date', valor: hojeISO() }],
     botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Registrar', valor: true, estilo: 'primario' }] });
   if (!r) return;
   const [valor, data] = r;
   if (!valorNum(valor)) return aviso('Falta o valor', 'Digite quanto foi pago.');
+  if (valorNum(valor) !== valorDe(a)) { a.valor = String(valorNum(valor)); salvarAt(a); } // a sessão passa a valer o que foi pago
   await registrarPagamento(c, { valor, data: data || hojeISO(), ids: [a.id] });
   indicarStatus('Pagamento registrado');
   render(history.state);
