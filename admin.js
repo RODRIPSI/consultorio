@@ -1280,14 +1280,8 @@ async function telaConfigAdm() {
   const persistente = await navigator.storage?.persisted?.().catch(() => false);
   const temClin = await Cofre.temClinica();
   if (!Cofre.aberto()) return;
-  const tempo = el('select', { 'aria-label': 'Tempo até o bloqueio automático' },
-    ...[1, 2, 5, 10, 15, 30, 60].map(m => el('option', { value: String(m), text: m === 60 ? '1 hora' : m + (m === 1 ? ' minuto' : ' minutos') })));
-  tempo.value = String(config.bloqueioMin);
-  tempo.addEventListener('change', async () => { config.bloqueioMin = Number(tempo.value); await Cofre.salvarConfig(config); });
-  const tempoFora = el('select', { 'aria-label': 'Tempo fora do app até pedir a senha' },
-    ...[0, 1, 5, 10, 15, 30, 60].map(m => el('option', { value: String(m), text: m === 0 ? 'Na hora' : m === 60 ? '1 hora' : m + (m === 1 ? ' minuto' : ' minutos') })));
-  tempoFora.value = String(minutosFora());
-  tempoFora.addEventListener('change', async () => { config.foraMin = Number(tempoFora.value); await Cofre.salvarConfig(config); });
+  const tempo = seletorTempo('Tempo até o bloqueio automático', config.bloqueioMin, async v => { config.bloqueioMin = v; await Cofre.salvarConfig(config); });
+  const tempoFora = seletorTempo('Tempo fora do app até pedir a senha', minutosFora(), async v => { config.foraMin = v; await Cofre.salvarConfig(config); }, true);
   const linha = (ic, titulo, detalhe, controle) => el('div', { class: 'linha-config' },
     el('span', { class: 'ic-bolha' }, icone(ic)),
     el('div', { class: 'linha-texto' }, el('p', { text: titulo }), detalhe && el('small', { text: detalhe })), controle);

@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 61';
+const VERSAO = 'versão 62';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -240,6 +240,26 @@ async function trancar() {
 }
 // Versão 32: ao sair para outro app, o Consultório só pede a senha de novo se ficar fora mais que o tempo escolhido
 // (padrão 10 minutos). Enquanto está fora, o conteúdo fica embaçado na lista de apps recentes e o que foi digitado é gravado.
+// Versão 62: tempos mais longos e a opção "Só pelo cadeado" — o app fica aberto até a pessoa tocar no 🔒.
+const TEMPOS_BLOQ = [1, 2, 5, 10, 15, 30, 60, 240, 480, -1];
+const nomeTempo = m => m === -1 ? 'Só pelo cadeado 🔒' : m === 0 ? 'Na hora' : m >= 60 ? (m / 60) + (m === 60 ? ' hora' : ' horas') : m + (m === 1 ? ' minuto' : ' minutos');
+function seletorTempo(rotulo, atual, aoMudar, comZero = false) {
+  const sel = el('select', { 'aria-label': rotulo }, ...(comZero ? [0, ...TEMPOS_BLOQ.filter(m => m !== 2)] : TEMPOS_BLOQ).map(m => el('option', { value: String(m), text: nomeTempo(m) })));
+  sel.value = String(atual);
+  const anterior = String(atual);
+  sel.addEventListener('change', async () => {
+    const v = Number(sel.value);
+    if (v === -1) {
+      const ok = await dialogo({ titulo: 'Só pelo cadeado?', texto: modo === 'dono'
+        ? 'O app não vai se fechar sozinho: fica aberto até você tocar no 🔒. Neste aparelho há dados clínicos; use só se o tablet tiver bloqueio de tela do Android (senha, digital ou padrão) e não ficar com outras pessoas.'
+        : 'O app não vai se fechar sozinho: fica aberto até tocar no 🔒. Use só se o celular tiver bloqueio de tela do Android (senha, digital ou padrão).',
+        botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Usar assim', valor: true, estilo: 'primario' }] });
+      if (!ok) { sel.value = anterior; return; }
+    }
+    await aoMudar(v);
+  });
+  return sel;
+}
 let saiuEm = 0;
 const minutosFora = () => config.foraMin ?? 10;
 document.addEventListener('visibilitychange', () => {
@@ -250,7 +270,7 @@ document.addEventListener('visibilitychange', () => {
   } else if (!document.hidden) {
     if (saiuEm && Cofre.aberto()) {
       const fora = Date.now() - saiuEm; saiuEm = 0;
-      if (fora > minutosFora() * 60000) { trancar(); return; }
+      if (minutosFora() > 0 && fora > minutosFora() * 60000) { trancar(); return; }
       ultimaAtividade = Date.now();
     }
     verificarInatividade();
@@ -259,7 +279,7 @@ document.addEventListener('visibilitychange', () => {
 ['pointerdown', 'keydown', 'input', 'scroll'].forEach(ev =>
   document.addEventListener(ev, () => { ultimaAtividade = Date.now(); }, { passive: true, capture: true }));
 function verificarInatividade() {
-  if (Cofre.aberto() && Date.now() - ultimaAtividade > config.bloqueioMin * 60000) trancar();
+  if (Cofre.aberto() && config.bloqueioMin > 0 && Date.now() - ultimaAtividade > config.bloqueioMin * 60000) trancar();
 }
 setInterval(verificarInatividade, 10000);
 
@@ -1750,14 +1770,8 @@ async function telaConfig() {
   const persistente = await navigator.storage?.persisted?.().catch(() => false);
   if (!Cofre.aberto()) return;
 
-  const tempo = el('select', { 'aria-label': 'Tempo até o bloqueio automático' },
-    ...[1, 2, 5, 10, 15, 30, 60].map(m => el('option', { value: String(m), text: m === 60 ? '1 hora' : m + (m === 1 ? ' minuto' : ' minutos') })));
-  tempo.value = String(config.bloqueioMin);
-  tempo.addEventListener('change', async () => { config.bloqueioMin = Number(tempo.value); await Cofre.salvarConfig(config); });
-  const tempoFora = el('select', { 'aria-label': 'Tempo fora do app até pedir a senha' },
-    ...[0, 1, 5, 10, 15, 30, 60].map(m => el('option', { value: String(m), text: m === 0 ? 'Na hora' : m === 60 ? '1 hora' : m + (m === 1 ? ' minuto' : ' minutos') })));
-  tempoFora.value = String(minutosFora());
-  tempoFora.addEventListener('change', async () => { config.foraMin = Number(tempoFora.value); await Cofre.salvarConfig(config); });
+  const tempo = seletorTempo('Tempo até o bloqueio automático', config.bloqueioMin, async v => { config.bloqueioMin = v; await Cofre.salvarConfig(config); });
+  const tempoFora = seletorTempo('Tempo fora do app até pedir a senha', minutosFora(), async v => { config.foraMin = v; await Cofre.salvarConfig(config); }, true);
 
   const linha = (ic, titulo, detalhe, controle) => el('div', { class: 'linha-config' },
     el('span', { class: 'ic-bolha' }, icone(ic)),
