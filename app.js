@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 31';
+const VERSAO = 'versão 32';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -238,9 +238,23 @@ async function trancar() {
   limparAdm(); modo = null;
   telaBloqueio();
 }
+// Versão 32: ao sair para outro app, o Consultório só pede a senha de novo se ficar fora mais que o tempo escolhido
+// (padrão 10 minutos). Enquanto está fora, o conteúdo fica embaçado na lista de apps recentes e o que foi digitado é gravado.
+let saiuEm = 0;
+const minutosFora = () => config.foraMin ?? 10;
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && Cofre.aberto() && !ignorarOcultacao) trancar();
-  else if (!document.hidden) verificarInatividade();
+  document.documentElement.classList.toggle('app-oculto', document.hidden && Cofre.aberto());
+  if (document.hidden && Cofre.aberto() && !ignorarOcultacao) {
+    if (minutosFora() === 0) { trancar(); return; }
+    saiuEm = Date.now(); salvarAgora();
+  } else if (!document.hidden) {
+    if (saiuEm && Cofre.aberto()) {
+      const fora = Date.now() - saiuEm; saiuEm = 0;
+      if (fora > minutosFora() * 60000) { trancar(); return; }
+      ultimaAtividade = Date.now();
+    }
+    verificarInatividade();
+  }
 });
 ['pointerdown', 'keydown', 'input', 'scroll'].forEach(ev =>
   document.addEventListener(ev, () => { ultimaAtividade = Date.now(); }, { passive: true, capture: true }));
@@ -1715,9 +1729,13 @@ async function telaConfig() {
   if (!Cofre.aberto()) return;
 
   const tempo = el('select', { 'aria-label': 'Tempo até o bloqueio automático' },
-    ...[1, 2, 5, 10, 15].map(m => el('option', { value: String(m), text: m + (m === 1 ? ' minuto' : ' minutos') })));
+    ...[1, 2, 5, 10, 15, 30, 60].map(m => el('option', { value: String(m), text: m === 60 ? '1 hora' : m + (m === 1 ? ' minuto' : ' minutos') })));
   tempo.value = String(config.bloqueioMin);
   tempo.addEventListener('change', async () => { config.bloqueioMin = Number(tempo.value); await Cofre.salvarConfig(config); });
+  const tempoFora = el('select', { 'aria-label': 'Tempo fora do app até pedir a senha' },
+    ...[0, 1, 5, 10, 15, 30, 60].map(m => el('option', { value: String(m), text: m === 0 ? 'Na hora' : m === 60 ? '1 hora' : m + (m === 1 ? ' minuto' : ' minutos') })));
+  tempoFora.value = String(minutosFora());
+  tempoFora.addEventListener('change', async () => { config.foraMin = Number(tempoFora.value); await Cofre.salvarConfig(config); });
 
   const linha = (ic, titulo, detalhe, controle) => el('div', { class: 'linha-config' },
     el('span', { class: 'ic-bolha' }, icone(ic)),
@@ -1728,7 +1746,8 @@ async function telaConfig() {
     cabecalho('Configurações', { voltar: true }),
     el('div', { class: 'conteudo pilha' },
       secao('Acesso',
-        linha('relogio', 'Bloqueio automático', 'Sem uso por este tempo, o app se fecha. Ele também se fecha ao sair para outro app.', tempo),
+        linha('relogio', 'Bloqueio automático', 'Com o app aberto e sem uso por este tempo, ele se fecha e pede a senha.', tempo),
+        linha('cadeado', 'Ao sair para outro app', 'Se voltar dentro deste tempo, não precisa da senha. Passou do tempo, ele pede de novo.', tempoFora),
         linha('pessoa', 'Biometria', temBio ? 'Ativada neste aparelho.' : 'Desbloqueio pela digital, com a senha mestra como reserva.',
           el('button', { type: 'button', class: 'secundario compacto', text: temBio ? 'Desativar' : 'Ativar', onclick: temBio ? desativarBio : ativarBio })),
         linha('cadeado', 'Senha mestra', null, el('button', { type: 'button', class: 'secundario compacto', text: 'Trocar', onclick: trocarSenha }))),

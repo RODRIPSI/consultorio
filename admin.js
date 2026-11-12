@@ -1226,9 +1226,13 @@ async function telaConfigAdm() {
   const temClin = await Cofre.temClinica();
   if (!Cofre.aberto()) return;
   const tempo = el('select', { 'aria-label': 'Tempo até o bloqueio automático' },
-    ...[1, 2, 5, 10, 15].map(m => el('option', { value: String(m), text: m + (m === 1 ? ' minuto' : ' minutos') })));
+    ...[1, 2, 5, 10, 15, 30, 60].map(m => el('option', { value: String(m), text: m === 60 ? '1 hora' : m + (m === 1 ? ' minuto' : ' minutos') })));
   tempo.value = String(config.bloqueioMin);
   tempo.addEventListener('change', async () => { config.bloqueioMin = Number(tempo.value); await Cofre.salvarConfig(config); });
+  const tempoFora = el('select', { 'aria-label': 'Tempo fora do app até pedir a senha' },
+    ...[0, 1, 5, 10, 15, 30, 60].map(m => el('option', { value: String(m), text: m === 0 ? 'Na hora' : m === 60 ? '1 hora' : m + (m === 1 ? ' minuto' : ' minutos') })));
+  tempoFora.value = String(minutosFora());
+  tempoFora.addEventListener('change', async () => { config.foraMin = Number(tempoFora.value); await Cofre.salvarConfig(config); });
   const linha = (ic, titulo, detalhe, controle) => el('div', { class: 'linha-config' },
     el('span', { class: 'ic-bolha' }, icone(ic)),
     el('div', { class: 'linha-texto' }, el('p', { text: titulo }), detalhe && el('small', { text: detalhe })), controle);
@@ -1237,7 +1241,8 @@ async function telaConfigAdm() {
     cabecalho('Configurações', { voltar: true }),
     el('div', { class: 'conteudo pilha' },
       secao('Acesso',
-        linha('relogio', 'Bloqueio automático', 'Sem uso por este tempo, o app se fecha. Ele também se fecha ao sair para outro app.', tempo),
+        linha('relogio', 'Bloqueio automático', 'Com o app aberto e sem uso por este tempo, ele se fecha e pede a senha.', tempo),
+        linha('cadeado', 'Ao sair para outro app', 'Se voltar dentro deste tempo, não precisa da senha. Passou do tempo, ele pede de novo.', tempoFora),
         linha('cadeado', 'Senha do administrativo', null, el('button', { type: 'button', class: 'secundario compacto', text: 'Trocar', onclick: trocarSenhaAdmAtual })),
         temClin && linha('pessoa', 'Área clínica', 'Só com a senha mestra do Rodrigo.', el('button', { type: 'button', class: 'secundario compacto', text: 'Entrar', onclick: entrarNaClinica }))),
       secao('Aparência', linhaAparencia(linha)),

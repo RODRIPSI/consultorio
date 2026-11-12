@@ -478,3 +478,6 @@ details.cartao > summary { cursor: pointer; font-weight: 600; }
 /* Versão 30: atalho "Todos os pacientes" na tela inicial */
 .todos-pacientes { margin-top: .6rem; }
 .todos-pacientes .ic-bolha { width: 44px; height: 44px; display: grid; place-items: center; }
+
+/* Versão 32: conteúdo embaçado enquanto o app está em segundo plano (lista de apps recentes) */
+html.app-oculto #app { filter: blur(22px); }
