@@ -306,7 +306,7 @@ function cartaoAgenda() {
       if (modo === 'dono') {
         const feita = sessoesDe(c.id).find(s => s.data === hoje);
         const chipSessao = feita ? el('button', { type: 'button', class: 'chip acao', text: 'Anotação feita', onclick: () => ir({ tela: 'sessao', pid: c.id, sid: feita.id }) })
-          : el('button', { type: 'button', class: 'chip acao', text: 'Anotar sessão', onclick: () => { const p = pacientes.find(x => x.id === c.id); if (p) novaSessao(p); } });
+          : el('button', { type: 'button', class: 'chip acao', text: 'Anotar sessão', onclick: () => ir({ tela: 'ficha', id: c.id, aba: 'caderno' }) }); // versão 71: abre a página do paciente, em Anotações e evolução
         acoes = el('span', { class: 'chips' }, chipPres, chipPagamentoSessao(c, atDaOcorrencia(c, dia, hora)), chipSessao);
       } else acoes = el('span', { class: 'chips' }, chipPres, chipPagamentoSessao(c, atDaOcorrencia(c, dia, hora)));
     }
