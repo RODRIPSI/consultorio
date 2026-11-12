@@ -28,8 +28,17 @@ const salvarAt = a => agendarSalvar(chaveAt(a), a);
 const salvarPag = g => agendarSalvar(chavePag(g), g);
 const chaveLem = l => 'x:l:' + l.id;
 const salvarLem = l => { l.atualizadoEm = agoraISO(); agendarSalvar(chaveLem(l), l); };
-const valorPadrao = c => c?.valor || perfil?.valorSessao || '';
-const valorDe = a => valorNum(a.valor) || valorNum(valorPadrao(cadastroDe(a.pid)));
+// Versão 65: o valor da sessão tem histórico com data. Mudar o valor vale a partir da data escolhida;
+// as sessões anteriores continuam com o valor antigo. c.valores = [{ desde: 'aaaa-mm-dd', valor }].
+function valorNaData(c, data) {
+  if (!c) return perfil?.valorSessao || '';
+  const hist = (c.valores || []).filter(v => v.desde <= (data || hojeISO())).sort((a, b) => a.desde.localeCompare(b.desde));
+  if (hist.length) return hist[hist.length - 1].valor || perfil?.valorSessao || '';
+  if (c.valores?.length) return c.valores.slice().sort((a, b) => a.desde.localeCompare(b.desde))[0].antes ?? (perfil?.valorSessao || '');
+  return c.valor || perfil?.valorSessao || '';
+}
+const valorPadrao = (c, data) => valorNaData(c, data);
+const valorDe = a => valorNum(a.valor) || valorNum(valorNaData(cadastroDe(a.pid), a.data));
 const agoraISO = () => new Date().toISOString();
 const nomeMes = ym => paraData(ym + '-01').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(/^./, c => c.toUpperCase());
 const somarMeses = (ym, n) => { const [a, m] = ym.split('-').map(Number); const d = new Date(a, m - 1 + n, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
@@ -208,7 +217,7 @@ function vincularSessao(s, nova = false) {
   if (!a) {
     const agora = agoraISO();
     a = { id: crypto.randomUUID(), pid: s.pid, data: s.data, hora: horaFixa(cadastroDe(s.pid), s.data), presenca: s.status,
-      pagamento: nova ? pagamentoInicial(s.status) : null, valor: valorPadrao(cadastroDe(s.pid)), criadoEm: agora, atualizadoEm: agora };
+      pagamento: nova ? pagamentoInicial(s.status) : null, valor: valorPadrao(cadastroDe(s.pid), s.data), criadoEm: agora, atualizadoEm: agora };
     atendimentos.push(a);
   }
   a.sid = s.id; a.data = s.data; a.presenca = s.status;
@@ -269,7 +278,7 @@ function marcarPresenca(c, data, hora, presenca) {
   let a = atendimentos.find(x => x.pid === c.id && x.data === data);
   if (!a) {
     const agora = agoraISO();
-    a = { id: crypto.randomUUID(), pid: c.id, data, hora, presenca: null, pagamento: null, valor: valorPadrao(c), criadoEm: agora, atualizadoEm: agora };
+    a = { id: crypto.randomUUID(), pid: c.id, data, hora, presenca: null, pagamento: null, valor: valorPadrao(c, data), criadoEm: agora, atualizadoEm: agora };
     atendimentos.push(a);
   }
   a.presenca = presenca;
@@ -1163,7 +1172,9 @@ function abaCadastro(c) {
         campo('Nome na lista da semana', 'nomeLista', { placeholder: 'Ex.: Ana Paula 1 (se vazio, usa o nome)' }),
         campo('CPF', 'cpf', { inputmode: 'numeric' }),
         campo('Data de nascimento', 'nascimento', { type: 'date' }),
-        campo('Valor da sessão (R$)', 'valor', { inputmode: 'decimal', placeholder: perfil.valorSessao ? `Padrão: ${perfil.valorSessao}` : '200,00' }))),
+        el('div', { class: 'campo' }, el('span', { text: 'Valor da sessão' }),
+          el('button', { type: 'button', class: 'secundario com-icone', onclick: () => alterarValorSessao(c) }, icone('moeda'),
+            el('span', { text: valorNum(valorNaData(c)) ? `R$ ${reais(valorNum(valorNaData(c)))} · Alterar` : 'Definir valor' }))))),
     cartao('Contato', 'telefone',
       el('div', { class: 'grade' },
         campo('Telefone 2', 'telefone2', { type: 'tel', inputmode: 'tel' }),
@@ -2826,7 +2837,7 @@ function atDaOcorrencia(c, data, hora, criar = false) {
     || atendimentos.find(x => x.pid === c.id && x.data === data && !x.hora);
   if (!a && criar) {
     const agora = agoraISO();
-    a = { id: crypto.randomUUID(), pid: c.id, data, hora: hora || '', presenca: null, pagamento: null, valor: valorPadrao(c), criadoEm: agora, atualizadoEm: agora };
+    a = { id: crypto.randomUUID(), pid: c.id, data, hora: hora || '', presenca: null, pagamento: null, valor: valorPadrao(c, data), criadoEm: agora, atualizadoEm: agora };
     atendimentos.push(a);
   }
   return a;
@@ -3447,4 +3458,33 @@ function linhaAvisos(linha) {
     avisosLigados() ? 'Ativados: avisa com som e vibração quando chega lembrete, presença ou pagamento do outro aparelho (com o app aberto ou minimizado).'
       : 'Desativados. Ative para ser avisado quando chegar novidade do outro aparelho.',
     el('button', { type: 'button', class: avisosLigados() ? 'secundario compacto' : 'primario compacto', text: avisosLigados() ? 'Desativar' : 'Ativar', onclick: alternarAvisos }));
+}
+
+
+// Janela para mudar o valor da sessão de um paciente a partir de uma data.
+async function alterarValorSessao(c, aoFim) {
+  const atual = valorNum(valorNaData(c));
+  const hist = (c.valores || []).slice().sort((a, b) => b.desde.localeCompare(a.desde));
+  const r = await dialogo({ titulo: `Valor da sessão · ${c.nome}`,
+    texto: (atual ? `Valor atual: R$ ${reais(atual)}. ` : '') + 'O novo valor vale a partir da data escolhida; as sessões anteriores continuam com o valor antigo.'
+      + (hist.length ? '\n\nHistórico: ' + hist.filter(v => valorNum(v.valor)).map(v => `R$ ${reais(valorNum(v.valor))} ${v.desde.startsWith('0000') ? 'antes' : 'desde ' + dataCurta(v.desde)}`).join(' · ') : ''),
+    campos: [{ rotulo: 'Novo valor (R$)', valor: '', inputmode: 'decimal', placeholder: atual ? reais(atual) : '200,00' }, { rotulo: 'A partir de', tipo: 'date', valor: hojeISO() }],
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }] });
+  if (!r) return;
+  const [txt, desde0] = r; const novo = valorNum(txt), desde = desde0 || hojeISO();
+  if (!novo) return aviso('Falta o valor', 'Digite o novo valor da sessão.');
+  // valor que cada sessão teria antes da mudança (para não mexer em sessões com "outro valor" combinado)
+  const ats = atendimentosDe(c.id).filter(a => a.data >= desde && a.pagamento !== 'pago');
+  const antes = new Map(ats.map(a => [a.id, valorNum(valorNaData(c, a.data))]));
+  if (!c.valores?.length) c.valores = [{ desde: '0000-01-01', valor: c.valor || '' }];
+  c.valores = c.valores.filter(v => v.desde !== desde);
+  c.valores.push({ desde, valor: String(novo) });
+  c.valores.sort((a, b) => a.desde.localeCompare(b.desde));
+  c.valor = String(valorNum(valorNaData(c)) || novo);
+  c.atualizadoEm = agoraISO(); salvarCadastro(c);
+  let mudadas = 0;
+  for (const a of ats) if (!valorNum(a.valor) || valorNum(a.valor) === antes.get(a.id)) { a.valor = String(novo); salvarAt(a); mudadas++; }
+  await salvarAgora();
+  indicarStatus(`Valor de ${primeiroNome(c.nome)}: R$ ${reais(novo)} a partir de ${dataCurta(desde)}${mudadas ? ` (${mudadas} ${mudadas === 1 ? 'sessão atualizada' : 'sessões atualizadas'})` : ''}.`);
+  if (aoFim) aoFim(); else render(history.state);
 }
