@@ -470,7 +470,7 @@ function telaAdm(id, aba) {
   const hs = horariosDe(c).filter(h => h.hora);
   if (hs.length) chips.push(hs.map(h => `${DIAS[h.dia].slice(0, 3)} ${horaCurta(h.hora)}`).join(', '));
   if (valorPadrao(c)) chips.push('R$ ' + reais(valorNum(valorPadrao(c))));
-  if (c.nf) chips.push('Nota fiscal');
+  if (c.nf) chips.push('Nota fiscal'); else if (c.recibo) chips.push('Pede recibo');
   const abas = [['atendimentos', 'Agenda', 'calendario'], ['pagamentos', 'Pagamentos', 'moeda'], ['mensagem', 'Mensagem', 'mensagem'],
     ['documentos', 'Documentos', 'assinar'], ['cadastro', 'Cadastro', 'pessoa']];
   const corpo = aba === 'pagamentos' ? abaPagamentosAdm(c)
@@ -641,7 +641,8 @@ function totaisMes(ym) {
 
 let filtroMes = 'todos';
 let abaMes = 'resumo';
-const ABAS_MES = { resumo: 'Resumo', devendo: 'Quem deve', lista: 'Lista do mês', mensais: 'Mensais' };
+const ABAS_MES = { resumo: 'Resumo', devendo: 'Quem deve', lista: 'Lista do mês', mensais: 'Mensais', recibos: 'Recibos' };
+const pedeRecibo = c => !c.arquivado && !!(c.recibo || c.nf);
 function telaMes(ym) {
   if (abaMes !== 'resumo') return telaMesAba(ym);
   const linhas = [];
@@ -893,9 +894,9 @@ async function escolherRecibo(c, opcoes = {}) {
   const r = await janela('Recibo', [el('p', { text: c.nome }),
     el('p', { class: 'suave pequeno', text: 'Recibo do aplicativo: sai em PDF com seu logo e dados, pronto para enviar. Nota fiscal: abre o site do governo; depois de emitir, anexe a nota e envie ao paciente pelo WhatsApp.' })],
     [{ rotulo: 'Fechar', valor: null }, { rotulo: '🏛️ Nota fiscal (site)', valor: 'nota' }, { rotulo: '📄 Recibo do aplicativo', valor: 'recibo', estilo: 'primario' }]);
-  if (r === 'recibo') return novaDeclaracao(c, { modelo: 'recibo', soPagas: !!opcoes.soPagas });
+  if (r === 'recibo') return novaDeclaracao(c, { modelo: 'recibo', soPagas: !!opcoes.soPagas, de: opcoes.de, ate: opcoes.ate });
   if (r !== 'nota') return;
-  const gs = pagamentosDe(c.id);
+  const gs = pagamentosDe(c.id).filter(g => !opcoes.de || (g.data >= opcoes.de && g.data <= opcoes.ate));
   const semNota = gs.filter(g => !g.nf?.emitida);
   const candidatos = (semNota.length ? semNota : gs).slice(0, 5);
   if (candidatos.length === 1) return abrirNotaFiscal(c, candidatos[0]);
@@ -1169,10 +1170,14 @@ function abaCadastro(c) {
       el('div', { class: 'grade duas' },
         campo('Dia do pagamento', 'diaPagamento', { inputmode: 'numeric', placeholder: 'Ex.: 10' }),
         campo('Valor mensal (R$)', 'valorMensal', { inputmode: 'decimal' }))),
-    cartao('Quem paga e nota fiscal', 'moeda',
-      el('label', { class: 'marcar' },
-        el('input', { type: 'checkbox', checked: !!c.nf, onchange: e => { c.nf = e.target.checked; salvar(); } }),
-        el('span', { text: 'Este paciente recebe nota fiscal' })),
+    cartao('Recibo e quem paga', 'moeda',
+      // Versão 57: nem todo paciente pede recibo; os marcados aqui entram na lista "Recibos" dos pagamentos.
+      (() => {
+        const cxRecibo = el('input', { type: 'checkbox', checked: !!(c.recibo || c.nf), onchange: e => { c.recibo = e.target.checked; if (!c.recibo) { c.nf = false; cxNf.checked = false; } salvar(); } });
+        const cxNf = el('input', { type: 'checkbox', checked: !!c.nf, onchange: e => { c.nf = e.target.checked; if (c.nf) { c.recibo = true; cxRecibo.checked = true; } salvar(); } });
+        return [el('label', { class: 'marcar' }, cxRecibo, el('span', { text: 'Este paciente pede recibo' })),
+          el('label', { class: 'marcar' }, cxNf, el('span', { text: 'Prefere nota fiscal (site do governo)' }))];
+      })(),
       el('div', { class: 'grade' },
         campo('Pago por (se não for o paciente)', 'pagador', { placeholder: 'Nome do responsável' }),
         campo('CPF de quem paga', 'cpfPagador', { inputmode: 'numeric' }))),
@@ -3139,7 +3144,8 @@ function cartaoPagamentosInicio(ym, tot) {
     el('div', { class: 'botoes-linha' },
       el('button', { type: 'button', class: 'secundario compacto', text: `Quem deve (${ds.length})`, onclick: () => { abaMes = 'devendo'; ir({ tela: 'mes' }); } }),
       el('button', { type: 'button', class: 'secundario compacto', text: 'Lista do mês', onclick: () => { abaMes = 'lista'; ir({ tela: 'mes' }); } }),
-      el('button', { type: 'button', class: 'secundario compacto', text: 'Mensais', onclick: () => { abaMes = 'mensais'; ir({ tela: 'mes' }); } })));
+      el('button', { type: 'button', class: 'secundario compacto', text: 'Mensais', onclick: () => { abaMes = 'mensais'; ir({ tela: 'mes' }); } }),
+      el('button', { type: 'button', class: 'secundario compacto', text: `Recibos (${cadastros.filter(pedeRecibo).length})`, onclick: () => { abaMes = 'recibos'; ir({ tela: 'mes' }); } })));
 }
 const MESES_CURTOS = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
 const ddmm = d => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
@@ -3164,6 +3170,37 @@ function telaMesAba(ym) {
         el('strong', { class: 'valor-lista', text: x.total ? 'R$ ' + reais(x.total) : 'valor a definir' })))
         : el('div', { class: 'cartao vazio-cartao' }, el('span', { class: 'ic-bolha grande' }, icone('moeda')), el('p', { text: 'Ninguém devendo. 🎉' })),
       el('p', { class: 'suave pequeno', text: 'Toque no paciente para ver as sessões em aberto, registrar o pagamento ou mandar a mensagem de cobrança.' })];
+  } else if (abaMes === 'recibos') {
+    // Versão 57: só os pacientes que pedem recibo, com o que pagaram no mês e se o comprovante já saiu.
+    const de = ym + '-01', ate = ym + '-' + String(new Date(Number(ym.slice(0, 4)), Number(ym.slice(5)), 0).getDate()).padStart(2, '0');
+    const linhas = cadastros.filter(pedeRecibo).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')).map(c => {
+      const gs = pagamentos.filter(g => g.pid === c.id && g.data.slice(0, 7) === ym);
+      const pago = gs.reduce((t, g) => t + valorNum(g.valor), 0);
+      const recibos = docsDe(c.id, 'emitido').filter(d => d.modelo === 'recibo' && (d.data || '').slice(0, 7) === ym);
+      const notas = gs.filter(g => g.nf?.emitida);
+      const feito = gs.length ? (c.nf ? notas.length === gs.length : recibos.length > 0 || notas.length === gs.length) : false;
+      return { c, gs, pago, feito, recibos, notas };
+    }).sort((a, b) => (b.gs.length && !b.feito) - (a.gs.length && !a.feito)); // quem tem recibo a emitir aparece primeiro
+    const faltam = linhas.filter(x => x.gs.length && !x.feito).length;
+    corpo = [
+      el('div', { class: 'cartao destaque total-clinica' }, el('small', { text: 'Pacientes que pedem recibo' }), el('strong', { text: String(linhas.length) }),
+        el('span', { text: faltam ? `${faltam} com recibo ou nota a emitir neste mês` : 'Nenhum comprovante pendente neste mês' })),
+      linhas.length ? linhas.map(x => {
+        const doc = (x.c.cpfPagador || x.c.cpf || '').trim();
+        return el('div', { class: 'cartao pilha' },
+          el('button', { type: 'button', class: 'cartao paciente', onclick: () => ir({ tela: 'adm', id: x.c.id, aba: 'documentos' }) },
+            avatar(x.c),
+            el('span', { class: 'info' }, el('span', { class: 'nome', text: x.c.nome }),
+              el('span', { class: 'meta' },
+                el('span', { class: 'selo ' + (x.c.nf ? 'nota' : 'parcial'), text: x.c.nf ? 'Nota fiscal' : 'Recibo' }),
+                el('span', { text: (x.c.pagador ? `Pago por ${x.c.pagador}` : '') + (doc ? `${x.c.pagador ? ' · ' : ''}CPF ${doc}` : `${x.c.pagador ? ' · ' : ''}falta CPF`) }))),
+            el('strong', { class: 'valor-lista', text: x.pago ? 'R$ ' + reais(x.pago) : '—' })),
+          el('div', { class: 'linha-copiar' },
+            el('span', { class: 'selo ' + (!x.gs.length ? '' : x.feito ? 'pago' : 'areceber'), text: !x.gs.length ? 'Sem pagamento no mês' : x.feito ? '✅ Emitido' : '⏳ A emitir' }),
+            el('button', { type: 'button', class: x.gs.length && !x.feito ? 'primario compacto' : 'secundario compacto', text: 'Emitir', onclick: () => escolherRecibo(x.c, { soPagas: true, de, ate }) })));
+      }) : el('div', { class: 'cartao vazio-cartao' }, el('span', { class: 'ic-bolha grande' }, icone('assinar')),
+        el('p', { text: 'Nenhum paciente marcado. No cadastro do paciente, marque "Este paciente pede recibo".' })),
+      el('p', { class: 'suave pequeno', text: 'Para entrar nesta lista: paciente → Cadastro → "Este paciente pede recibo". "Emitir" oferece o recibo do aplicativo ou a nota fiscal no site.' })];
   } else if (abaMes === 'lista') {
     const gs = pagamentos.filter(g => g.data.slice(0, 7) === ym).sort((a, b) => a.data.localeCompare(b.data));
     const total = gs.reduce((t, g) => t + valorNum(g.valor), 0);
