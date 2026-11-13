@@ -530,3 +530,7 @@ html.app-oculto #app { filter: blur(22px); }
 .mes-devendo[open] summary::before { content: '▾ '; }
 .centro { text-align: center; }
 .pag-numero.tocavel { background: transparent; }
+/* versão 87: linha de devedor com Pagou e lixeira */
+.linha-devedor { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent); }
+.linha-devedor > .pag-linha { flex: 1; border-bottom: 0; min-width: 0; }
+.linha-devedor .botoes-mini { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }

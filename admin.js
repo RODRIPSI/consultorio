@@ -4011,8 +4011,8 @@ function telaPagamentos(ym) {
     const porMes = new Map();
     for (const x of ds) for (const a of x.pend) {
       const m = a.data.slice(0, 7);
-      const g = porMes.get(m) || new Map(); const y = g.get(x.c.id) || { c: x.c, v: 0, n: 0, divida: false };
-      y.v += valorDe(a); y.n++; y.divida ||= !!a.divida; g.set(x.c.id, y); porMes.set(m, g);
+      const g = porMes.get(m) || new Map(); const y = g.get(x.c.id) || { c: x.c, v: 0, n: 0, divida: false, ats: [] };
+      y.v += valorDe(a); y.n++; y.divida ||= !!a.divida; y.ats.push(a); g.set(x.c.id, y); porMes.set(m, g);
     }
     const hoje7 = hojeISO().slice(0, 7);
     const todosMeses = [...porMes.keys()].sort().reverse();
@@ -4030,13 +4030,18 @@ function telaPagamentos(ym) {
         const tot = lista.reduce((t, y) => t + y.v, 0);
         const det = el('details', { class: 'cartao mes-devendo' },
           el('summary', {}, el('strong', { text: nomeMes(m) }), el('span', { class: 'texto-alerta', text: ` R$ ${reais(tot)} · ${lista.length} ${lista.length === 1 ? 'paciente' : 'pacientes'}` })),
-          ...lista.map(y => linhaPac(y.c, y.v ? 'R$ ' + reais(y.v) : 'valor a definir', y.divida ? 'dívida lançada' : `${y.n} ${y.n === 1 ? 'sessão' : 'sessões'}`, 'texto-alerta')));
+          ...lista.map(y => el('div', { class: 'linha-devedor' },
+            linhaPac(y.c, y.v ? 'R$ ' + reais(y.v) : 'valor a definir', y.divida ? (y.n > 1 ? `dívida lançada + ${y.n - 1} ${y.n - 1 === 1 ? 'sessão' : 'sessões'}` : 'dívida lançada' + (y.ats[0].obs ? ' · ' + y.ats[0].obs : '')) : `${y.n} ${y.n === 1 ? 'sessão' : 'sessões'}`, 'texto-alerta'),
+            // versão 87: pagar ou apagar direto daqui; os totais se recalculam na hora
+            el('div', { class: 'botoes-mini' },
+              botaoIcone('Apagar ou não cobrar', 'lixeira', () => apagarDividaMes(y.c, y.ats, m)),
+              el('button', { type: 'button', class: 'chip acao marcado', text: 'Pagou', onclick: () => pagarDividaMes(y.c, y.ats, m) })))));
         if (i < 2 || filtroDevendo !== 'todos') det.open = true;
         return det;
       }),
       !meses.length && el('div', { class: 'cartao vazio-cartao' }, el('span', { class: 'ic-bolha grande' }, icone('moeda')), el('p', { text: filtroDevendo === 'anteriores' ? 'Ninguém devendo de meses anteriores. 🎉' : 'Ninguém devendo. 🎉' })),
       el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => lancarDividaAnterior() }, icone('mais'), el('span', { text: 'Lançar dívida de meses anteriores' })),
-      el('p', { class: 'suave pequeno', text: 'Cada mês mostra o que ficou sem pagar das sessões daquele mês. Toque no paciente para registrar o pagamento ou corrigir uma cobrança.' })];
+      el('p', { class: 'suave pequeno', text: 'Cada mês mostra o que ficou sem pagar daquele mês. "Pagou" registra o pagamento; a lixeira apaga ou deixa de cobrar. Os totais se recalculam na hora. Toque no nome para ver item por item.' })];
   } else {
     fechamentoAno = true;
     corpo = corpoFechamento(ym).slice(1);   // sem o seletor Mensal/Anual: aqui é sempre o ano
@@ -4269,5 +4274,35 @@ async function voltarACobrar(c) {
   delete c.semCobrancaDesde; c.atualizadoEm = agoraISO(); salvarCadastro(c);
   await salvarAgora();
   indicarStatus(`${primeiroNome(c.nome)} volta a ser cobrado a partir de ${dataCurta(desde)}.`);
+  render(history.state);
+}
+
+
+// Versão 87: na aba Quem deve, pagar ou apagar o que um paciente deve num mês, sem sair da lista.
+async function pagarDividaMes(c, ats, m) {
+  if (ats.length === 1) return pagarSessao(c, ats[0]);
+  const total = ats.reduce((t, a) => t + valorDe(a), 0);
+  const r = await dialogo({ titulo: `Pagamento · ${c.nome}`, texto: `${nomeMes(m)}: ${ats.length} itens em aberto, total R$ ${reais(total)}. Se ele pagou um valor diferente, corrija abaixo.`,
+    campos: [{ rotulo: 'Valor pago (R$)', valor: reais(total), inputmode: 'decimal' }, { rotulo: 'Data do pagamento', tipo: 'date', valor: hojeISO() }],
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Registrar', valor: true, estilo: 'primario' }] });
+  if (!r) return;
+  const [valor, data] = r;
+  if (!valorNum(valor)) return aviso('Falta o valor', 'Digite quanto ele pagou.');
+  await registrarPagamento(c, { valor, data: data || hojeISO(), ids: ats.map(a => a.id) });
+  indicarStatus(`Pagamento de ${primeiroNome(c.nome)} registrado: R$ ${reais(valorNum(valor))}.`);
+  render(history.state);
+}
+async function apagarDividaMes(c, ats, m) {
+  if (ats.length === 1) return corrigirCobranca(c, ats[0]);
+  const r = await janela(`Corrigir · ${c.nome}`, [el('p', { text: `${nomeMes(m)}: ${ats.length} itens em aberto.` }),
+    el('p', { class: 'suave pequeno', text: '"Não cobrar" mantém as sessões no histórico, sem cobrança. "Excluir tudo" apaga as dívidas lançadas e as sessões em aberto deste mês. Para mexer em um item só, toque no nome do paciente.' })],
+    [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Não cobrar', valor: 'naocobrar' }, { rotulo: 'Excluir tudo', valor: 'excluir', estilo: 'perigo' }]);
+  if (!r) return;
+  if (r === 'excluir') {
+    const ok = await dialogo({ titulo: 'Excluir tudo?', texto: `Os ${ats.length} itens de ${nomeMes(m)} de ${c.nome} serão apagados.`, botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Excluir', valor: true, estilo: 'perigo' }] });
+    if (!ok) return;
+    for (const a of ats) await excluirAtendimento(a);
+  } else for (const a of ats) { if (a.divida) await excluirAtendimento(a); else { a.pagamento = 'naocobrar'; a.abonada = true; a.pagamentoManual = true; salvarAt(a); } }
+  await salvarAgora();
   render(history.state);
 }
