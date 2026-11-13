@@ -3362,6 +3362,9 @@ function telaMesAba(ym) {
     corpo = [
       el('div', { class: 'cartao destaque total-clinica' }, el('small', { text: 'Pacientes que pedem recibo' }), el('strong', { text: String(linhas.length) }),
         el('span', { text: faltam ? `${faltam} com recibo ou nota a emitir neste mês` : 'Nenhum comprovante pendente neste mês' })),
+      // versão 97: no alto
+      el('button', { type: 'button', class: linhas.length ? 'secundario com-icone centralizado' : 'primario com-icone centralizado', onclick: escolherPacientesRecibo }, icone('mais'),
+        el('span', { text: linhas.length ? 'Marcar ou desmarcar pacientes' : 'Escolher os pacientes que pedem recibo' })),
       linhas.length ? linhas.map(x => {
         const doc = (x.c.cpfPagador || x.c.cpf || '').trim();
         return el('div', { class: 'cartao pilha' },
@@ -3377,8 +3380,6 @@ function telaMesAba(ym) {
             el('button', { type: 'button', class: 'secundario compacto', text: `${x.c.nf ? 'Nota fiscal' : 'Recibo'} ✏️`, onclick: () => escolherTipoRecibo(x.c) }),
             el('button', { type: 'button', class: x.gs.length && !x.feito ? 'primario compacto' : 'secundario compacto', text: 'Emitir', onclick: () => escolherRecibo(x.c, { soPagas: true, de, ate }) })));
       }) : el('div', { class: 'cartao vazio-cartao' }, el('p', { text: 'Nenhum paciente marcado ainda.' })),
-      el('button', { type: 'button', class: linhas.length ? 'secundario com-icone centralizado' : 'primario com-icone centralizado', onclick: escolherPacientesRecibo }, icone('mais'),
-        el('span', { text: linhas.length ? 'Marcar ou desmarcar pacientes' : 'Escolher os pacientes que pedem recibo' })),
       el('p', { class: 'suave pequeno', text: '"Emitir" oferece o recibo do aplicativo ou a nota fiscal no site. Também dá para marcar no cadastro de cada paciente: "Este paciente pede recibo".' })];
   } else if (abaMes === 'lista') {
     const gs = pagamentos.filter(g => g.data.slice(0, 7) === ym).sort((a, b) => a.data.localeCompare(b.data));
