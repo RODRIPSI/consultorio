@@ -4107,7 +4107,9 @@ function telaPagamentos(ym) {
     const rotuloFiltro = filtroDevendo === 'mes' ? nomeMes(hoje7).split(' ')[0] : filtroDevendo === 'anteriores' ? 'meses anteriores' : 'todos os meses';
     const rotuloTotal = filtroDevendo === 'mes' ? `${nomeMes(hoje7).split(' ')[0]}: falta receber` : filtroDevendo === 'anteriores' ? 'Meses anteriores: falta receber' : 'Total devido (todos os meses)';
     corpo = [
-      segmentoEscolha({ todos: 'Todos', mes: nomeMes(hoje7).split(' ')[0], anteriores: 'Meses anteriores' }, filtroDevendo, k => ir({ tela: 'devendo', filtro: k }, false)),
+      // versão 95: ordem do mais antigo para o atual, com o total de cada um no próprio botão
+      segmentoEscolha({ todos: `Todos · R$ ${reaisCurto(somaMeses(todosMeses))}`, anteriores: `Meses anteriores · R$ ${reaisCurto(somaMeses(todosMeses.filter(m => m < hoje7)))}`,
+        mes: `${nomeMes(hoje7).split(' ')[0]} · R$ ${reaisCurto(somaMeses(todosMeses.filter(m => m >= hoje7)))}` }, filtroDevendo, k => ir({ tela: 'devendo', filtro: k }, false)),
       el('div', { class: 'cartao destaque total-clinica' }, el('small', { text: rotuloTotal }), el('strong', { text: 'R$ ' + reais(totalFiltro) }),
         el('span', { text: `${nPac} ${nPac === 1 ? 'paciente' : 'pacientes'} · ${meses.length} ${meses.length === 1 ? 'mês' : 'meses'}${filtroDevendo !== 'todos' ? ` · total de todos os meses: R$ ${reais(totalDevido)}` : ''}` })),
       nPac > 0 && el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => cobrarTodos(paraCobrar, rotuloFiltro) }, icone('mensagem'),
@@ -4151,6 +4153,7 @@ function telaPagamentos(ym) {
 // Uma mensagem por paciente, com as sessões em aberto, o total e a chave Pix. O WhatsApp não deixa
 // um aplicativo mandar sozinho para vários contatos: "Cobrar todos" abre um de cada vez, com o texto pronto.
 // =====================================================================
+const reaisCurto = v => reais(v).replace(/,00$/, '');
 const MODELO_COBRANCA = 'Olá, {nome}! Tudo bem? Passando para lembrar do pagamento em aberto:\n{sessoes}\nTotal: R$ {total}.\nPara pagar por Pix, a chave é: {pix}\nQualquer dúvida, estou à disposição.';
 function linhasCobranca(ats) {
   const porMes = new Map();
