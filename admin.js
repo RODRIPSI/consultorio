@@ -1381,7 +1381,7 @@ async function trocarSenhaAdmAtual() {
 }
 
 // ---------- Troca de arquivo entre os aparelhos ----------
-const FORA_DA_TROCA = new Set(['x:entradapriv', 'x:senhatroca', 'x:conexaogoogle', 'x:migrado7', 'c:chaveadm', 'c:senhabackup']);
+const FORA_DA_TROCA = new Set(['x:entradapriv', 'x:senhatroca', 'x:conexaogoogle', 'x:conexaoagenda', 'x:migrado7', 'c:chaveadm', 'c:senhabackup']);
 async function registrosAdm(paraBackup) {
   await salvarAgora();
   const r = {};
@@ -2014,6 +2014,7 @@ function telaDrive() {
           el('button', { type: 'button', class: 'secundario compacto', text: cfg.clientSecret ? 'Trocar' : 'Colar', onclick: editarSegredoGoogle })),
         linha('repetir', 'Conexão permanente', conexaoPermanente.ativa ? 'Ativa neste aparelho: sincroniza sozinho, sem pedir para reconectar.' : cfg.clientSecret ? 'Ainda não ativada neste aparelho.' : 'Cole a chave secreta acima para ativar.',
           el('button', { type: 'button', class: conexaoPermanente.ativa ? 'secundario compacto' : 'primario compacto', disabled: !(cfg.clientId && cfg.clientSecret), text: conexaoPermanente.ativa ? 'Refazer' : 'Ativar', onclick: ativarConexaoPermanente }))),
+      modo === 'dono' && cartaoAgendaGoogle(linha),
       el('p', { class: 'suave pequeno', text: 'O app só lê as listas acima e só escreve os dois arquivos cifrados da sincronização, na pasta compartilhada. Tudo vai direto do aparelho ao Google, sem passar por nenhum outro servidor. A conexão permanente fica guardada cifrada só neste aparelho; para cortá-la, toque em Trancar e troque a chave secreta, ou remova o acesso em myaccount.google.com.' })));
 }
 
@@ -2585,6 +2586,7 @@ const ESCOPO_ESCRITA = 'https://www.googleapis.com/auth/drive';
 const tokenSyncValido = () => !!(tokenGoogle && tokenGoogle.escopo === ESCOPO_ESCRITA && tokenGoogle.expira > Date.now() + 60000);
 let ultimaSyncAuto = 0;
 async function sincronizarSozinho() {
+  setTimeout(() => { if (modo === 'dono') atualizarAgendaGoogle({ silencioso: true }); }, 4000);   // versão 83
   if (!sincronizando && Cofre.aberto() && senhaTroca && !tokenSyncValido()) await renovarTokenPermanente();   // versão 76
   if (sincronizando || !Cofre.aberto() || !senhaTroca || !tokenSyncValido()) return; // versão 60: também com o app minimizado, enquanto o Android deixar
   if (!driveCfg().pastaSync || !driveCfg().clientId || Date.now() - ultimaSyncAuto < 60000) return;
@@ -4033,4 +4035,164 @@ function telaPagamentos(ym) {
     cabecalho('Pagamentos', { voltar: true }),
     el('div', { class: 'conteudo pilha' }, segmentoAbasMes(ym), ...corpo),
     el('button', { type: 'button', class: 'fab estendido', onclick: () => { pagamentoRasc = null; ir({ tela: 'pagar' }); } }, icone('mais'), el('span', { text: 'Registrar pagamento' })));
+}
+
+
+// =====================================================================
+// Versão 83: Agenda do Google (só no aparelho do Rodrigo).
+// O app cria uma agenda própria, "Consultório", na conta do Google, e mantém nela os horários das próximas
+// 8 semanas. Por sigilo, cada evento leva só "Sessão" e as iniciais (ou só "Sessão") — nenhum nome completo,
+// telefone ou dado clínico. Desmarcações, feriados e encerramentos somem da agenda na atualização seguinte.
+// =====================================================================
+const ESCOPO_AGENDA = 'https://www.googleapis.com/auth/calendar';
+const CHAVE_AGENDA = 'x:conexaoagenda';
+const agendaGoogle = { token: null, refresh: null, carregado: false, rodando: false };
+async function lerConexaoAgenda() {
+  if (agendaGoogle.carregado || !Cofre.aberto()) return;
+  try { const r = await Cofre.ler(CHAVE_AGENDA); agendaGoogle.refresh = r?.token || null; agendaGoogle.calendarioId = r?.calendarioId || null; agendaGoogle.ultima = r?.ultima || null; } catch { }
+  agendaGoogle.carregado = true;
+}
+async function guardarConexaoAgenda() {
+  await Cofre.salvar(CHAVE_AGENDA, { token: agendaGoogle.refresh, calendarioId: agendaGoogle.calendarioId || null, ultima: agendaGoogle.ultima || null });
+}
+function cartaoAgendaGoogle(linha) {
+  const cfg = driveCfg();
+  if (!agendaGoogle.carregado) lerConexaoAgenda().then(() => { if (agendaGoogle.refresh) render(history.state); });
+  const titulo = el('select', { 'aria-label': 'Título dos eventos' },
+    el('option', { value: 'iniciais', text: 'Sessão – iniciais (ex.: Sessão – A.S.)' }), el('option', { value: 'sessao', text: 'Só "Sessão"' }));
+  titulo.value = cfg.agendaTitulo || 'iniciais';
+  titulo.addEventListener('change', async () => { cfg.agendaTitulo = titulo.value; salvarPerfil(); await salvarAgora(); atualizarAgendaGoogle(); });
+  const duracao = el('select', { 'aria-label': 'Duração da sessão' }, ...[30, 40, 45, 50, 60].map(m => el('option', { value: String(m), text: m + ' minutos' })));
+  duracao.value = String(cfg.agendaDuracao || 50);
+  duracao.addEventListener('change', async () => { cfg.agendaDuracao = Number(duracao.value); salvarPerfil(); await salvarAgora(); atualizarAgendaGoogle(); });
+  const ligada = !!agendaGoogle.refresh;
+  return el('section', { class: 'cartao' }, el('h3', { class: 'secao-titulo', text: 'Agenda do Google' }),
+    linha('calendario', 'Conectar à Agenda do Google', ligada ? `Conectada. Os horários das próximas 8 semanas ficam na agenda "Consultório"${agendaGoogle.ultima ? ` · última atualização: ${dataBR(agendaGoogle.ultima)}` : ''}.`
+      : cfg.clientSecret ? 'Cria a agenda "Consultório" na sua conta do Google e mantém os horários atualizados sozinho.' : 'Precisa antes da "Chave secreta do cliente" (acima).',
+      el('button', { type: 'button', class: ligada ? 'secundario compacto' : 'primario compacto', disabled: !(cfg.clientId && cfg.clientSecret), text: ligada ? 'Refazer' : 'Conectar', onclick: conectarAgendaGoogle })),
+    ligada && linha('repetir', 'Atualizar agora', 'Também acontece sozinho, junto com a sincronização.',
+      el('button', { type: 'button', class: 'secundario compacto', text: 'Atualizar', onclick: () => atualizarAgendaGoogle() })),
+    el('label', { class: 'campo' }, el('span', { text: 'Título dos eventos' }), titulo),
+    el('label', { class: 'campo' }, el('span', { text: 'Duração de cada sessão na agenda' }), duracao),
+    ligada && el('button', { type: 'button', class: 'link', text: 'Desconectar a Agenda do Google', onclick: desconectarAgendaGoogle }),
+    el('p', { class: 'suave pequeno', text: 'Por sigilo, a Agenda do Google recebe só o horário e "Sessão" com as iniciais (ou só "Sessão"): nada de nome completo, telefone ou anotação. A agenda "Consultório" é separada da sua agenda pessoal e pode ser escondida ou mostrada no app Google Agenda.' }));
+}
+function conectarAgendaGoogle() {
+  const cfg = driveCfg();
+  const iniciar = () => {
+    const cliente = google.accounts.oauth2.initCodeClient({
+      client_id: cfg.clientId.trim(), scope: ESCOPO_AGENDA, ux_mode: 'popup',
+      callback: async r => {
+        if (r.error || !r.code) return aviso('Agenda não conectada', 'O Google não autorizou. Tente de novo e toque em "Permitir".');
+        try {
+          const j = await trocarNoGoogle({ code: r.code, redirect_uri: 'postmessage', grant_type: 'authorization_code' });
+          if (!j.refresh_token) return aviso('Agenda não conectada', 'O Google não mandou a autorização permanente. Em myaccount.google.com → Segurança → Conexões de terceiros, remova o acesso deste app e toque em Conectar de novo.');
+          agendaGoogle.refresh = j.refresh_token; agendaGoogle.carregado = true;
+          agendaGoogle.token = { valor: j.access_token, expira: Date.now() + (Number(j.expires_in) || 3600) * 1000 };
+          await guardarConexaoAgenda();
+          await atualizarAgendaGoogle();
+          await aviso('Agenda do Google conectada', 'Pronto. Abra o app Google Agenda: aparece a agenda "Consultório" com os horários das próximas 8 semanas. Ela se atualiza sozinha.');
+          render(history.state);
+        } catch (e) {
+          aviso('Agenda não conectada', e.message === 'accessNotConfigured' || /disabled|not been used/i.test(e.message) ? 'Falta ligar a "Google Calendar API" no Google Cloud (APIs e serviços → Biblioteca → Google Calendar API → Ativar).' : 'Confira a internet e a chave secreta e tente de novo.');
+        }
+      },
+      error_callback: () => aviso('Agenda não conectada', 'A janela do Google foi fechada antes de terminar.')
+    });
+    liberarSaidaTemporaria();
+    cliente.requestCode();
+  };
+  if (window.google?.accounts?.oauth2) iniciar(); else carregarGoogle().then(iniciar).catch(() => aviso('Sem internet', 'Verifique a internet e tente de novo.'));
+}
+async function desconectarAgendaGoogle() {
+  const ok = await dialogo({ titulo: 'Desconectar a Agenda do Google?', texto: 'O app para de atualizar a agenda "Consultório". Os eventos que já estão lá continuam até você apagar a agenda no Google Agenda.',
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Desconectar', valor: true, estilo: 'perigo' }] });
+  if (!ok) return;
+  agendaGoogle.refresh = null; agendaGoogle.token = null; agendaGoogle.calendarioId = null;
+  try { await Cofre.apagar(CHAVE_AGENDA); } catch { }
+  render(history.state);
+}
+async function tokenAgenda() {
+  await lerConexaoAgenda();
+  if (agendaGoogle.token && agendaGoogle.token.expira > Date.now() + 60000) return agendaGoogle.token.valor;
+  if (!agendaGoogle.refresh) return null;
+  const j = await trocarNoGoogle({ refresh_token: agendaGoogle.refresh, grant_type: 'refresh_token' });
+  agendaGoogle.token = { valor: j.access_token, expira: Date.now() + (Number(j.expires_in) || 3600) * 1000 };
+  return agendaGoogle.token.valor;
+}
+async function apiAgenda(token, caminho, metodo = 'GET', corpo) {
+  const r = await fetch('https://www.googleapis.com/calendar/v3' + caminho, { method: metodo,
+    headers: { Authorization: 'Bearer ' + token, ...(corpo ? { 'Content-Type': 'application/json' } : {}) }, body: corpo ? JSON.stringify(corpo) : undefined });
+  if (r.status === 204) return {};
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(j.error?.errors?.[0]?.reason || j.error?.status || String(r.status)); e.status = r.status; throw e; }
+  return j;
+}
+function idEventoAgenda(pid, data, hora) {   // id fixo por paciente+data+hora: a atualização não duplica
+  let h1 = 0x811c9dc5, h2 = 0x01000193;
+  for (const ch of `${pid}|${data}|${hora}`) { h1 = Math.imul(h1 ^ ch.charCodeAt(0), 16777619) >>> 0; h2 = Math.imul(h2 + ch.charCodeAt(0), 2246822519) >>> 0; }
+  return 'cs' + h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0') + data.replace(/-/g, '');
+}
+function eventosDesejados() {
+  const cfg = driveCfg(), dur = Number(cfg.agendaDuracao) || 50;
+  const mapa = new Map();
+  for (let i = 0; i < 56; i++) {
+    const d = somarDias(hojeISO(), i);
+    for (const it of agendaDoDia(d)) {
+      if (!it.hora) continue;
+      const c = it.c;
+      const ini = new Date(`${d}T${it.hora.slice(0, 5)}:00-03:00`), fim = new Date(ini.getTime() + dur * 60000);
+      const fmt = x => new Date(x.getTime() - 3 * 3600e3).toISOString().slice(0, 19);
+      const ins = iniciais(c.nome).split('').join('.') + (iniciais(c.nome) ? '.' : '');
+      const id = idEventoAgenda(c.id, d, it.hora);
+      mapa.set(id, { id, summary: cfg.agendaTitulo === 'sessao' || !ins ? 'Sessão' : `Sessão – ${ins}`,
+        start: { dateTime: fmt(ini), timeZone: 'America/Sao_Paulo' }, end: { dateTime: fmt(fim), timeZone: 'America/Sao_Paulo' },
+        extendedProperties: { private: { consultorio: '1' } }, reminders: { useDefault: true } });
+    }
+  }
+  return mapa;
+}
+async function atualizarAgendaGoogle({ silencioso = false } = {}) {
+  if (modo !== 'dono' || !Cofre.aberto() || agendaGoogle.rodando) return;
+  await lerConexaoAgenda();
+  if (!agendaGoogle.refresh) return;
+  if (silencioso && agendaGoogle.ultima && Date.now() - new Date(agendaGoogle.ultima) < 15 * 60000) return;   // sozinho: no máximo a cada 15 minutos
+  agendaGoogle.rodando = true;
+  try {
+    const token = await tokenAgenda();
+    if (!token) return;
+    // a agenda própria "Consultório"
+    if (agendaGoogle.calendarioId) { try { await apiAgenda(token, `/calendars/${encodeURIComponent(agendaGoogle.calendarioId)}`); } catch (e) { if (e.status === 404) agendaGoogle.calendarioId = null; else throw e; } }
+    if (!agendaGoogle.calendarioId) {
+      const cal = await apiAgenda(token, '/calendars', 'POST', { summary: 'Consultório', timeZone: 'America/Sao_Paulo', description: 'Horários das sessões (criada pelo app Consultório). Só iniciais, por sigilo.' });
+      agendaGoogle.calendarioId = cal.id;
+    }
+    const cal = encodeURIComponent(agendaGoogle.calendarioId);
+    const desejados = eventosDesejados();
+    const de = new Date(hojeISO() + 'T00:00:00-03:00').toISOString(), ate = new Date(somarDias(hojeISO(), 57) + 'T00:00:00-03:00').toISOString();
+    const existentes = new Map(); let pagina = '';
+    do {
+      const j = await apiAgenda(token, `/calendars/${cal}/events?privateExtendedProperty=consultorio%3D1&timeMin=${encodeURIComponent(de)}&timeMax=${encodeURIComponent(ate)}&singleEvents=true&maxResults=2500&showDeleted=true${pagina ? '&pageToken=' + pagina : ''}`);
+      for (const e of j.items || []) existentes.set(e.id, e);
+      pagina = j.nextPageToken || '';
+    } while (pagina);
+    let novos = 0, mudados = 0, removidos = 0;
+    for (const [id, ev] of desejados) {
+      const atual = existentes.get(id);
+      if (!atual) {
+        try { await apiAgenda(token, `/calendars/${cal}/events`, 'POST', ev); novos++; }
+        catch (e) { if (e.status === 409) { await apiAgenda(token, `/calendars/${cal}/events/${id}`, 'PUT', { ...ev, status: 'confirmed' }); mudados++; } else throw e; }
+      } else if (atual.status === 'cancelled' || atual.summary !== ev.summary || (atual.start?.dateTime || '').slice(0, 16) !== ev.start.dateTime.slice(0, 16) || (atual.end?.dateTime || '').slice(0, 16) !== ev.end.dateTime.slice(0, 16)) {
+        await apiAgenda(token, `/calendars/${cal}/events/${id}`, 'PUT', { ...ev, status: 'confirmed' }); mudados++;
+      }
+    }
+    for (const [id, e] of existentes) if (!desejados.has(id) && e.status !== 'cancelled') { await apiAgenda(token, `/calendars/${cal}/events/${id}`, 'DELETE'); removidos++; }
+    agendaGoogle.ultima = agoraISO();
+    await guardarConexaoAgenda();
+    if (!silencioso) indicarStatus(`Agenda do Google atualizada (${novos} novos, ${mudados} alterados, ${removidos} removidos).`);
+  } catch (e) {
+    if (e.message === 'invalid_grant') { agendaGoogle.refresh = null; try { await Cofre.apagar(CHAVE_AGENDA); } catch { } }
+    if (!silencioso) aviso('Agenda do Google não atualizada', e.message === 'invalid_grant' ? 'A conexão com a Agenda foi cortada. Toque em Conectar de novo.'
+      : /accessNotConfigured|disabled/i.test(e.message) ? 'Falta ligar a "Google Calendar API" no Google Cloud (APIs e serviços → Biblioteca → Google Calendar API → Ativar).' : 'Verifique a internet e tente de novo.');
+  } finally { agendaGoogle.rodando = false; }
 }
