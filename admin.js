@@ -564,7 +564,7 @@ function cartaoHorarios(c) {
 }
 
 function abaAtendimentos(c) {
-  const todos = [...atendimentosDe(c.id)].reverse();
+  const todos = [...atendimentosDe(c.id)].filter(a => !a.divida).reverse();   // versão 78: dívidas anteriores aparecem só em Pagamentos
   const lista = verTodosAtend ? todos : todos.slice(0, 15);
   return el('div', { class: 'pilha' },
     cartaoHorarios(c),
@@ -724,11 +724,14 @@ function abaPagamentosAdm(c) {
         el('div', { class: 'pilha-pequena' },
           el('div', { class: 'mes-titulo' }, el('strong', { text: nomeMes(mes) }), el('span', { class: 'suave', text: `${lista.length} ${lista.length === 1 ? 'consulta' : 'consultas'} · R$ ${reais(lista.reduce((t, a) => t + valorDe(a), 0))}` })),
           ...lista.sort((x, y) => x.data.localeCompare(y.data)).map(a => el('div', { class: 'pag-linha' },
-            el('span', { class: 'pag-info' }, el('strong', { text: `${dataCurta(a.data)}, ${diaSemana(a.data)}` }),
-              el('span', { class: 'suave', text: `R$ ${reais(valorDe(a))}${a.presenca === 'falta' ? ' (faltou: cobrada)' : a.presenca === 'tardia' ? ' (desmarcou em cima da hora: cobrada)' : ''}` })),
+            el('span', { class: 'pag-info' }, el('strong', { text: a.divida ? `Dívida anterior · ${nomeMes(a.data.slice(0, 7))}` : `${dataCurta(a.data)}, ${diaSemana(a.data)}` }),
+              el('span', { class: 'suave', text: `R$ ${reais(valorDe(a))}${a.divida && a.obs ? ' · ' + a.obs : ''}${a.presenca === 'falta' ? ' (faltou: cobrada)' : a.presenca === 'tardia' ? ' (desmarcou em cima da hora: cobrada)' : ''}` })),
+            botaoIcone('Corrigir ou excluir esta cobrança', 'lixeira', () => corrigirCobranca(c, a)),
             el('button', { type: 'button', class: 'chip acao marcado', text: 'Pagou', onclick: () => pagarSessao(c, a) })))))
         : el('p', { class: 'suave', text: 'Nada pendente. 🎉' })),
+    el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => lancarDividaAnterior(c) }, icone('mais'), el('span', { text: 'Lançar dívida de meses anteriores' })),
     cartao('Pagamentos recebidos', 'sessoes',
+      gs.length > 0 && el('p', { class: 'suave pequeno', text: 'Pagamento lançado errado? Toque nele e depois em "Excluir pagamento".' }),
       gs.length ? gs.slice(0, 24).map(g => el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => dialogoPagamento(c, g) },
         el('span', { class: 'pag-info' }, el('strong', { text: `R$ ${reais(valorNum(g.valor))}` }),
           el('span', { class: 'suave', text: `${dataCurta(g.data)} · ${g.atendimentos?.length || 0} ${g.atendimentos?.length === 1 ? 'atendimento' : 'atendimentos'}${g.comprovanteId ? ' · com comprovante' : ''}` })),
@@ -3231,7 +3234,8 @@ function telaMesAba(ym) {
             )),
         el('strong', { class: 'valor-lista', text: x.total ? 'R$ ' + reais(x.total) : 'valor a definir' })))
         : el('div', { class: 'cartao vazio-cartao' }, el('span', { class: 'ic-bolha grande' }, icone('moeda')), el('p', { text: 'Ninguém devendo. 🎉' })),
-      el('p', { class: 'suave pequeno', text: 'Toque no paciente para ver as sessões em aberto, registrar o pagamento ou mandar a mensagem de cobrança.' })];
+      el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => lancarDividaAnterior() }, icone('mais'), el('span', { text: 'Lançar dívida de meses anteriores' })),
+      el('p', { class: 'suave pequeno', text: 'Toque no paciente para ver as sessões em aberto, registrar o pagamento, corrigir uma cobrança errada ou mandar a mensagem de cobrança. Dívidas de antes do aplicativo (outubro e meses anteriores): use "Lançar dívida de meses anteriores".' })];
   } else if (abaMes === 'recibos') {
     // Versão 57: só os pacientes que pedem recibo, com o que pagaram no mês e se o comprovante já saiu.
     const de = ym + '-01', ate = ym + '-' + String(new Date(Number(ym.slice(0, 4)), Number(ym.slice(5)), 0).getDate()).padStart(2, '0');
@@ -3817,4 +3821,56 @@ async function renovarTokenPermanente() {
     } finally { renovando = null; }
   })();
   return renovando;
+}
+
+
+// =====================================================================
+// Versão 78: dívidas de antes do aplicativo e correção de cobranças erradas.
+// A dívida anterior vira um item "a receber" daquele mês (sem dia de sessão): entra em Quem deve,
+// no total dos devedores, no Fechamento do mês dela e na tela do paciente, e sai com "Pagou", como uma sessão.
+// =====================================================================
+async function lancarDividaAnterior(c0 = null) {
+  const nomes = cadastros.filter(c => !c.excluido).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  const sel = el('select', { 'aria-label': 'Paciente' }, el('option', { value: '', text: 'Escolha o paciente' }), ...nomes.map(c => el('option', { value: c.id, text: c.nome })));
+  if (c0) sel.value = c0.id;
+  const ymPadrao = somarMeses(hojeISO().slice(0, 7), -1);
+  const mes = el('input', { type: 'month', value: ymPadrao, max: hojeISO().slice(0, 7), 'aria-label': 'Mês da dívida' });
+  const valor = el('input', { type: 'text', inputmode: 'decimal', placeholder: '250,00', 'aria-label': 'Valor' });
+  const obs = el('input', { type: 'text', placeholder: 'Ex.: 2 sessões (06 e 13/10)', 'aria-label': 'Observação' });
+  const r = await janela('Lançar dívida de meses anteriores', [
+    el('p', { class: 'suave pequeno', text: 'Para o que o paciente ficou devendo antes de começar a usar o aplicativo. Se ele deve em mais de um mês, lance um mês de cada vez.' }),
+    el('label', { class: 'campo' }, el('span', { text: 'Paciente' }), sel),
+    el('label', { class: 'campo' }, el('span', { text: 'Mês da dívida' }), mes),
+    el('label', { class: 'campo' }, el('span', { text: 'Valor devido (R$)' }), valor),
+    el('label', { class: 'campo' }, el('span', { text: 'Observação (opcional)' }), obs)
+  ], [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Lançar e lançar outro', valor: 'mais' }, { rotulo: 'Lançar', valor: 'ok', estilo: 'primario' }]);
+  if (!r) return;
+  const c = cadastroDe(sel.value), v = valorNum(valor.value), ym = (mes.value || '').slice(0, 7);
+  if (!c) return aviso('Falta o paciente', 'Escolha o paciente na lista.');
+  if (!v) return aviso('Falta o valor', 'Digite quanto ele está devendo nesse mês.');
+  if (!/^\d{4}-\d{2}$/.test(ym)) return aviso('Falta o mês', 'Escolha o mês da dívida.');
+  const agora = agoraISO();
+  const a = { id: crypto.randomUUID(), pid: c.id, data: ym + '-01', hora: '', presenca: null, pagamento: 'areceber', valor: String(v), divida: true, obs: obs.value.trim(),
+    origem: 'dívida anterior', criadoEm: agora, atualizadoEm: agora };
+  atendimentos.push(a); salvarAt(a);
+  await salvarAgora();
+  indicarStatus(`Dívida de ${primeiroNome(c.nome)} lançada: R$ ${reais(v)} (${nomeMes(ym)}).`);
+  if (r === 'mais') return lancarDividaAnterior();
+  render(history.state);
+}
+async function corrigirCobranca(c, a) {
+  const desc = a.divida ? `Dívida anterior de ${nomeMes(a.data.slice(0, 7))}` : `Sessão de ${dataComDia(a.data)}${a.hora ? ', ' + horaCurta(a.hora) : ''}`;
+  const r = await janela('Corrigir esta cobrança', [el('p', { text: `${c.nome} · ${desc} · R$ ${reais(valorDe(a))}` }),
+    el('p', { class: 'suave pequeno', text: a.divida ? 'Excluir apaga este lançamento de dívida.' : '"Não cobrar" mantém a sessão no histórico, mas tira a cobrança. "Excluir" apaga a sessão (use quando ela foi marcada por engano).' })],
+    [{ rotulo: 'Fechar', valor: null }, { rotulo: '✏️ Mudar o valor', valor: 'valor' }, !a.divida && { rotulo: 'Não cobrar', valor: 'naocobrar' }, { rotulo: 'Excluir', valor: 'excluir', estilo: 'perigo' }].filter(Boolean));
+  if (!r) return;
+  if (r === 'valor') return mudarValorSessao(c, a);
+  if (r === 'naocobrar') { a.pagamento = 'naocobrar'; a.abonada = true; salvarAt(a); await salvarAgora(); return render(history.state); }
+  if (r === 'excluir') {
+    const ok = await dialogo({ titulo: 'Excluir?', texto: `${desc} será apagada${a.divida ? '' : ' da agenda e dos pagamentos'}.`, botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Excluir', valor: true, estilo: 'perigo' }] });
+    if (!ok) return;
+    await excluirAtendimento(a);
+    await salvarAgora();
+    render(history.state);
+  }
 }
