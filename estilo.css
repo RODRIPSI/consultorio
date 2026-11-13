@@ -534,3 +534,4 @@ html.app-oculto #app { filter: blur(22px); }
 .linha-devedor { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent); }
 .linha-devedor > .pag-linha { flex: 1; border-bottom: 0; min-width: 0; }
 .linha-devedor .botoes-mini { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.lista-marcar { max-height: 55vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }

@@ -114,7 +114,8 @@ function renderAdm(s) {
   if (s.tela === 'adm') { telaAdm(s.id, s.aba || 'atendimentos'); return true; }
   if (s.tela === 'admInicio') { telaInicioAdm(); return true; }
   if (s.tela === 'admPacientes') { telaInicioAdm(true); return true; }
-  if (s.tela === 'mes') { telaMes(s.ym || hojeISO().slice(0, 7)); return true; }
+  if (s.tela === 'recibos') { abaMes = 'recibos'; telaMesAba(s.ym || hojeISO().slice(0, 7)); return true; }   // versão 88: tela própria (o voltar volta para Pagamentos)
+  if (s.tela === 'mes') { if (abaMes === 'recibos') abaMes = 'mes'; telaMes(s.ym || hojeISO().slice(0, 7)); return true; }
   if (s.tela === 'pagar') { telaPagar(s); return true; }
   if (s.tela === 'notaRecebida') { telaNotaRecebida(s); return true; }
   if (s.tela === 'drive') { telaDrive(); return true; }
@@ -3255,10 +3256,11 @@ function cartaoPagamentosInicio(ym, tot) {
 const MESES_CURTOS = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
 const ddmm = d => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
 function telaMesAba(ym) {
+  const telaNav = abaMes === 'recibos' ? 'recibos' : 'mes';
   const nav = el('div', { class: 'navega' },
-    el('button', { type: 'button', class: 'secundario compacto com-icone', onclick: () => ir({ tela: 'mes', ym: somarMeses(ym, -1) }, false) }, icone('voltar'), el('span', { text: 'Anterior' })),
+    el('button', { type: 'button', class: 'secundario compacto com-icone', onclick: () => ir({ tela: telaNav, ym: somarMeses(ym, -1) }, false) }, icone('voltar'), el('span', { text: 'Anterior' })),
     el('strong', { text: abaMes === 'mensais' ? 'Últimos 12 meses' : nomeMes(ym) }),
-    el('button', { type: 'button', class: 'secundario compacto com-icone', disabled: ym >= hojeISO().slice(0, 7), onclick: () => ir({ tela: 'mes', ym: somarMeses(ym, 1) }, false) }, el('span', { text: 'Seguinte' }), icone('seguinte')));
+    el('button', { type: 'button', class: 'secundario compacto com-icone', disabled: ym >= hojeISO().slice(0, 7), onclick: () => ir({ tela: telaNav, ym: somarMeses(ym, 1) }, false) }, el('span', { text: 'Seguinte' }), icone('seguinte')));
   let corpo;
   if (abaMes === 'fechamento') corpo = corpoFechamento(ym);
   else if (abaMes === 'devendo') {
@@ -3305,9 +3307,10 @@ function telaMesAba(ym) {
           el('div', { class: 'linha-copiar' },
             el('span', { class: 'selo ' + (!x.gs.length ? '' : x.feito ? 'pago' : 'areceber'), text: !x.gs.length ? 'Sem pagamento no mês' : x.feito ? '✅ Emitido' : '⏳ A emitir' }),
             el('button', { type: 'button', class: x.gs.length && !x.feito ? 'primario compacto' : 'secundario compacto', text: 'Emitir', onclick: () => escolherRecibo(x.c, { soPagas: true, de, ate }) })));
-      }) : el('div', { class: 'cartao vazio-cartao' }, el('span', { class: 'ic-bolha grande' }, icone('assinar')),
-        el('p', { text: 'Nenhum paciente marcado. No cadastro do paciente, marque "Este paciente pede recibo".' })),
-      el('p', { class: 'suave pequeno', text: 'Para entrar nesta lista: paciente → Cadastro → "Este paciente pede recibo". "Emitir" oferece o recibo do aplicativo ou a nota fiscal no site.' })];
+      }) : el('div', { class: 'cartao vazio-cartao' }, el('p', { text: 'Nenhum paciente marcado ainda.' })),
+      el('button', { type: 'button', class: linhas.length ? 'secundario com-icone centralizado' : 'primario com-icone centralizado', onclick: escolherPacientesRecibo }, icone('mais'),
+        el('span', { text: linhas.length ? 'Marcar ou desmarcar pacientes' : 'Escolher os pacientes que pedem recibo' })),
+      el('p', { class: 'suave pequeno', text: '"Emitir" oferece o recibo do aplicativo ou a nota fiscal no site. Também dá para marcar no cadastro de cada paciente: "Este paciente pede recibo".' })];
   } else if (abaMes === 'lista') {
     const gs = pagamentos.filter(g => g.data.slice(0, 7) === ym).sort((a, b) => a.data.localeCompare(b.data));
     const total = gs.reduce((t, g) => t + valorNum(g.valor), 0);
@@ -3348,6 +3351,7 @@ function telaMesAba(ym) {
       el('div', { class: 'lista-legenda' }, ...[['✅', 'Pagou'], ['🟡', 'Pagou uma parte'], ['🔴', 'Em atraso'], ['⏳', 'Mês em andamento, ainda não pago'], ['❌', 'Sem sessões no mês']].map(([e, t]) => el('div', {}, el('span', { class: 'lista-emoji', text: e }), el('span', { text: t })))),
       el('p', { class: 'suave pequeno', text: 'É o quadro de "Pagamentos mensais", preenchido sozinho. DT é o dia combinado de pagamento (no cadastro do paciente).' })];
   }
+  if (abaMes === 'recibos') return mostrar(cabecalho('Quem pede recibo', { voltar: true }), el('div', { class: 'conteudo pilha' }, nav, ...corpo));   // versão 88: sem abas e sem "Registrar pagamento"
   mostrar(cabecalho('Pagamentos', { voltar: true }),
     el('div', { class: 'conteudo pilha' }, segmentoAbasMes(ym), abaMes !== 'devendo' && abaMes !== 'fechamento' && nav, ...corpo),
     el('button', { type: 'button', class: 'fab estendido', onclick: () => { pagamentoRasc = null; ir({ tela: 'pagar' }); } }, icone('mais'), el('span', { text: 'Registrar pagamento' })));
@@ -4004,7 +4008,7 @@ function telaPagamentos(ym) {
           el('span', { class: 'pag-info' }, el('strong', { text: x.c.nome }), el('span', { class: 'suave pequeno', text: `${x.c.nf ? 'Nota fiscal' : 'Recibo'} · pagou R$ ${reais(x.v)}` })),
           el('button', { type: 'button', class: 'primario compacto', text: 'Emitir', onclick: () => escolherRecibo(x.c, { soPagas: true, de: ym + '-01', ate: ym + '-31' }) })))),
       el('div', { class: 'botoes-linha' },
-        el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => { abaMes = 'recibos'; telaMes(ym); } }, icone('assinar'), el('span', { text: `Quem pede recibo (${cadastros.filter(pedeRecibo).length})` })),
+        el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => ir({ tela: 'recibos', ym }) }, icone('assinar'), el('span', { text: `Quem pede recibo (${cadastros.filter(pedeRecibo).length})` })),
         el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => pdfFechamento(ym, f, nomeMes(ym)) }, icone('assinar'), el('span', { text: 'PDF do mês' })))];
   } else if (abaMes === 'devendo') {
     // agrupa tudo que está em aberto pelo mês da sessão (ou da dívida lançada)
@@ -4304,5 +4308,26 @@ async function apagarDividaMes(c, ats, m) {
     for (const a of ats) await excluirAtendimento(a);
   } else for (const a of ats) { if (a.divida) await excluirAtendimento(a); else { a.pagamento = 'naocobrar'; a.abonada = true; a.pagamentoManual = true; salvarAt(a); } }
   await salvarAgora();
+  render(history.state);
+}
+
+
+// Versão 88: marcar de uma vez quem pede recibo (lista com caixinhas; quem está em atendimento aparece primeiro).
+async function escolherPacientesRecibo() {
+  const atual = c => { const p = pacientes.find(x => x.id === c.id); return p && typeof atendendoAgora === 'function' ? atendendoAgora(p) : !c.arquivado; };
+  const lista = cadastros.filter(c => !c.excluido && !c.arquivado).sort((a, b) => (atual(b) - atual(a)) || a.nome.localeCompare(b.nome, 'pt-BR'));
+  const caixas = lista.map(c => ({ c, cx: el('input', { type: 'checkbox', checked: !!(c.recibo || c.nf) }) }));
+  const r = await janela('Quem pede recibo?', [
+    el('p', { class: 'suave pequeno', text: 'Marque os pacientes que pedem recibo ou nota fiscal. Quem está em atendimento aparece primeiro.' }),
+    el('div', { class: 'lista-marcar' }, ...caixas.map(({ c, cx }) => el('label', { class: 'marcar' }, cx, el('span', { text: c.nome + (c.nf ? ' (nota fiscal)' : '') }))))
+  ], [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }]);
+  if (!r) return;
+  let n = 0;
+  for (const { c, cx } of caixas) {
+    const antes = !!(c.recibo || c.nf);
+    if (cx.checked !== antes) { c.recibo = cx.checked; if (!cx.checked) c.nf = false; c.atualizadoEm = agoraISO(); salvarCadastro(c); n++; }
+  }
+  await salvarAgora();
+  if (n) indicarStatus(`${cadastros.filter(pedeRecibo).length} pacientes pedem recibo.`);
   render(history.state);
 }
