@@ -535,3 +535,4 @@ html.app-oculto #app { filter: blur(22px); }
 .linha-devedor > .pag-linha { flex: 1; border-bottom: 0; min-width: 0; }
 .linha-devedor .botoes-mini { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
 .lista-marcar { max-height: 55vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.linha-devedor > .cartao.paciente { flex: 1; min-width: 0; }

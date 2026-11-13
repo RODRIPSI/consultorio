@@ -1242,6 +1242,27 @@ function cartaoSemNota() {
     lista.slice(0, 8).map(linhaPendencia),
     el('button', { type: 'button', class: 'link', text: lista.length > 8 ? `Ver todas (${lista.length})` : 'Ver a lista de quem pede recibo', onclick: () => ir({ tela: 'recibos', ym: hojeISO().slice(0, 7) }) }));
 }
+// Versão 98: WhatsApp e lixeira na lista "Quem pede recibo".
+async function enviarComprovanteWhats(c, ym, gs) {
+  const recibos = docsDe(c.id, 'emitido').filter(d => d.modelo === 'recibo' && (d.data || '').slice(0, 7) === ym).map(d => ({ d, g: gs[gs.length - 1] }));
+  const notas = gs.filter(g => g.nf?.docId).map(g => ({ d: documentos.find(d => d.id === g.nf.docId), g })).filter(x => x.d);
+  const todos = [...recibos, ...notas].sort((a, b) => (a.d.criadoEm || a.d.data || '').localeCompare(b.d.criadoEm || b.d.data || ''));
+  if (todos.length) { const ult = todos[todos.length - 1]; return enviarNotaWhatsApp(c, ult.d, ult.g); }
+  const n = numeroWhats(c.telefone);
+  const r = await janela(`WhatsApp · ${c.nome}`, [el('p', { text: `Ainda não há recibo nem nota de ${nomeMes(ym).split(' ')[0].toLowerCase()} guardado no aplicativo.` }),
+    el('p', { class: 'suave pequeno', text: 'Emita primeiro: no fim, o aplicativo oferece enviar pelo WhatsApp. Ou abra só a conversa.' })],
+    [{ rotulo: 'Cancelar', valor: null }, n && { rotulo: 'Abrir conversa', valor: 'conversa' }, { rotulo: 'Emitir', valor: 'emitir', estilo: 'primario' }].filter(Boolean));
+  if (r === 'conversa') abrirExterno(`https://wa.me/${n}`);
+  if (r === 'emitir') escolherRecibo(c, { soPagas: true, de: ym + '-01', ate: ym + '-31' });
+}
+async function tirarDaListaRecibo(c) {
+  const ok = await dialogo({ titulo: 'Tirar da lista?', texto: `${c.nome} deixa de aparecer em "Quem pede recibo" e nas pendências de recibo ou nota. Os recibos e notas já emitidos continuam guardados. Dá para marcar de novo quando quiser.`,
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Tirar da lista', valor: true, estilo: 'perigo' }] });
+  if (!ok) return;
+  c.recibo = false; c.nf = false; c.atualizadoEm = agoraISO(); salvarCadastro(c); await salvarAgora();
+  indicarStatus(`${primeiroNome(c.nome)} saiu da lista de recibo`);
+  render(history.state);
+}
 // Escolha rápida: não pede / recibo / nota fiscal. Usada na lista de pacientes, na página do paciente e depois do pagamento.
 async function escolherTipoRecibo(c, depois) {
   const r = await janela('Comprovante de pagamento', [el('p', { text: c.nome }),
@@ -2555,12 +2576,13 @@ function telaFeriados(ano) {
 function mensagemNota(c, d, g) {
   const numero = (g?.nf?.numero || '').trim();
   const ref = g?.data ? nomeMes(g.data.slice(0, 7)).toLowerCase() : '';
+  if (d?.modelo === 'recibo') return `Olá, ${primeiroNome(c.nome)}! Segue o recibo${ref ? ` referente às sessões de ${ref}` : ''}. Qualquer dúvida, estou à disposição.`;
   return `Olá, ${primeiroNome(c.nome)}! Segue a nota fiscal${numero ? ' nº ' + numero : ''}${ref ? ` referente às sessões de ${ref}` : ''}. Qualquer dúvida, estou à disposição.`;
 }
 async function enviarNotaWhatsApp(c, d, g) {
   const texto = mensagemNota(c, d, g);
   try { await navigator.clipboard?.writeText(texto); } catch { }
-  const ok = await dialogo({ titulo: `Enviar para ${c.nome}`,
+  const ok = await dialogo({ titulo: `Enviar ${d?.modelo === 'recibo' ? 'recibo' : 'nota'} para ${c.nome}`,
     texto: `Vai abrir a lista de compartilhamento: escolha o WhatsApp e depois ${primeiroNome(c.nome)}. A mensagem vai junto; se não aparecer, é só colar, porque ela já está copiada.`,
     botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Abrir WhatsApp', valor: true, estilo: 'primario' }] });
   if (!ok) return;
@@ -3368,13 +3390,18 @@ function telaMesAba(ym) {
       linhas.length ? linhas.map(x => {
         const doc = (x.c.cpfPagador || x.c.cpf || '').trim();
         return el('div', { class: 'cartao pilha' },
-          el('button', { type: 'button', class: 'cartao paciente', onclick: () => ir({ tela: 'adm', id: x.c.id, aba: 'documentos' }) },
-            avatar(x.c),
-            el('span', { class: 'info' }, el('span', { class: 'nome', text: x.c.nome }),
-              el('span', { class: 'meta' },
-                el('span', { class: 'selo ' + (x.c.nf ? 'nota' : 'parcial'), text: x.c.nf ? 'Nota fiscal' : 'Recibo' }),
-                el('span', { text: (x.c.pagador ? `Pago por ${x.c.pagador}` : '') + (doc ? `${x.c.pagador ? ' · ' : ''}CPF ${doc}` : `${x.c.pagador ? ' · ' : ''}falta CPF`) }))),
-            el('strong', { class: 'valor-lista', text: x.pago ? 'R$ ' + reais(x.pago) : '—' })),
+          // versão 98: nome abre a página do paciente; ao lado, WhatsApp (envia o comprovante) e lixeira (tira da lista)
+          el('div', { class: 'linha-devedor' },
+            el('button', { type: 'button', class: 'cartao paciente', onclick: () => ir({ tela: 'adm', id: x.c.id, aba: 'documentos' }) },
+              avatar(x.c),
+              el('span', { class: 'info' }, el('span', { class: 'nome', text: x.c.nome }),
+                el('span', { class: 'meta' },
+                  el('span', { class: 'selo ' + (x.c.nf ? 'nota' : 'parcial'), text: x.c.nf ? 'Nota fiscal' : 'Recibo' }),
+                  el('span', { text: (x.c.pagador ? `Pago por ${x.c.pagador}` : '') + (doc ? `${x.c.pagador ? ' · ' : ''}CPF ${doc}` : `${x.c.pagador ? ' · ' : ''}falta CPF`) }))),
+              x.pago ? el('strong', { class: 'valor-lista', text: 'R$ ' + reais(x.pago) }) : icone('seguinte')),
+            el('div', { class: 'botoes-mini' },
+              botaoIcone(`Enviar comprovante para ${x.c.nome} pelo WhatsApp`, 'mensagem', () => enviarComprovanteWhats(x.c, ym, x.gs)),
+              botaoIcone(`Tirar ${x.c.nome} da lista de quem pede recibo`, 'lixeira', () => tirarDaListaRecibo(x.c)))),
           el('div', { class: 'linha-copiar' },
             el('span', { class: 'selo ' + (!x.gs.length ? '' : x.feito ? 'pago' : 'areceber'), text: !x.gs.length ? 'Sem pagamento no mês' : x.feito ? '✅ Emitido' : '⏳ A emitir' }),
             el('button', { type: 'button', class: 'secundario compacto', text: `${x.c.nf ? 'Nota fiscal' : 'Recibo'} ✏️`, onclick: () => escolherTipoRecibo(x.c) }),
