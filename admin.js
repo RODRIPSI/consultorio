@@ -4112,8 +4112,11 @@ function telaPagamentos(ym) {
         mes: `${nomeMes(hoje7).split(' ')[0]} · R$ ${reaisCurto(somaMeses(todosMeses.filter(m => m >= hoje7)))}` }, filtroDevendo, k => ir({ tela: 'devendo', filtro: k }, false)),
       el('div', { class: 'cartao destaque total-clinica' }, el('small', { text: rotuloTotal }), el('strong', { text: 'R$ ' + reais(totalFiltro) }),
         el('span', { text: `${nPac} ${nPac === 1 ? 'paciente' : 'pacientes'} · ${meses.length} ${meses.length === 1 ? 'mês' : 'meses'}${filtroDevendo !== 'todos' ? ` · total de todos os meses: R$ ${reais(totalDevido)}` : ''}` })),
-      nPac > 0 && el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => cobrarTodos(paraCobrar, rotuloFiltro) }, icone('mensagem'),
-        el('span', { text: `Cobrar todos pelo WhatsApp (${nPac})` })),
+      // versão 96: os dois botões no alto, lado a lado
+      el('div', { class: 'botoes-linha' },
+        el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => lancarDividaAnterior() }, icone('mais'), el('span', { text: 'Lançar dívida de meses anteriores' })),
+        nPac > 0 && el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => cobrarTodos(paraCobrar, rotuloFiltro) }, icone('mensagem'),
+          el('span', { text: `Cobrar todos pelo WhatsApp (${nPac})` }))),
       ...meses.map((m, i) => {
         const lista = [...porMes.get(m).values()].sort((a, b) => a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
         const tot = lista.reduce((t, y) => t + y.v, 0);
@@ -4130,7 +4133,6 @@ function telaPagamentos(ym) {
         return det;
       }),
       !meses.length && el('div', { class: 'cartao vazio-cartao' }, el('span', { class: 'ic-bolha grande' }, icone('moeda')), el('p', { text: filtroDevendo === 'anteriores' ? 'Ninguém devendo de meses anteriores. 🎉' : 'Ninguém devendo. 🎉' })),
-      el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => lancarDividaAnterior() }, icone('mais'), el('span', { text: 'Lançar dívida de meses anteriores' })),
       el('p', { class: 'suave pequeno', text: 'Cada mês mostra o que ficou sem pagar daquele mês. "Pagou" registra o pagamento; a lixeira apaga ou deixa de cobrar; o balão abre a mensagem de cobrança no WhatsApp. Os totais se recalculam na hora. Toque no nome para ver item por item.' })];
   } else {
     fechamentoAno = true;
