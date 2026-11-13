@@ -347,7 +347,9 @@ function cartaoAgenda() {
     return el('div', { class: 'agenda-linha' },
       el('span', { class: 'agenda-hora', text: horaCurta(hora) || '—' }),
       el('button', { type: 'button', class: 'agenda-nome', onclick: () => ir(modo === 'dono' ? { tela: 'ficha', id: c.id, aba: 'retomar' } : { tela: 'adm', id: c.id, aba: 'atendimentos' }) }, avatar(c), el('span', { text: c.nome })),
-      acoes);
+      acoes,
+      // versão 94: lixeira para tirar da agenda quem foi marcado por engano
+      botaoIcone(`Tirar ${c.nome} da agenda deste dia`, 'lixeira', () => tirarDaAgenda(c, dia, hora)));
   };
   const hj = agendaDoDia(hoje, true), am = agendaDoDia(amanha);
   const titulo = d => `${paraData(d).toLocaleDateString('pt-BR', { weekday: 'long' })}, ${dataCurta(d).slice(0, 5)}`;
@@ -361,6 +363,31 @@ function cartaoAgenda() {
     el('div', { class: 'botoes-linha' },
       el('button', { type: 'button', class: 'link', text: 'Ver a agenda da semana', onclick: () => ir({ tela: 'agenda' }) }),
       el('button', { type: 'button', class: 'link', text: 'Confirmações da semana', onclick: () => ir({ tela: 'confirmacoes' }) })));
+}
+
+// Versão 94: tirar da agenda do dia (marcado por engano). Some só este dia; o horário fixo continua nas outras semanas,
+// a não ser que se escolha tirar o horário de vez. Presença e cobrança deste dia são apagadas; anotações clínicas não são tocadas.
+async function tirarDaAgenda(c, dia, hora) {
+  const o = ocorrenciasNoPeriodo(c, dia, dia).find(x => (x.hora || '') === (hora || '')) || { c, data: dia, hora: hora || '' };
+  const h = o.hi !== undefined ? horariosDe(c)[o.hi] : null;
+  const a = atDaOcorrencia(c, dia, hora);
+  if (a?.pagamento === 'pago') return aviso('Já tem pagamento', `A sessão de ${dataCurta(dia).slice(0, 5)} de ${primeiroNome(c.nome)} já está paga. Para tirar da agenda, apague antes o pagamento em ${c.nome} → Pagamentos.`);
+  const quando = `${dataComDia(dia)}${hora ? ', ' + horaCurta(hora) : ''}`;
+  const botoes = [{ rotulo: 'Cancelar', valor: null }];
+  if (h && !h.inicio) botoes.push({ rotulo: 'Tirar este horário de toda semana', valor: 'sempre', estilo: 'perigo' });
+  botoes.push({ rotulo: 'Tirar só deste dia', valor: 'dia', estilo: 'primario' });
+  const r = await janela(`Tirar ${c.nome} da agenda?`, [el('p', { text: quando }),
+    el('p', { class: 'suave pequeno', text: (h && !h.inicio ? '"Só deste dia": o horário fixo continua nas próximas semanas. "De toda semana": o horário fixo sai a partir deste dia. ' : '')
+      + (a?.presenca || a?.pagamento ? 'A presença e a cobrança deste dia também saem (não fica em "Quem deve"). ' : '') + 'Anotações de sessão não são apagadas.' })], botoes);
+  if (!r) return;
+  if (r === 'sempre') h.fim = dia;
+  else if (o.avulsa) c.avulsos = (c.avulsos || []).filter(x => x.id !== o.avulsa);
+  else if (!cancelado(c, dia, hora)) (c.excecoes ||= []).push({ data: dia, hora: hora || '' });
+  if (a) await excluirAtendimento(a);
+  c.atualizadoEm = agoraISO(); salvarCadastro(c); await salvarAgora();
+  indicarStatus(r === 'sempre' ? `Horário de ${primeiroNome(c.nome)} tirado da agenda` : `${primeiroNome(c.nome)} saiu da agenda de ${dataCurta(dia).slice(0, 5)}`);
+  if (modo === 'dono' && typeof atualizarAgendaGoogle === 'function') atualizarAgendaGoogle({ silencioso: true });
+  render(history.state);
 }
 
 // ---------- Aniversários ----------
