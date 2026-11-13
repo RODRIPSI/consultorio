@@ -116,6 +116,7 @@ function renderAdm(s) {
   if (s.tela === 'admPacientes') { telaInicioAdm(true); return true; }
   if (s.tela === 'recibos') { abaMes = 'recibos'; telaMesAba(s.ym || hojeISO().slice(0, 7)); return true; }   // versão 88: tela própria (o voltar volta para Pagamentos)
   // versão 89: cada visão de Pagamentos é um passo do histórico, então o "voltar" volta para a tela anterior
+  if (s.tela === 'detalheFin') { telaDetalheFin(s.tipo, s.periodo || hojeISO().slice(0, 7)); return true; }
   if (s.tela === 'devendo') { abaMes = 'devendo'; filtroDevendo = s.filtro || 'todos'; telaPagamentos(hojeISO().slice(0, 7)); return true; }
   if (s.tela === 'mes') { abaMes = s.aba === 'ano' ? 'ano' : 'mes'; telaMes(s.ym || hojeISO().slice(0, 7)); return true; }
   if (s.tela === 'pagar') { telaPagar(s); return true; }
@@ -3696,7 +3697,8 @@ function corpoFechamento(ym) {
     el('button', { type: 'button', class: 'secundario compacto com-icone', onclick: () => ir({ tela: 'mes', ym: somarMeses(ym, -passo) }, false) }, icone('voltar'), el('span', { text: 'Anterior' })),
     el('strong', { text: titulo }),
     el('button', { type: 'button', class: 'secundario compacto com-icone', disabled: fechamentoAno ? ano >= hojeYm.slice(0, 4) : ym >= hojeYm, onclick: () => { const alvo = somarMeses(ym, passo); ir({ tela: 'mes', ym: alvo > hojeYm ? hojeYm : alvo }, false); } }, el('span', { text: 'Seguinte' }), icone('seguinte')));
-  const caixa = (rot, valor, extra, cls = '') => el('div', { class: 'cartao numero ' + cls }, el('small', { text: rot }), el('strong', { text: 'R$ ' + reais(valor) }), extra && el('span', { class: 'suave pequeno', text: extra }));
+  // versão 90: cada número abre a lista de quem compõe o valor
+  const caixa = (rot, valor, extra, cls = '', tipo = null) => el('button', { type: 'button', class: 'cartao numero tocavel ' + cls, onclick: () => ir({ tela: 'detalheFin', tipo, periodo: prefixo }) }, el('small', { text: rot + ' ›' }), el('strong', { text: 'R$ ' + reais(valor) }), extra && el('span', { class: 'suave pequeno', text: extra }));
   const barra = (pct, cls) => { const b = el('span', { class: 'barra-preenchida ' + cls }); b.style.width = Math.max(0, Math.min(100, pct)) + '%'; return b; };
   const partes = [
     segmentoEscolha({ mes: 'Mensal', ano: 'Anual' }, fechamentoAno ? 'ano' : 'mes', k => { fechamentoAno = k === 'ano'; telaMes(ym); }, 'dois'),
@@ -3707,11 +3709,11 @@ function corpoFechamento(ym) {
       el('span', { text: f.previsto ? `${f.pct}% do previsto (R$ ${reais(f.previsto)})` : 'Nenhuma sessão cobrável no período' }),
       f.previsto > 0 && el('span', { class: 'barra-fechamento' }, barra(f.pct, 'ok'), barra(100 - f.pct, 'alerta'))),
     el('div', { class: 'resumo-fin' },
-      caixa('Previsto', f.previsto, `${f.qtdPrevisto} ${f.qtdPrevisto === 1 ? 'sessão cobrável' : 'sessões cobráveis'}`),
-      caixa('Não recebido', f.naoRecebido, f.qtdAbertas ? `${f.qtdAbertas} ${f.qtdAbertas === 1 ? 'sessão' : 'sessões'} · ${f.devedores.length} ${f.devedores.length === 1 ? 'paciente' : 'pacientes'}` : 'tudo pago', f.naoRecebido ? 'alerta' : 'ok')),
+      caixa('Previsto', f.previsto, `${f.qtdPrevisto} ${f.qtdPrevisto === 1 ? 'sessão cobrável' : 'sessões cobráveis'}`, '', 'previsto'),
+      caixa('Não recebido', f.naoRecebido, f.qtdAbertas ? `${f.qtdAbertas} ${f.qtdAbertas === 1 ? 'sessão' : 'sessões'} · ${f.devedores.length} ${f.devedores.length === 1 ? 'paciente' : 'pacientes'}` : 'tudo pago', f.naoRecebido ? 'alerta' : 'ok', 'naoRecebido')),
     el('div', { class: 'resumo-fin' },
-      caixa('Entrou no caixa', f.caixa, 'pagamentos feitos no período, inclusive de meses anteriores'),
-      caixa('Não cobradas', f.naoCobradas, f.qtdNaoCobradas ? `${f.qtdNaoCobradas} ${f.qtdNaoCobradas === 1 ? 'sessão abonada' : 'sessões abonadas'}` : 'nenhuma')),
+      caixa('Entrou no caixa', f.caixa, 'pagamentos feitos no período, inclusive de meses anteriores', '', 'caixa'),
+      caixa('Não cobradas', f.naoCobradas, f.qtdNaoCobradas ? `${f.qtdNaoCobradas} ${f.qtdNaoCobradas === 1 ? 'sessão abonada' : 'sessões abonadas'}` : 'nenhuma', '', 'naoCobradas')),
     el('p', { class: 'suave pequeno', text: `Sessões: ${f.realizadas} ${f.realizadas === 1 ? 'realizada' : 'realizadas'} · ${f.faltas} ${f.faltas === 1 ? 'falta cobrável' : 'faltas cobráveis'} · ${f.desmarcadas} ${f.desmarcadas === 1 ? 'desmarcada com aviso ou remarcada' : 'desmarcadas com aviso ou remarcadas'} (não entram na conta).` })];
   if (fechamentoAno) {
     const linhasMes = [];
@@ -3991,8 +3993,8 @@ function telaPagamentos(ym) {
     const ordenar = l => l.sort((a, b) => a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
     corpo = [
       nav,
-      el('div', { class: 'cartao destaque total-clinica' },
-        el('small', { text: `Recebido em ${mesNome.toLowerCase()}` }), el('strong', { text: 'R$ ' + reais(recebidoCaixa) }),
+      el('button', { type: 'button', class: 'cartao destaque total-clinica tocavel', onclick: () => ir({ tela: 'detalheFin', tipo: 'caixa', periodo: ym }) },
+        el('small', { text: `Recebido em ${mesNome.toLowerCase()} ›` }), el('strong', { text: 'R$ ' + reais(recebidoCaixa) }),
         el('span', { text: f.previsto ? `Das sessões do mês: ${f.pct}% pago (R$ ${reais(f.recebido)} de R$ ${reais(f.previsto)})` : 'Nenhuma sessão cobrável neste mês' }),
         f.previsto > 0 && el('span', { class: 'barra-fechamento' }, barra(f.pct, 'ok'), barra(100 - f.pct, 'alerta'))),
       el('div', { class: 'resumo-fin' },
@@ -4337,4 +4339,36 @@ async function escolherPacientesRecibo() {
   await salvarAgora();
   if (n) indicarStatus(`${cadastros.filter(pedeRecibo).length} pacientes pedem recibo.`);
   render(history.state);
+}
+
+
+// Versão 90: detalhe de um número do Fechamento — quem são os pacientes, quais sessões, quanto.
+const TIPOS_FIN = { previsto: 'Previsto', recebido: 'Recebido das sessões', naoRecebido: 'Não recebido', caixa: 'Entrou no caixa', naoCobradas: 'Não cobradas' };
+function telaDetalheFin(tipo, periodo) {
+  const titulo = (TIPOS_FIN[tipo] || 'Detalhe') + ' · ' + (periodo.length === 4 ? `ano de ${periodo}` : nomeMes(periodo));
+  let grupos = new Map(), total = 0, explica = '';
+  const add = (pid, valor, linha) => { const c = cadastroDe(pid); if (!c) return; const g = grupos.get(pid) || { c, v: 0, linhas: [] }; g.v += valor; g.linhas.push(linha); grupos.set(pid, g); total += valor; };
+  const ats = atendimentos.filter(a => a.data.startsWith(periodo));
+  const desc = a => a.divida ? `dívida lançada (${nomeMes(a.data.slice(0, 7)).split(' ')[0].toLowerCase()})` : `${ddmm(a.data)}${a.hora ? ' ' + horaCurta(a.hora) : ''}${a.presenca === 'falta' ? ' (faltou)' : a.presenca === 'tardia' ? ' (desmarcou em cima)' : ''}`;
+  if (tipo === 'caixa') {
+    explica = 'Pagamentos registrados nestas datas, de qualquer mês de sessão.';
+    for (const g of pagamentos.filter(x => x.data.startsWith(periodo))) add(g.pid, valorNum(g.valor), `pago em ${ddmm(g.data)} · R$ ${reais(valorNum(g.valor))}`);
+  } else {
+    const filtro = { previsto: a => a.pagamento === 'areceber' || a.pagamento === 'pago', recebido: a => a.pagamento === 'pago', naoRecebido: a => a.pagamento === 'areceber',
+      naoCobradas: a => a.pagamento === 'naocobrar' && ['realizada', 'falta', 'tardia'].includes(a.presenca) }[tipo] || (() => false);
+    explica = { previsto: 'Sessões cobráveis do período: realizadas, faltas e desmarcações em cima da hora.', recebido: 'Sessões do período que já foram pagas.',
+      naoRecebido: 'Sessões do período que ainda não foram pagas.', naoCobradas: 'Sessões do período que você decidiu não cobrar.' }[tipo] || '';
+    for (const a of ats.filter(filtro).sort((x, y) => x.data.localeCompare(y.data))) add(a.pid, valorDe(a), `${desc(a)} · R$ ${reais(valorDe(a))}${tipo === 'previsto' ? (a.pagamento === 'pago' ? ' ✅' : ' ⏳') : ''}`);
+  }
+  const lista = [...grupos.values()].sort((a, b) => a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
+  mostrar(cabecalho(TIPOS_FIN[tipo] || 'Detalhe', { voltar: true }),
+    el('div', { class: 'conteudo pilha' },
+      el('div', { class: 'cartao destaque total-clinica' }, el('small', { text: titulo }), el('strong', { text: 'R$ ' + reais(total) }),
+        el('span', { text: `${lista.length} ${lista.length === 1 ? 'paciente' : 'pacientes'}` })),
+      explica && el('p', { class: 'suave pequeno', text: explica }),
+      lista.length ? el('div', { class: 'cartao pilha' }, ...lista.map(g => el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => ir({ tela: 'adm', id: g.c.id, aba: 'pagamentos' }) },
+        avatar(g.c), el('span', { class: 'pag-info' }, el('strong', { text: g.c.nome }), ...g.linhas.map(t => el('span', { class: 'suave pequeno', text: t }))),
+        el('strong', { text: 'R$ ' + reais(g.v) }))))
+        : el('div', { class: 'cartao vazio-cartao' }, el('p', { text: 'Nada neste período.' })),
+      el('p', { class: 'suave pequeno', text: 'Toque no paciente para ver os pagamentos dele. A setinha ‹ volta para o Fechamento.' })));
 }
