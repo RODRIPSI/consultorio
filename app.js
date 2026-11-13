@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 85';
+const VERSAO = 'versão 86';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -478,6 +478,7 @@ function telaLista(todos = false) {
             const proprio = valorNum(valorNaData(c)), padrao = valorNum(perfil?.valorSessao);
             const temProprio = c.valores?.length || valorNum(c.valor);
             const t = temProprio && proprio ? `R$ ${reais(proprio)} por sessão` : padrao ? `R$ ${reais(padrao)} por sessão (valor padrão)` : 'Valor da sessão não definido';
+            const tSem = c.semCobrancaDesde ? ` · 🚫 sem cobrança desde ${dataCurta(c.semCobrancaDesde)}` : '';
             const ym = hojeISO().slice(0, 7);
             const doMes = atendimentosDe(c.id).filter(a => a.data.slice(0, 7) === ym && !['cancelada', 'remarcada'].includes(a.presenca) && a.pagamento !== 'naocobrar');
             const porMes = c.modoPagamento === 'mensal' || c.modoPagamento === 'quinzenal';
@@ -487,7 +488,7 @@ function telaLista(todos = false) {
             const irPag = e => { e.stopPropagation(); ir({ tela: 'adm', id: c.id, aba: 'pagamentos' }); };
             return [
               el('span', { class: 'meta valor-editavel', role: 'button', tabindex: '0', onclick: e => { e.stopPropagation(); alterarValorSessao(c, () => telaLista(true)); } },
-                icone('moeda'), el('span', { text: t + ' ✏️' })),
+                icone('moeda'), el('span', { text: t + tSem + ' ✏️' })),
               // versão 72: forma de pagamento e dia combinado, para todos
               el('span', { class: 'meta' }, icone('calendario'), el('span', { text:
                 (c.modoPagamento ? `Paga ${{ sessao: 'por sessão', semanal: 'por semana', quinzenal: 'a cada quinze dias', mensal: 'por mês' }[c.modoPagamento] || c.modoPagamento}` : 'Forma de pagamento não definida')

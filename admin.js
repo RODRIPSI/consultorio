@@ -213,7 +213,13 @@ async function excluirAdmDe(pid) {
 
 // Cada sessão registrada na área clínica corresponde a um atendimento da agenda (sem o conteúdo).
 // Regra do consultório: veio, faltou ou desmarcou com menos de 24h → cobra; desmarcou com 24h ou mais, ou remarcou → não cobra.
-function pagamentoInicial(presenca) { return ['realizada', 'falta', 'tardia'].includes(presenca) ? 'areceber' : presenca ? 'naocobrar' : null; }
+function pagamentoInicial(presenca, a = null) {
+  const r = ['realizada', 'falta', 'tardia'].includes(presenca) ? 'areceber' : presenca ? 'naocobrar' : null;
+  // versão 86: paciente atendido sem cobrança (combinado) a partir de uma data
+  const c = a?.pid ? cadastroDe(a.pid) : null;
+  if (r === 'areceber' && c?.semCobrancaDesde && (a.data || '') >= c.semCobrancaDesde) return 'naocobrar';
+  return r;
+}
 function horaFixa(c, data) { return horariosDe(c).find(h => Number(h.dia) === paraData(data).getDay())?.hora || ''; }
 async function sincronizarAtendimentos() {
   if (modo !== 'dono') return;
@@ -240,11 +246,11 @@ function vincularSessao(s, nova = false) {
   if (!a) {
     const agora = agoraISO();
     a = { id: crypto.randomUUID(), pid: s.pid, data: s.data, hora: horaFixa(cadastroDe(s.pid), s.data), presenca: s.status,
-      pagamento: nova ? pagamentoInicial(s.status) : null, valor: valorPadrao(cadastroDe(s.pid), s.data), criadoEm: agora, atualizadoEm: agora };
+      pagamento: nova ? pagamentoInicial(s.status, { pid: s.pid, data: s.data }) : null, valor: valorPadrao(cadastroDe(s.pid), s.data), criadoEm: agora, atualizadoEm: agora };
     atendimentos.push(a);
   }
   a.sid = s.id; a.data = s.data; a.presenca = s.status;
-  if (!a.pagamento && nova) a.pagamento = pagamentoInicial(s.status);
+  if (!a.pagamento && nova) a.pagamento = pagamentoInicial(s.status, a);
   ajustarPagamentoAoStatus(a);
   salvarAt(a);
 }
@@ -255,7 +261,7 @@ async function desvincularSessao(s) {
 }
 function ajustarPagamentoAoStatus(a) {
   if (!a.pagamento || a.pagamento === 'pago' || a.pagamentoManual) return;
-  a.pagamento = pagamentoInicial(a.presenca) || a.pagamento;
+  a.pagamento = pagamentoInicial(a.presenca, a) || a.pagamento;
   if (a.pagamento === 'areceber') usarCredito(a);
 }
 // Pagamento adiantado (ou pacote do mês): cada atendimento novo consome o saldo que sobrou.
@@ -305,7 +311,7 @@ function marcarPresenca(c, data, hora, presenca) {
     atendimentos.push(a);
   }
   a.presenca = presenca;
-  if (!a.pagamento) a.pagamento = pagamentoInicial(presenca);
+  if (!a.pagamento) a.pagamento = pagamentoInicial(presenca, a);
   ajustarPagamentoAoStatus(a);
   salvarAt(a);
   render(history.state);
@@ -1212,7 +1218,10 @@ function abaCadastro(c) {
         campo('Data de nascimento', 'nascimento', { type: 'date' }),
         el('div', { class: 'campo' }, el('span', { text: 'Valor da sessão' }),
           el('button', { type: 'button', class: 'secundario com-icone', onclick: () => alterarValorSessao(c) }, icone('moeda'),
-            el('span', { text: valorNum(valorNaData(c)) ? `R$ ${reais(valorNum(valorNaData(c)))} · Alterar` : 'Definir valor' }))))),
+            el('span', { text: valorNum(valorNaData(c)) ? `R$ ${reais(valorNum(valorNaData(c)))} · Alterar` : 'Definir valor' })),
+          c.semCobrancaDesde
+            ? el('button', { type: 'button', class: 'secundario com-icone', onclick: () => voltarACobrar(c) }, el('span', { text: `🚫 Sem cobrança desde ${dataCurta(c.semCobrancaDesde)} · Voltar a cobrar` }))
+            : el('button', { type: 'button', class: 'link', text: 'Atender sem cobrar (por enquanto)', onclick: () => atenderSemCobrar(c) })))),
     cartao('Contato', 'telefone',
       el('div', { class: 'grade' },
         campo('Telefone 2', 'telefone2', { type: 'tel', inputmode: 'tel' }),
@@ -3111,7 +3120,7 @@ async function definirPresencaLista(o, presenca, extra = {}) {
   const c = o.c, a = atDaOcorrencia(c, o.data, o.hora, true);
   a.presenca = presenca;
   a.avisoEm = extra.avisoEm || null; a.remarcadaPara = extra.remarcadaPara || null; a.avulsoNovo = extra.avulsoNovo || null;
-  if (a.pagamento !== 'pago') { a.pagamento = pagamentoInicial(presenca); a.pagamentoManual = false; a.abonada = null; if (a.pagamento === 'areceber') usarCredito(a); }
+  if (a.pagamento !== 'pago') { a.pagamento = pagamentoInicial(presenca, a); a.pagamentoManual = false; a.abonada = null; if (a.pagamento === 'areceber') usarCredito(a); }
   salvarAt(a);
   if (extra.liberar && !(c.excecoes || []).some(x => x.data === o.data && (x.hora || '') === (o.hora || ''))) (c.excecoes ||= []).push({ data: o.data, hora: o.hora });
   salvarCadastro(c);
@@ -3359,8 +3368,9 @@ function chipPagamentoSessao(c, a) {
 async function perguntarPagamento(c, a) {
   const r = await janela(`${c.nome}`, [el('p', { text: `Sessão de ${dataComDia(a.data)}${a.hora ? ', ' + horaCurta(a.hora) : ''}${valorDe(a) ? ' · R$ ' + reais(valorDe(a)) : ''}` }),
     el('p', { class: 'suave', text: a.conferidaEm ? `Conferido em ${dataCurta(a.conferidaEm)}: ainda não tinha pago.` : 'Está em "Quem deve" até o pagamento ser registrado.' })],
-    [{ rotulo: 'Fechar', valor: null }, { rotulo: '✏️ Outro valor', valor: 'valor' }, { rotulo: 'Ainda não pagou', valor: 'nao' }, { rotulo: '✅ Pagou', valor: 'sim', estilo: 'primario' }]);
+    [{ rotulo: 'Fechar', valor: null }, { rotulo: '✏️ Outro valor', valor: 'valor' }, { rotulo: '🚫 Não cobrar', valor: 'naocobrar' }, { rotulo: 'Ainda não pagou', valor: 'nao' }, { rotulo: '✅ Pagou', valor: 'sim', estilo: 'primario' }]);
   if (r === 'sim') return pagarSessao(c, a);
+  if (r === 'naocobrar') return naoCobrarSessao(c, a);
   if (r === 'valor') return mudarValorSessao(c, a);
   if (r === 'nao') { a.conferidaEm = hojeISO(); salvarAt(a); indicarStatus('Continua em "Quem deve"'); render(history.state); }
 }
@@ -4217,4 +4227,47 @@ async function faltaChaveGoogle() {
   render(history.state);
   await aviso('Chave salva', 'Agora toque de novo em "Conectar" (ou "Ativar").');
   return false;
+}
+
+
+// =====================================================================
+// Versão 86: não cobrar — uma sessão só, ou o paciente inteiro "por enquanto" (combinado).
+// As sessões não cobradas não entram em "Quem deve" nem no previsto; aparecem no Fechamento como "Não cobradas".
+// =====================================================================
+async function naoCobrarSessao(c, a) {
+  const r = await janela(`Não cobrar · ${c.nome}`, [el('p', { text: `Sessão de ${dataComDia(a.data)}${a.hora ? ', ' + horaCurta(a.hora) : ''}.` }),
+    el('p', { class: 'suave pequeno', text: '"Só esta sessão": as próximas continuam sendo cobradas. "Daqui em diante": o paciente passa a ser atendido sem cobrança até você tocar em "Voltar a cobrar" no cadastro dele.' })],
+    [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Daqui em diante', valor: 'sempre' }, { rotulo: 'Só esta sessão', valor: 'uma', estilo: 'primario' }]);
+  if (!r) return;
+  if (r === 'sempre') return atenderSemCobrar(c, a.data);
+  a.pagamento = 'naocobrar'; a.abonada = true; a.pagamentoManual = true; salvarAt(a);
+  await salvarAgora();
+  indicarStatus('Sessão sem cobrança.');
+  render(history.state);
+}
+async function atenderSemCobrar(c, desde0 = null) {
+  const r = await dialogo({ titulo: `Atender ${c.nome} sem cobrar?`,
+    texto: 'A partir da data escolhida, as sessões dele entram como "Não cobra": não aparecem em "Quem deve" nem no previsto do mês. Sessões já pagas não mudam. Quando ele voltar a pagar, toque em "Voltar a cobrar" no cadastro.',
+    campos: [{ rotulo: 'Sem cobrança a partir de', tipo: 'date', valor: desde0 || hojeISO() }],
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Não cobrar', valor: true, estilo: 'primario' }] });
+  if (!r) return;
+  const desde = (Array.isArray(r) ? r[0] : r) || hojeISO();
+  c.semCobrancaDesde = desde; c.atualizadoEm = agoraISO(); salvarCadastro(c);
+  let n = 0;
+  for (const a of atendimentosDe(c.id)) if (!a.divida && a.data >= desde && a.pagamento === 'areceber') { a.pagamento = 'naocobrar'; a.abonada = true; salvarAt(a); n++; }
+  await salvarAgora();
+  indicarStatus(`${primeiroNome(c.nome)}: sem cobrança a partir de ${dataCurta(desde)}${n ? ` (${n} ${n === 1 ? 'sessão ajustada' : 'sessões ajustadas'})` : ''}.`);
+  render(history.state);
+}
+async function voltarACobrar(c) {
+  const r = await dialogo({ titulo: `Voltar a cobrar ${c.nome}?`, texto: 'As próximas sessões voltam a ser cobradas normalmente. As que ficaram sem cobrança continuam assim.',
+    campos: [{ rotulo: 'Voltar a cobrar a partir de', tipo: 'date', valor: hojeISO() }],
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Voltar a cobrar', valor: true, estilo: 'primario' }] });
+  if (!r) return;
+  const desde = (Array.isArray(r) ? r[0] : r) || hojeISO();
+  for (const a of atendimentosDe(c.id)) if (a.data >= desde && a.pagamento === 'naocobrar' && ['realizada', 'falta', 'tardia'].includes(a.presenca) && !a.pagamentoManual) { a.pagamento = 'areceber'; a.abonada = false; salvarAt(a); }
+  delete c.semCobrancaDesde; c.atualizadoEm = agoraISO(); salvarCadastro(c);
+  await salvarAgora();
+  indicarStatus(`${primeiroNome(c.nome)} volta a ser cobrado a partir de ${dataCurta(desde)}.`);
+  render(history.state);
 }
