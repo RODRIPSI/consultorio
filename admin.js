@@ -78,12 +78,35 @@ async function entrarAdm() {
   if (!(await abrirEntradaSePendente())) telaInicioAdm();
 }
 
-async function recarregarTudo() {
-  if (Cofre.clinicaAberta()) {
-    [pacientes, sessoes] = await Promise.all([Cofre.lerTodos('p:'), Cofre.lerTodos('s:')]);
+// Versão 81: recarregar sem trocar os objetos que estão abertos na tela.
+// Antes, a sincronização automática relia tudo do cofre e trocava os objetos; o que se digitava na tela
+// (ex.: a anamnese) ia para o objeto antigo e "sumia" ao sair e voltar. Agora o objeto aberto é mantido,
+// e o que ainda está para ser salvo nunca é sobrescrito pelo que estava gravado.
+function manterReferencias(antigos, novos, chave) {
+  const porId = new Map(antigos.map(o => [o.id, o]));
+  return novos.map(n => {
+    const o = porId.get(n.id);
+    if (!o || o === n) return n;
+    if (pendentes.has(chave(o))) return o;            // tem alteração ainda não gravada: a da tela vale
+    if ((o.atualizadoEm || '') > (n.atualizadoEm || '')) return o;
+    if (JSON.stringify(o) === JSON.stringify(n)) return o;   // nada mudou: mantém o objeto (e os objetos internos) que a tela usa
+    for (const k of Object.keys(o)) if (!(k in n)) delete o[k];
+    return Object.assign(o, n);
+  });
+}
+async function recarregarTudo({ clinica = true } = {}) {
+  await salvarAgora();
+  const antes = { pacientes, sessoes, cadastros, atendimentos, pagamentos };
+  if (clinica && Cofre.clinicaAberta()) {
+    const [ps, ss] = await Promise.all([Cofre.lerTodos('p:'), Cofre.lerTodos('s:')]);
+    pacientes = manterReferencias(antes.pacientes || [], ps, x => 'p:' + x.id);
+    sessoes = manterReferencias(antes.sessoes || [], ss, chaveSessao);
     await carregarExtras();
   }
   await carregarAdm();
+  cadastros = manterReferencias(antes.cadastros || [], cadastros, chaveCad);
+  atendimentos = manterReferencias(antes.atendimentos || [], atendimentos, chaveAt);
+  pagamentos = manterReferencias(antes.pagamentos || [], pagamentos, chavePag);
   if (modo === 'dono') { await sincronizarCadastros(); await sincronizarAtendimentos(); await salvarAgora(); }
 }
 
@@ -2626,7 +2649,7 @@ async function sincronizarDrive(opcoes = {}) {
       r = await mesclarRegistros(pacote.registros || {}, k => k.startsWith('x:'));
       mudou = (r.novos || 0) + (r.atualizados || 0) > 0;
       if (modo === 'adm' && pacote.registros?.['x:perfil'] && !pacote.registros['x:perfil'].assinaturaNoAdm) await Cofre.apagar('x:assinatura');
-      await recarregarTudo();
+      await recarregarTudo({ clinica: false });   // a troca só traz dados administrativos; a área clínica não muda
       recebeu = true;
       if (mudou) avisarNovidades(antes);
     }
