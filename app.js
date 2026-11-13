@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 76';
+const VERSAO = 'versão 77';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -47,6 +47,7 @@ function atendendoAgora(p) {
   }
   if (sessoesDe(p.id).some(s => (s.data || '') >= limite)) return true;
   if (!c || c.arquivado) return false;
+  if (c.emAtendimento) return true;   // versão 77: incluído à mão em Atendendo agora
   if (typeof horariosDe === 'function' && horariosDe(c).some(h => h.hora && (!h.fim || h.fim > hojeISO()))) return true;
   return typeof atendimentosDe === 'function' && atendimentosDe(c.id).some(a => a.data >= limite && a.presenca !== 'cancelada');
 }
@@ -472,7 +473,8 @@ function telaLista(todos = false) {
           p.dados.frequencia && el('span', { class: 'meta' }, icone('calendario'), el('span', { text: p.dados.frequencia })),
           todos && (() => { // versões 64/65/67: valor por sessão (toque para mudar), valor do mês e quanto está devendo
             const c = typeof cadastroDe === 'function' ? cadastroDe(p.id) : null;
-            if (!c) return null;
+            if (!c) return el('span', { class: 'meta valor-editavel', role: 'button', tabindex: '0', onclick: e => { e.stopPropagation(); incluirEmAtendimento(p, () => telaLista(true)); } },
+              el('span', { text: '➕ Colocar em "Atendendo agora"' }));
             const proprio = valorNum(valorNaData(c)), padrao = valorNum(perfil?.valorSessao);
             const temProprio = c.valores?.length || valorNum(c.valor);
             const t = temProprio && proprio ? `R$ ${reais(proprio)} por sessão` : padrao ? `R$ ${reais(padrao)} por sessão (valor padrão)` : 'Valor da sessão não definido';
@@ -497,8 +499,10 @@ function telaLista(todos = false) {
               c.encerradoEm && !atendendoAgora(p)
                 ? el('span', { class: 'meta valor-editavel', role: 'button', tabindex: '0', onclick: e => { e.stopPropagation(); retomarAtendimento(c, () => telaLista(true)); } },
                     el('span', { text: `⏹ Encerrado em ${dataCurta(c.encerradoEm)} — retomar` }))
-                : atendendoAgora(p) && el('span', { class: 'meta valor-editavel suave', role: 'button', tabindex: '0', onclick: e => { e.stopPropagation(); encerrarAtendimento(c, () => telaLista(true)); } },
-                    el('span', { text: '⏹ Encerrar atendimento' }))];
+                : atendendoAgora(p) ? el('span', { class: 'meta valor-editavel suave', role: 'button', tabindex: '0', onclick: e => { e.stopPropagation(); encerrarAtendimento(c, () => telaLista(true)); } },
+                    el('span', { text: '⏹ Encerrar atendimento' }))
+                  : el('span', { class: 'meta valor-editavel', role: 'button', tabindex: '0', onclick: e => { e.stopPropagation(); incluirEmAtendimento(p, () => telaLista(true)); } },
+                    el('span', { text: '➕ Colocar em "Atendendo agora"' }))];
           })()),
         el('span', { class: 'contador', title: 'Sessões registradas', text: String(ss.length) }),
         icone('seguinte'));
@@ -4042,4 +4046,29 @@ async function trazerDoDrive(p, f) {
     indicarStatus('');
     aviso('Não foi possível trazer', e.message === 'tipo' ? 'Este tipo de arquivo do Google não pode ser copiado. Abra pelo Drive.' : 'Verifique a internet e tente de novo.');
   }
+}
+
+// Versão 77: colocar um paciente (da lista de todos) em "Atendendo agora", com horário fixo opcional.
+async function incluirEmAtendimento(p, aoFim) {
+  let c = cadastroDe(p.id);
+  const dia = el('select', { 'aria-label': 'Dia da semana' }, el('option', { value: '', text: 'Sem horário fixo' }), ...DIAS.map((d, i) => el('option', { value: String(i), text: d })));
+  const hora = el('input', { type: 'time', value: '', 'aria-label': 'Horário' });
+  const r = await janela(`Colocar ${p.nome} em "Atendendo agora"`, [
+    el('p', { class: 'suave pequeno', text: 'Se ele tem horário fixo, escolha o dia e a hora: ele entra na agenda toda semana. Se ainda não tem, deixe "Sem horário fixo" — ele entra na lista do mesmo jeito.' }),
+    el('label', { class: 'campo' }, el('span', { text: 'Dia' }), dia),
+    el('label', { class: 'campo' }, el('span', { text: 'Horário' }), hora)
+  ], [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Colocar', valor: true, estilo: 'primario' }]);
+  if (!r) return;
+  if (!c) { c = novoCadastro({ id: p.id, nome: p.nome }); cadastros.push(c); }
+  if (c.encerradoEm) { for (const h of horariosDe(c)) if (h.fim === c.encerradoEm) { delete h.fim; delete h.fimAntes; } delete c.encerradoEm; delete c.avulsosEncerrados; }
+  if (c.arquivado) c.arquivado = false;
+  if (dia.value !== '' && hora.value) {
+    const hs = (c.horarios ||= []);
+    if (!hs.some(h => h.dia === Number(dia.value) && h.hora === hora.value && !h.fim)) hs.push({ dia: Number(dia.value), hora: hora.value });
+  }
+  c.emAtendimento = hojeISO(); c.atualizadoEm = agoraISO(); salvarCadastro(c);
+  if (p.arquivado) { p.arquivado = false; agendarSalvar('p:' + p.id, p); }
+  await salvarAgora();
+  indicarStatus(`${primeiroNome(p.nome)} está em "Atendendo agora".`);
+  if (aoFim) aoFim(); else render(history.state);
 }

@@ -3724,7 +3724,7 @@ async function encerrarAtendimento(c, aoFim) {
   c.avulsos = (c.avulsos || []).filter(a => a.data < desde);
   // sessões futuras sem presença marcada e não pagas saem; as cobradas/pagas ficam (são dívida ou histórico)
   for (const a of atendimentosDe(c.id).filter(a => a.data >= desde && !a.presenca && a.pagamento !== 'pago' && a.pagamento !== 'areceber')) await excluirAtendimento(a);
-  c.encerradoEm = desde; c.atualizadoEm = agoraISO(); salvarCadastro(c);
+  c.encerradoEm = desde; delete c.emAtendimento; c.atualizadoEm = agoraISO(); salvarCadastro(c);
   await salvarAgora();
   indicarStatus(`Atendimento de ${primeiroNome(c.nome)} encerrado a partir de ${dataCurta(desde)}.`);
   if (aoFim) aoFim(); else render(history.state);
