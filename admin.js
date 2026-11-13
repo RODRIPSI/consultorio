@@ -729,7 +729,9 @@ function abaPagamentosAdm(c) {
             botaoIcone('Corrigir ou excluir esta cobrança', 'lixeira', () => corrigirCobranca(c, a)),
             el('button', { type: 'button', class: 'chip acao marcado', text: 'Pagou', onclick: () => pagarSessao(c, a) })))))
         : el('p', { class: 'suave', text: 'Nada pendente. 🎉' })),
-    el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => lancarDividaAnterior(c) }, icone('mais'), el('span', { text: 'Lançar dívida de meses anteriores' })),
+    el('div', { class: 'botoes-linha' },
+      el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => lancarSessaoNaoPaga(c) }, icone('mais'), el('span', { text: 'Lançar sessão não paga' })),
+      el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => lancarDividaAnterior(c) }, icone('mais'), el('span', { text: 'Dívida de meses anteriores' }))),
     cartao('Pagamentos recebidos', 'sessoes',
       gs.length > 0 && el('p', { class: 'suave pequeno', text: 'Pagamento lançado errado? Toque nele e depois em "Excluir pagamento".' }),
       gs.length ? gs.slice(0, 24).map(g => el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => dialogoPagamento(c, g) },
@@ -3873,4 +3875,29 @@ async function corrigirCobranca(c, a) {
     await salvarAgora();
     render(history.state);
   }
+}
+
+
+// Versão 79: lançar à mão uma sessão feita e ainda não paga (fica "a receber").
+async function lancarSessaoNaoPaga(c) {
+  const r = await dialogo({ titulo: `Sessão não paga · ${c.nome}`,
+    texto: 'A sessão entra como realizada e "a receber": aparece em Quem deve e some quando você tocar em "Pagou".',
+    campos: [{ rotulo: 'Data da sessão', tipo: 'date', valor: hojeISO() }, { rotulo: 'Horário (opcional)', tipo: 'time', valor: '' },
+      { rotulo: 'Valor (R$)', valor: valorNum(valorNaData(c)) ? reais(valorNum(valorNaData(c))) : '', inputmode: 'decimal' }],
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Lançar', valor: true, estilo: 'primario' }] });
+  if (!r) return;
+  const [data, hora, valorTxt] = r;
+  if (!data) return aviso('Falta a data', 'Escolha a data da sessão.');
+  const v = valorNum(valorTxt);
+  let a = atendimentos.find(x => x.pid === c.id && x.data === data && !x.divida && (x.hora || '') === (hora || '')) || (!hora && atendimentos.find(x => x.pid === c.id && x.data === data && !x.divida && !x.presenca));
+  if (a && a.pagamento === 'pago') return aviso('Já está paga', 'Essa sessão já tem pagamento registrado.');
+  const agora = agoraISO();
+  if (!a) { a = { id: crypto.randomUUID(), pid: c.id, data, hora: hora || '', criadoEm: agora, origem: 'lançada à mão' }; atendimentos.push(a); }
+  a.presenca = a.presenca && a.presenca !== 'cancelada' ? a.presenca : 'realizada';
+  a.pagamento = 'areceber'; a.abonada = false;
+  if (v) a.valor = String(v); else if (!a.valor) a.valor = valorNaData(c, data) || '';
+  a.atualizadoEm = agora; salvarAt(a);
+  await salvarAgora();
+  indicarStatus(`Sessão de ${dataCurta(data)} lançada como não paga${valorDe(a) ? ` (R$ ${reais(valorDe(a))})` : ''}.`);
+  render(history.state);
 }
