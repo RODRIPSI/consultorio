@@ -518,7 +518,6 @@ function telaAdm(id, aba) {
   const hs = horariosDe(c).filter(h => h.hora);
   if (hs.length) chips.push(hs.map(h => `${DIAS[h.dia].slice(0, 3)} ${horaCurta(h.hora)}`).join(', '));
   if (valorPadrao(c)) chips.push('R$ ' + reais(valorNum(valorPadrao(c))));
-  if (c.nf) chips.push('Nota fiscal'); else if (c.recibo) chips.push('Pede recibo');
   const abas = [['atendimentos', 'Agenda', 'calendario'], ['pagamentos', 'Pagamentos', 'moeda'], ['mensagem', 'Mensagem', 'mensagem'],
     ['documentos', 'Documentos', 'assinar'], ['cadastro', 'Cadastro', 'pessoa']];
   const corpo = aba === 'pagamentos' ? abaPagamentosAdm(c)
@@ -533,7 +532,8 @@ function telaAdm(id, aba) {
       el('section', { class: 'hero' }, avatar(c, true),
         el('div', { class: 'hero-texto' },
           el('h2', { id: 'nome-hero', text: c.nome }),
-          el('div', { class: 'chips' }, chips.map(t => el('span', { class: 'chip', text: t }))))),
+          el('div', { class: 'chips' }, chips.map(t => el('span', { class: 'chip', text: t })),
+            el('button', { type: 'button', class: 'chip acao' + (pedeRecibo(c) ? ' marcado' : ''), text: pedeRecibo(c) ? `🧾 Pede ${c.nf ? 'nota fiscal' : 'recibo'} ✏️` : '🧾 Não pede recibo ✏️', onclick: () => escolherTipoRecibo(c) })))),
       el('nav', { class: 'abas cinco', role: 'tablist' }, abas.map(([k, rotulo, ic]) => el('button', {
         type: 'button', role: 'tab', 'aria-selected': String(k === aba), class: 'aba' + (k === aba ? ' ativa' : ''),
         onclick: () => ir({ tela: 'adm', id, aba: k }, false)
@@ -927,9 +927,9 @@ async function concluirPagamento() {
   pagamentoRasc = null;
   indicarStatus('Salvo');
   if (entradaIds.length) { ir({ tela: 'pagar', eid: entradaIds[0] }, false); return; }
-  const querNota = c.nf && await dialogo({ titulo: 'Pagamento registrado', texto: `${c.nome} recebe nota fiscal. Emitir agora?`, botoes: [{ rotulo: 'Depois', valor: null }, { rotulo: 'Emitir nota', valor: true, estilo: 'primario' }] });
+  const querNota = pedeRecibo(c) && await dialogo({ titulo: 'Pagamento registrado', texto: `${c.nome} pede ${c.nf ? 'nota fiscal' : 'recibo'}. Emitir agora? Com "Depois", fica nas pendências do administrativo.`, botoes: [{ rotulo: 'Depois', valor: null }, { rotulo: c.nf ? 'Emitir nota' : 'Emitir recibo', valor: true, estilo: 'primario' }] });
   ir({ tela: 'adm', id: c.id, aba: 'pagamentos' }, false);
-  if (querNota) abrirNotaFiscal(c, g);
+  if (querNota && g) emitirPendencia(c, g);
 }
 async function descartarEntrada() {
   const r = pagamentoRasc;
@@ -1172,20 +1172,58 @@ async function concluirNota() {
   ir({ tela: 'adm', id: c.id, aba: 'pagamentos' }, false);
 }
 // Pagamentos de quem recebe nota e ainda estão sem ela (últimos três meses).
-function cartaoSemNota() {
-  const limite = somarMeses(hojeISO().slice(0, 7), -2) + '-01';
+// Versão 92: pendências de recibo / nota fiscal, por pagamento.
+// Um pagamento de quem pede recibo fica pendente até: sair a nota (gov.br), sair um recibo do app depois dele,
+// ter comprovante anexado, ou alguém tocar em "Já foi feito" (emitido fora do aplicativo).
+const TIPOS_RECIBO = { nao: 'Não pede', recibo: 'Recibo', nota: 'Nota fiscal' };
+const tipoRecibo = c => c.nf ? 'nota' : c.recibo ? 'recibo' : 'nao';
+function comprovantePendente(c, g) {
+  if (!pedeRecibo(c) || g.nf?.emitida || g.comprovanteId || g.comprovanteOk) return false;
+  return !docsDe(c.id, 'emitido').some(d => d.modelo === 'recibo' && ((d.data || '') >= g.data || (d.criadoEm || '').slice(0, 10) >= g.data));
+}
+function pendenciasComprovante(limite = somarMeses(hojeISO().slice(0, 7), -3) + '-01') {
   const lista = [];
-  for (const c of cadastros) if (c.nf && !c.arquivado) for (const g of semNota(c)) if (g.data >= limite) lista.push([c, g]);
+  for (const c of cadastros) if (pedeRecibo(c) && !c.excluido) for (const g of pagamentosDe(c.id)) if (g.data >= limite && comprovantePendente(c, g)) lista.push({ c, g });
+  return lista.sort((a, b) => a.g.data.localeCompare(b.g.data));
+}
+async function emitirPendencia(c, g) {
+  if (c.nf) return abrirNotaFiscal(c, g);
+  return escolherRecibo(c, { soPagas: true, de: g.data.slice(0, 8) + '01', ate: g.data.slice(0, 8) + '31' });
+}
+async function marcarComprovanteFeito(c, g) {
+  const ok = await dialogo({ titulo: 'Já foi feito?', texto: `${c.nome} · pagamento de ${dataCurta(g.data)} · R$ ${reais(valorNum(g.valor))}. Marque se o ${c.nf ? 'a nota fiscal' : 'recibo'} já foi emitido fora do aplicativo. Sai das pendências.`,
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Já foi feito', valor: true, estilo: 'primario' }] });
+  if (!ok) return;
+  g.comprovanteOk = hojeISO(); g.atualizadoEm = agoraISO(); salvarPag(g); await salvarAgora();
+  indicarStatus('Saiu das pendências');
+  render(history.state);
+}
+function linhaPendencia({ c, g }) {
+  return el('div', { class: 'agenda-linha' },
+    el('span', { class: 'agenda-hora', text: dataCurta(g.data).slice(0, 5) }),
+    el('button', { type: 'button', class: 'agenda-nome', onclick: () => ir({ tela: 'adm', id: c.id, aba: 'pagamentos' }) }, avatar(c),
+      el('span', { text: `${c.nome} · ${c.nf ? 'nota fiscal' : 'recibo'} · R$ ${reais(valorNum(g.valor))}` })),
+    el('button', { type: 'button', class: 'chip', text: 'Já foi feito', onclick: () => marcarComprovanteFeito(c, g) }),
+    el('button', { type: 'button', class: 'chip acao', text: 'Emitir', onclick: () => emitirPendencia(c, g) }));
+}
+function cartaoSemNota() {
+  const lista = pendenciasComprovante();
   if (!lista.length) return null;
-  lista.sort((a, b) => a[1].data.localeCompare(b[1].data));
-  const total = lista.reduce((t, [, g]) => t + valorNum(g.valor), 0);
+  const total = lista.reduce((t, x) => t + valorNum(x.g.valor), 0);
   return el('section', { class: 'cartao agenda sem-nota' },
-    el('h3', { class: 'cartao-titulo' }, el('span', { class: 'ic-bolha' }, icone('arquivo')), el('span', { text: `Sem nota fiscal (${lista.length}) · R$ ${reais(total)}` })),
-    lista.slice(0, 6).map(([c, g]) => el('div', { class: 'agenda-linha' },
-      el('span', { class: 'agenda-hora', text: dataCurta(g.data).slice(0, 5) }),
-      el('button', { type: 'button', class: 'agenda-nome', onclick: () => ir({ tela: 'adm', id: c.id, aba: 'pagamentos' }) }, avatar(c), el('span', { text: c.nome })),
-      el('button', { type: 'button', class: 'chip acao', text: 'Emitir', onclick: () => abrirNotaFiscal(c, g) }))),
-    lista.length > 6 && el('button', { type: 'button', class: 'link', text: 'Ver todas no mês', onclick: () => { filtroMes = 'nota'; ir({ tela: 'mes' }); } }));
+    el('h3', { class: 'cartao-titulo' }, el('span', { class: 'ic-bolha' }, icone('arquivo')), el('span', { text: `🧾 Pendências: recibo ou nota a emitir (${lista.length}) · R$ ${reais(total)}` })),
+    lista.slice(0, 8).map(linhaPendencia),
+    el('button', { type: 'button', class: 'link', text: lista.length > 8 ? `Ver todas (${lista.length})` : 'Ver a lista de quem pede recibo', onclick: () => ir({ tela: 'recibos', ym: hojeISO().slice(0, 7) }) }));
+}
+// Escolha rápida: não pede / recibo / nota fiscal. Usada na lista de pacientes, na página do paciente e depois do pagamento.
+async function escolherTipoRecibo(c, depois) {
+  const r = await janela('Comprovante de pagamento', [el('p', { text: c.nome }),
+    el('p', { class: 'suave pequeno', text: 'Quem pede recibo ou nota entra na lista "Quem pede recibo" e, a cada pagamento, nas pendências do administrativo até o comprovante sair.' })],
+    Object.entries(TIPOS_RECIBO).map(([k, v]) => ({ rotulo: (tipoRecibo(c) === k ? '✓ ' : '') + v, valor: k, estilo: tipoRecibo(c) === k ? 'primario' : undefined })));
+  if (!r || r === tipoRecibo(c)) return;
+  c.recibo = r !== 'nao'; c.nf = r === 'nota'; c.atualizadoEm = agoraISO(); salvarCadastro(c); await salvarAgora();
+  indicarStatus(r === 'nao' ? `${primeiroNome(c.nome)}: não pede recibo` : `${primeiroNome(c.nome)}: pede ${TIPOS_RECIBO[r].toLowerCase()}`);
+  if (depois) depois(); else render(history.state);
 }
 
 // ---------- Documentos e cadastro ----------
@@ -3290,7 +3328,7 @@ function telaMesAba(ym) {
       const pago = gs.reduce((t, g) => t + valorNum(g.valor), 0);
       const recibos = docsDe(c.id, 'emitido').filter(d => d.modelo === 'recibo' && (d.data || '').slice(0, 7) === ym);
       const notas = gs.filter(g => g.nf?.emitida);
-      const feito = gs.length ? (c.nf ? notas.length === gs.length : recibos.length > 0 || notas.length === gs.length) : false;
+      const feito = gs.length ? !gs.some(g => comprovantePendente(c, g)) : false;
       return { c, gs, pago, feito, recibos, notas };
     }).sort((a, b) => (b.gs.length && !b.feito) - (a.gs.length && !a.feito)); // quem tem recibo a emitir aparece primeiro
     const faltam = linhas.filter(x => x.gs.length && !x.feito).length;
@@ -3309,6 +3347,7 @@ function telaMesAba(ym) {
             el('strong', { class: 'valor-lista', text: x.pago ? 'R$ ' + reais(x.pago) : '—' })),
           el('div', { class: 'linha-copiar' },
             el('span', { class: 'selo ' + (!x.gs.length ? '' : x.feito ? 'pago' : 'areceber'), text: !x.gs.length ? 'Sem pagamento no mês' : x.feito ? '✅ Emitido' : '⏳ A emitir' }),
+            el('button', { type: 'button', class: 'secundario compacto', text: `${x.c.nf ? 'Nota fiscal' : 'Recibo'} ✏️`, onclick: () => escolherTipoRecibo(x.c) }),
             el('button', { type: 'button', class: x.gs.length && !x.feito ? 'primario compacto' : 'secundario compacto', text: 'Emitir', onclick: () => escolherRecibo(x.c, { soPagas: true, de, ate }) })));
       }) : el('div', { class: 'cartao vazio-cartao' }, el('p', { text: 'Nenhum paciente marcado ainda.' })),
       el('button', { type: 'button', class: linhas.length ? 'secundario com-icone centralizado' : 'primario com-icone centralizado', onclick: escolherPacientesRecibo }, icone('mais'),
@@ -3407,11 +3446,16 @@ async function pagarSessao(c, a) {
   indicarStatus('Pagamento registrado');
   render(history.state);
   // Versão 49: logo depois do pagamento, os dois jeitos de comprovar: recibo com texto próprio ou nota fiscal no Emissor Nacional (gov.br).
+  // Versão 92: "Agora não" deixa o pagamento nas pendências do administrativo (se o paciente pede recibo).
+  const cxPede = el('input', { type: 'checkbox', checked: pedeRecibo(c) });
   const r2 = await janela('Pagamento registrado', [el('p', { text: `${c.nome} · R$ ${reais(valorNum(valor))}` }),
-    el('p', { class: 'suave pequeno', text: 'Quer emitir o comprovante agora? Dá para fazer depois, no paciente → Pagamentos.' })],
+    el('label', { class: 'marcar' }, cxPede, el('span', { text: c.nf ? 'Este paciente pede nota fiscal' : 'Este paciente pede recibo ou nota' })),
+    el('p', { class: 'suave pequeno', text: 'Emitir agora? Com "Agora não", fica nas pendências do administrativo (tela inicial dele) até o comprovante sair.' })],
     [{ rotulo: 'Agora não', valor: null }, { rotulo: '📄 Recibo', valor: 'recibo' }, { rotulo: '🏛️ Nota fiscal (gov.br)', valor: 'nota', estilo: c.nf ? 'primario' : undefined }]);
+  if (cxPede.checked !== pedeRecibo(c)) { c.recibo = cxPede.checked; if (!cxPede.checked) c.nf = false; c.atualizadoEm = agoraISO(); salvarCadastro(c); await salvarAgora(); }
   if (r2 === 'recibo') novaDeclaracao(c, { modelo: 'recibo', soPagas: true, de: a.data.slice(0, 8) + '01', ate: a.data > hojeISO() ? a.data : hojeISO() });
-  if (r2 === 'nota' && g) abrirNotaFiscal(c, g);
+  else if (r2 === 'nota' && g) abrirNotaFiscal(c, g);
+  else if (pedeRecibo(c)) { indicarStatus('Ficou nas pendências de recibo/nota'); render(history.state); }
 }
 
 
@@ -3984,9 +4028,8 @@ function telaPagamentos(ym) {
       if (r.aReceber > 0 || r.pendentesMes.length) abertos.push({ c, v: r.aReceber, n: r.pendentesMes.length });
       if (r.gs.length) pagos.push({ c, v: r.pago, datas: r.gs.map(g => ddmm(g.data)).join(', ') });
       if (pedeRecibo(c) && r.gs.length) {
-        const recibos = docsDe(c.id, 'emitido').filter(d => d.modelo === 'recibo' && (d.data || '').slice(0, 7) === ym);
-        const feito = c.nf ? r.gs.every(g => g.nf?.emitida) : recibos.length > 0 || r.gs.every(g => g.nf?.emitida);
-        if (!feito) notas.push({ c, v: r.pago });
+        const pend = r.gs.filter(g => comprovantePendente(c, g));
+        if (pend.length) notas.push({ c, v: pend.reduce((t, g) => t + valorNum(g.valor), 0), gs: pend });
       }
     }
     const anteriores = ds.reduce((t, x) => t + x.pend.filter(a => a.data.slice(0, 7) < ym).reduce((s2, a) => s2 + valorDe(a), 0), 0);
@@ -4010,8 +4053,9 @@ function telaPagamentos(ym) {
           : el('p', { class: 'suave', text: 'Nenhum pagamento registrado neste mês.' })),
       notas.length > 0 && cartao(`🧾 Recibo ou nota a emitir (${notas.length})`, 'assinar',
         ...ordenar(notas).map(x => el('div', { class: 'pag-linha' }, avatar(x.c),
-          el('span', { class: 'pag-info' }, el('strong', { text: x.c.nome }), el('span', { class: 'suave pequeno', text: `${x.c.nf ? 'Nota fiscal' : 'Recibo'} · pagou R$ ${reais(x.v)}` })),
-          el('button', { type: 'button', class: 'primario compacto', text: 'Emitir', onclick: () => escolherRecibo(x.c, { soPagas: true, de: ym + '-01', ate: ym + '-31' }) })))),
+          el('span', { class: 'pag-info' }, el('strong', { text: x.c.nome }), el('span', { class: 'suave pequeno', text: `${x.c.nf ? 'Nota fiscal' : 'Recibo'} · R$ ${reais(x.v)} · pago em ${x.gs.map(g => ddmm(g.data)).join(', ')}` })),
+          el('button', { type: 'button', class: 'secundario compacto', text: 'Já foi feito', onclick: async () => { for (const g of x.gs) await marcarComprovanteFeito(x.c, g); } }),
+          el('button', { type: 'button', class: 'primario compacto', text: 'Emitir', onclick: () => x.gs.length === 1 ? emitirPendencia(x.c, x.gs[0]) : escolherRecibo(x.c, { soPagas: true, de: ym + '-01', ate: ym + '-31' }) })))),
       cartao(`🔴 Falta receber de ${mesNome.toLowerCase()} (${abertos.length})`, 'moeda',
         abertos.length ? ordenar(abertos).map(x => linhaPac(x.c, x.v ? 'R$ ' + reais(x.v) : 'valor a definir', `${x.n} ${x.n === 1 ? 'sessão' : 'sessões'}`, 'texto-alerta'))
           : el('p', { class: 'suave', text: 'Ninguém deve sessões deste mês. 🎉' }))];
