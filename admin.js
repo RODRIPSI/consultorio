@@ -4073,28 +4073,36 @@ function telaPagamentos(ym) {
     const somaMeses = l => l.reduce((t, m) => t + [...porMes.get(m).values()].reduce((x, y) => x + y.v, 0), 0);
     const pacientesEm = l => new Set(l.flatMap(m => [...porMes.get(m).keys()])).size;
     const totalFiltro = somaMeses(meses), nPac = pacientesEm(meses);
+    // versão 93: o que cobrar de cada paciente segue o filtro escolhido (todos, este mês ou meses anteriores)
+    const aCobrar = pid => meses.flatMap(m => porMes.get(m).get(pid)?.ats || []);
+    const paraCobrar = [...new Set(meses.flatMap(m => [...porMes.get(m).keys()]))].map(pid => ({ c: cadastroDe(pid), ats: aCobrar(pid) }))
+      .filter(x => x.c).sort((a, b) => a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
+    const rotuloFiltro = filtroDevendo === 'mes' ? nomeMes(hoje7).split(' ')[0] : filtroDevendo === 'anteriores' ? 'meses anteriores' : 'todos os meses';
     const rotuloTotal = filtroDevendo === 'mes' ? `${nomeMes(hoje7).split(' ')[0]}: falta receber` : filtroDevendo === 'anteriores' ? 'Meses anteriores: falta receber' : 'Total devido (todos os meses)';
     corpo = [
       segmentoEscolha({ todos: 'Todos', mes: nomeMes(hoje7).split(' ')[0], anteriores: 'Meses anteriores' }, filtroDevendo, k => ir({ tela: 'devendo', filtro: k }, false)),
       el('div', { class: 'cartao destaque total-clinica' }, el('small', { text: rotuloTotal }), el('strong', { text: 'R$ ' + reais(totalFiltro) }),
         el('span', { text: `${nPac} ${nPac === 1 ? 'paciente' : 'pacientes'} · ${meses.length} ${meses.length === 1 ? 'mês' : 'meses'}${filtroDevendo !== 'todos' ? ` · total de todos os meses: R$ ${reais(totalDevido)}` : ''}` })),
+      nPac > 0 && el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => cobrarTodos(paraCobrar, rotuloFiltro) }, icone('mensagem'),
+        el('span', { text: `Cobrar todos pelo WhatsApp (${nPac})` })),
       ...meses.map((m, i) => {
         const lista = [...porMes.get(m).values()].sort((a, b) => a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
         const tot = lista.reduce((t, y) => t + y.v, 0);
         const det = el('details', { class: 'cartao mes-devendo' },
           el('summary', {}, el('strong', { text: nomeMes(m) }), el('span', { class: 'texto-alerta', text: ` R$ ${reais(tot)} · ${lista.length} ${lista.length === 1 ? 'paciente' : 'pacientes'}` })),
           ...lista.map(y => el('div', { class: 'linha-devedor' },
-            linhaPac(y.c, y.v ? 'R$ ' + reais(y.v) : 'valor a definir', y.divida ? (y.n > 1 ? `dívida lançada + ${y.n - 1} ${y.n - 1 === 1 ? 'sessão' : 'sessões'}` : 'dívida lançada' + (y.ats[0].obs ? ' · ' + y.ats[0].obs : '')) : `${y.n} ${y.n === 1 ? 'sessão' : 'sessões'}`, 'texto-alerta'),
+            linhaPac(y.c, y.v ? 'R$ ' + reais(y.v) : 'valor a definir', y.divida ? (y.n > 1 ? `dívida lançada + ${y.n - 1} ${y.n - 1 === 1 ? 'sessão' : 'sessões'}` : 'dívida lançada' + (y.ats[0].obs ? ' · ' + y.ats[0].obs : '')) : `${y.n} ${y.n === 1 ? 'sessão' : 'sessões'}` + (y.c.cobradoEm ? ` · cobrado em ${ddmm(y.c.cobradoEm)}` : ''), 'texto-alerta'),
             // versão 87: pagar ou apagar direto daqui; os totais se recalculam na hora
             el('div', { class: 'botoes-mini' },
               botaoIcone('Apagar ou não cobrar', 'lixeira', () => apagarDividaMes(y.c, y.ats, m)),
+              botaoIcone(`Cobrar ${y.c.nome} pelo WhatsApp`, 'mensagem', () => cobrarPaciente(y.c, aCobrar(y.c.id))),
               el('button', { type: 'button', class: 'chip acao marcado', text: 'Pagou', onclick: () => pagarDividaMes(y.c, y.ats, m) })))));
         if (i < 2 || filtroDevendo !== 'todos') det.open = true;
         return det;
       }),
       !meses.length && el('div', { class: 'cartao vazio-cartao' }, el('span', { class: 'ic-bolha grande' }, icone('moeda')), el('p', { text: filtroDevendo === 'anteriores' ? 'Ninguém devendo de meses anteriores. 🎉' : 'Ninguém devendo. 🎉' })),
       el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => lancarDividaAnterior() }, icone('mais'), el('span', { text: 'Lançar dívida de meses anteriores' })),
-      el('p', { class: 'suave pequeno', text: 'Cada mês mostra o que ficou sem pagar daquele mês. "Pagou" registra o pagamento; a lixeira apaga ou deixa de cobrar. Os totais se recalculam na hora. Toque no nome para ver item por item.' })];
+      el('p', { class: 'suave pequeno', text: 'Cada mês mostra o que ficou sem pagar daquele mês. "Pagou" registra o pagamento; a lixeira apaga ou deixa de cobrar; o balão abre a mensagem de cobrança no WhatsApp. Os totais se recalculam na hora. Toque no nome para ver item por item.' })];
   } else {
     fechamentoAno = true;
     corpo = corpoFechamento(ym).slice(1);   // sem o seletor Mensal/Anual: aqui é sempre o ano
@@ -4110,6 +4118,65 @@ function telaPagamentos(ym) {
     el('button', { type: 'button', class: 'fab estendido', onclick: () => { pagamentoRasc = null; ir({ tela: 'pagar' }); } }, icone('mais'), el('span', { text: 'Registrar pagamento' })));
 }
 
+
+// =====================================================================
+// Versão 93: cobrança pelo WhatsApp a partir de "Quem deve".
+// Uma mensagem por paciente, com as sessões em aberto, o total e a chave Pix. O WhatsApp não deixa
+// um aplicativo mandar sozinho para vários contatos: "Cobrar todos" abre um de cada vez, com o texto pronto.
+// =====================================================================
+const MODELO_COBRANCA = 'Olá, {nome}! Tudo bem? Passando para lembrar do pagamento em aberto:\n{sessoes}\nTotal: R$ {total}.\nPara pagar por Pix, a chave é: {pix}\nQualquer dúvida, estou à disposição.';
+function linhasCobranca(ats) {
+  const porMes = new Map();
+  for (const a of [...ats].sort((x, y) => x.data.localeCompare(y.data))) { const m = a.data.slice(0, 7); porMes.set(m, [...(porMes.get(m) || []), a]); }
+  return [...porMes].map(([m, l]) => {
+    const tot = l.reduce((t, a) => t + valorDe(a), 0), mes = nomeMes(m).split(' ')[0];
+    const sess = l.filter(a => !a.divida), div = l.filter(a => a.divida);
+    const partes = [];
+    if (sess.length) partes.push(sess.length === 1 ? `sessão de ${ddmm(sess[0].data)}` : `sessões de ${sess.map(a => ddmm(a.data)).join(', ').replace(/, ([^,]*)$/, ' e $1')}`);
+    if (div.length) partes.push('saldo do mês');
+    return `• ${mes}: ${partes.join(' + ')} – R$ ${reais(tot)}`;
+  }).join('\n');
+}
+function textoCobranca(c, ats, modelo = perfil.modeloCobranca || MODELO_COBRANCA) {
+  const total = ats.reduce((t, a) => t + valorDe(a), 0);
+  return modelo.replaceAll('{nome}', primeiroNome(c.nome)).replaceAll('{sessoes}', linhasCobranca(ats))
+    .replaceAll('{total}', total ? reais(total) : '[valor]').replaceAll('{pix}', perfil.pixChave || '[chave Pix: coloque em Configurações → Dados profissionais]');
+}
+function marcarCobrado(c) { c.cobradoEm = hojeISO(); c.atualizadoEm = agoraISO(); salvarCadastro(c); }
+async function cobrarPaciente(c, ats) {
+  const n = numeroWhats(c.telefone);
+  const caixa = el('textarea', { rows: '9', 'aria-label': 'Mensagem de cobrança' }); caixa.value = textoCobranca(c, ats);
+  const r = await janela(`Cobrar ${c.nome}`, [
+    !n && el('p', { class: 'faixa', text: 'Sem celular no cadastro: o WhatsApp vai abrir para você escolher o contato.' }),
+    c.cobradoEm && el('p', { class: 'suave pequeno', text: `Última cobrança enviada em ${dataCurta(c.cobradoEm)}.` }),
+    el('p', { class: 'suave pequeno', text: 'Dá para mudar o texto antes de enviar. A mudança vale só para esta mensagem.' }), caixa],
+    [{ rotulo: 'Cancelar', valor: null }, { rotulo: '📲 Abrir no WhatsApp', valor: true, estilo: 'primario' }]);
+  if (!r) return;
+  abrirExterno(`https://wa.me/${n || ''}?text=${encodeURIComponent(caixa.value)}`);
+  marcarCobrado(c); await salvarAgora(); render(history.state);
+}
+async function cobrarTodos(lista, rotulo) {
+  if (!lista.length) return;
+  const modelo = el('textarea', { rows: '7', 'aria-label': 'Mensagem para todos' }); modelo.value = perfil.modeloCobranca || MODELO_COBRANCA;
+  const r1 = await janela(`Cobrar todos · ${rotulo}`, [
+    el('p', { class: 'suave pequeno', text: 'Esta é a mensagem-modelo. Cada paciente recebe a sua, com o primeiro nome, as próprias sessões e o próprio total. Pode mudar o texto; as palavras entre chaves são preenchidas sozinhas: {nome}, {sessoes}, {total}, {pix}.' }),
+    modelo, el('p', { class: 'suave pequeno', text: `${lista.length} ${lista.length === 1 ? 'paciente' : 'pacientes'}.` })],
+    [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Voltar ao texto original', valor: 'original' }, { rotulo: 'Continuar', valor: true, estilo: 'primario' }]);
+  if (!r1) return;
+  perfil.modeloCobranca = r1 === 'original' || modelo.value.trim() === MODELO_COBRANCA ? '' : modelo.value.trim();
+  salvarPerfil(); await salvarAgora();
+  const itens = lista.map(({ c, ats }) => {
+    const n = numeroWhats(c.telefone), total = ats.reduce((t, a) => t + valorDe(a), 0);
+    const b = el('button', { type: 'button', class: 'secundario com-icone' + (c.cobradoEm === hojeISO() ? ' marcado' : ''), disabled: !n }, icone('mensagem'),
+      el('span', { text: n ? `${c.nome} · R$ ${reais(total)}${c.cobradoEm === hojeISO() ? ' · já enviado hoje' : ''}` : `${c.nome}: sem celular no cadastro` }));
+    if (n) b.addEventListener('click', () => { b.classList.add('marcado'); b.lastChild.textContent = `Aberto: ${c.nome} · R$ ${reais(total)}`; abrirExterno(`https://wa.me/${n}?text=${encodeURIComponent(textoCobranca(c, ats))}`); marcarCobrado(c); });
+    return b;
+  });
+  await janela(`Cobrar todos · ${rotulo}`,
+    [el('p', { class: 'suave pequeno', text: 'Toque em cada nome: o WhatsApp abre com a mensagem pronta. Envie, volte para o app e toque no próximo.' }), el('div', { class: 'pilha-pequena' }, itens)],
+    [{ rotulo: 'Fechar', valor: true, estilo: 'primario' }]);
+  await salvarAgora(); render(history.state);
+}
 
 // =====================================================================
 // Versão 83: Agenda do Google (só no aparelho do Rodrigo).
