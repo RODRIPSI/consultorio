@@ -2555,6 +2555,24 @@ async function sincronizarSozinho() {
   await sincronizarDrive({ silencioso: true });
 }
 setInterval(sincronizarSozinho, 120000);
+// Versão 75: faixa bem visível quando a sincronização para (a autorização do Google vence em 1 hora).
+// Antes era só um pontinho amarelo no 🔁, fácil de não ver — e aí um aparelho ficava horas sem mandar nada.
+function atualizarFaixaSync() {
+  let faixa = document.getElementById('faixa-sync');
+  const cfg = typeof driveCfg === 'function' ? driveCfg() : {};
+  const parada = Cofre.aberto() && cfg.pastaSync && cfg.clientId && senhaTroca && !tokenSyncValido() && !sincronizando;
+  if (!parada) { faixa?.remove(); return; }
+  let ult = ''; try { ult = localStorage.getItem('consultorio-ultima-sync') || ''; } catch { }
+  const quando = ult ? (ult.slice(0, 10) === hojeISO() ? 'hoje às ' + new Date(ult).toTimeString().slice(0, 5) : dataCurta(ult.slice(0, 10)) + ' às ' + new Date(ult).toTimeString().slice(0, 5)) : 'ainda não sincronizou';
+  const texto = `⚠️ Sincronização parada — o outro aparelho não está recebendo o que você muda. Última: ${quando}. Toque aqui para reconectar.`;
+  if (!faixa) {
+    faixa = el('button', { type: 'button', id: 'faixa-sync', class: 'faixa-sync', onclick: async () => { faixa.remove(); await sincronizarDrive(); atualizarFaixaSync(); } });
+    document.body.append(faixa);
+  }
+  faixa.textContent = texto;
+}
+setInterval(atualizarFaixaSync, 20000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(atualizarFaixaSync, 2500); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(sincronizarSozinho, 1500); });
 async function sincronizarDrive(opcoes = {}) {
   const silencioso = opcoes.silencioso === true;
@@ -2611,6 +2629,7 @@ async function sincronizarDrive(opcoes = {}) {
       await driveApi('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true', token, { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + limite }, body: corpo });
     }
     try { localStorage.setItem('consultorio-ultima-sync', agoraISO()); } catch { } // fora do perfil, para não sobrescrever dados do outro aparelho
+    document.getElementById('faixa-sync')?.remove();
     if (doForms && (doForms.novos || doForms.atualizados)) {
       const t = [doForms.novos ? `${doForms.novos} ${doForms.novos === 1 ? 'paciente novo' : 'pacientes novos'} do formulário` : '', doForms.atualizados ? `${doForms.atualizados} ${doForms.atualizados === 1 ? 'cadastro atualizado' : 'cadastros atualizados'} pelo formulário` : ''].filter(Boolean).join(' · ');
       mostrarNotificacao('Consultório', t);
