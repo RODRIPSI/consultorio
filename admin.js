@@ -1350,7 +1350,7 @@ async function trocarSenhaAdmAtual() {
 }
 
 // ---------- Troca de arquivo entre os aparelhos ----------
-const FORA_DA_TROCA = new Set(['x:entradapriv', 'x:senhatroca', 'x:migrado7', 'c:chaveadm', 'c:senhabackup']);
+const FORA_DA_TROCA = new Set(['x:entradapriv', 'x:senhatroca', 'x:conexaogoogle', 'x:migrado7', 'c:chaveadm', 'c:senhabackup']);
 async function registrosAdm(paraBackup) {
   await salvarAgora();
   const r = {};
@@ -1977,8 +1977,13 @@ function telaDrive() {
         el('p', { class: 'suave pequeno', text: (() => { let u = null; try { u = localStorage.getItem('consultorio-ultima-sync'); } catch { } return u ? `Última sincronização neste aparelho: ${dataBR(u)}, ${new Date(u).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.` : 'Nenhuma sincronização ainda neste aparelho.'; })() })),
       el('section', { class: 'cartao' }, el('h3', { class: 'secao-titulo', text: 'Conexão' }),
         linha('cadeado', 'Chave de conexão do Google', cfg.clientId ? 'Definida.' : 'Falta criar no Google Cloud (uma vez só).',
-          el('button', { type: 'button', class: 'secundario compacto', text: cfg.clientId ? 'Trocar' : 'Colar', onclick: editarChaveGoogle }))),
-      el('p', { class: 'suave pequeno', text: 'O app só lê estes arquivos, nunca altera nem apaga nada no Drive. A leitura vai direto do aparelho ao Google, sem passar por nenhum outro servidor, e o acesso vale só enquanto o app está aberto.' })));
+          el('button', { type: 'button', class: 'secundario compacto', text: cfg.clientId ? 'Trocar' : 'Colar', onclick: editarChaveGoogle })),
+        // versão 76: conexão permanente — sincroniza sozinho sem precisar reconectar a cada hora
+        linha('cadeado', 'Chave secreta do cliente', cfg.clientSecret ? 'Definida.' : 'Para a conexão permanente: a "Chave secreta do cliente", na mesma tela do Google Cloud.',
+          el('button', { type: 'button', class: 'secundario compacto', text: cfg.clientSecret ? 'Trocar' : 'Colar', onclick: editarSegredoGoogle })),
+        linha('repetir', 'Conexão permanente', conexaoPermanente.ativa ? 'Ativa neste aparelho: sincroniza sozinho, sem pedir para reconectar.' : cfg.clientSecret ? 'Ainda não ativada neste aparelho.' : 'Cole a chave secreta acima para ativar.',
+          el('button', { type: 'button', class: conexaoPermanente.ativa ? 'secundario compacto' : 'primario compacto', disabled: !(cfg.clientId && cfg.clientSecret), text: conexaoPermanente.ativa ? 'Refazer' : 'Ativar', onclick: ativarConexaoPermanente }))),
+      el('p', { class: 'suave pequeno', text: 'O app só lê as listas acima e só escreve os dois arquivos cifrados da sincronização, na pasta compartilhada. Tudo vai direto do aparelho ao Google, sem passar por nenhum outro servidor. A conexão permanente fica guardada cifrada só neste aparelho; para cortá-la, toque em Trancar e troque a chave secreta, ou remova o acesso em myaccount.google.com.' })));
 }
 
 // ---------- Pagamentos vencidos ----------
@@ -2549,6 +2554,7 @@ const ESCOPO_ESCRITA = 'https://www.googleapis.com/auth/drive';
 const tokenSyncValido = () => !!(tokenGoogle && tokenGoogle.escopo === ESCOPO_ESCRITA && tokenGoogle.expira > Date.now() + 60000);
 let ultimaSyncAuto = 0;
 async function sincronizarSozinho() {
+  if (!sincronizando && Cofre.aberto() && senhaTroca && !tokenSyncValido()) await renovarTokenPermanente();   // versão 76
   if (sincronizando || !Cofre.aberto() || !senhaTroca || !tokenSyncValido()) return; // versão 60: também com o app minimizado, enquanto o Android deixar
   if (!driveCfg().pastaSync || !driveCfg().clientId || Date.now() - ultimaSyncAuto < 60000) return;
   ultimaSyncAuto = Date.now();
@@ -2557,14 +2563,15 @@ async function sincronizarSozinho() {
 setInterval(sincronizarSozinho, 120000);
 // Versão 75: faixa bem visível quando a sincronização para (a autorização do Google vence em 1 hora).
 // Antes era só um pontinho amarelo no 🔁, fácil de não ver — e aí um aparelho ficava horas sem mandar nada.
-function atualizarFaixaSync() {
+async function atualizarFaixaSync() {
+  if (Cofre.aberto() && senhaTroca && !tokenSyncValido()) await renovarTokenPermanente();   // versão 76: com a conexão permanente, a faixa quase nunca aparece
   let faixa = document.getElementById('faixa-sync');
   const cfg = typeof driveCfg === 'function' ? driveCfg() : {};
   const parada = Cofre.aberto() && cfg.pastaSync && cfg.clientId && senhaTroca && !tokenSyncValido() && !sincronizando;
   if (!parada) { faixa?.remove(); return; }
   let ult = ''; try { ult = localStorage.getItem('consultorio-ultima-sync') || ''; } catch { }
   const quando = ult ? (ult.slice(0, 10) === hojeISO() ? 'hoje às ' + new Date(ult).toTimeString().slice(0, 5) : dataCurta(ult.slice(0, 10)) + ' às ' + new Date(ult).toTimeString().slice(0, 5)) : 'ainda não sincronizou';
-  const texto = `⚠️ Sincronização parada — o outro aparelho não está recebendo o que você muda. Última: ${quando}. Toque aqui para reconectar.`;
+  const texto = `⚠️ Sincronização parada — o outro aparelho não está recebendo o que você muda. Última: ${quando}. Toque aqui para reconectar.${driveCfg().clientSecret ? '' : ' (Para não precisar mais: Configurações → Google Drive → Conexão permanente.)'}`;
   if (!faixa) {
     faixa = el('button', { type: 'button', id: 'faixa-sync', class: 'faixa-sync', onclick: async () => { faixa.remove(); await sincronizarDrive(); atualizarFaixaSync(); } });
     document.body.append(faixa);
@@ -2585,7 +2592,7 @@ async function sincronizarDrive(opcoes = {}) {
   let token;
   if (silencioso) { if (!tokenSyncValido()) return; token = tokenGoogle.valor; }
   else {
-    try { await carregarGoogle(); token = await pedirTokenGoogle(ESCOPO_ESCRITA); }
+    try { if (!tokenSyncValido()) await renovarTokenPermanente(); if (tokenSyncValido()) token = tokenGoogle.valor; else { await carregarGoogle(); token = await pedirTokenGoogle(ESCOPO_ESCRITA); } }
     catch (e) { return aviso('Sem conexão com o Google', e.message === 'sem-internet' ? 'Verifique a internet e tente de novo.' : 'O acesso ao Google não foi concedido. Toque em Sincronizar de novo e entre na conta.'); }
   }
   sincronizando = true; indicarStatus('Sincronizando…');
@@ -3733,4 +3740,81 @@ async function retomarAtendimento(c, aoFim) {
   await salvarAgora();
   indicarStatus(`Atendimento de ${primeiroNome(c.nome)} retomado.`);
   if (aoFim) aoFim(); else render(history.state);
+}
+
+
+// =====================================================================
+// Versão 76: conexão permanente com o Google.
+// Com a "chave secreta do cliente", o aparelho recebe do Google uma autorização de longa duração
+// (guardada só neste aparelho, cifrada no cofre) e renova sozinho o acesso de 1 hora, sem janelas.
+// A conversa continua só entre o aparelho e o Google: nenhum outro servidor no meio.
+// =====================================================================
+const CHAVE_PERMANENTE = 'x:conexaogoogle';   // fica só neste aparelho: não entra na troca nem no backup
+const conexaoPermanente = { ativa: false, carregado: false };
+async function lerConexaoPermanente() {
+  if (conexaoPermanente.carregado || !Cofre.aberto()) return;
+  try { const r = await Cofre.ler(CHAVE_PERMANENTE); conexaoPermanente.ativa = !!r?.token; conexaoPermanente.token = r?.token || null; } catch { }
+  conexaoPermanente.carregado = true;
+}
+async function editarSegredoGoogle() {
+  const r = await dialogo({ titulo: 'Chave secreta do cliente',
+    texto: 'No Google Cloud: APIs e serviços → Credenciais → toque no nome da sua chave (a mesma do ID do cliente) → copie a "Chave secreta do cliente" (começa com GOCSPX-). Fica guardada cifrada, nunca vai para o GitHub.',
+    campos: [{ rotulo: 'GOCSPX-…' }], botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }] });
+  if (r === null) return;
+  driveCfg().clientSecret = r.trim(); salvarPerfil(); await salvarAgora(); render(history.state);
+}
+function ativarConexaoPermanente() {
+  // chamado direto no toque, para o Android não bloquear a janela do Google
+  const cfg = driveCfg();
+  const iniciar = () => {
+    const cliente = google.accounts.oauth2.initCodeClient({
+      client_id: cfg.clientId.trim(), scope: ESCOPO_ESCRITA, ux_mode: 'popup', select_account: false,
+      callback: async r => {
+        if (r.error || !r.code) return aviso('Conexão não ativada', 'O Google não autorizou. Tente de novo e toque em "Permitir".');
+        try {
+          const j = await trocarNoGoogle({ code: r.code, redirect_uri: 'postmessage', grant_type: 'authorization_code' });
+          if (!j.refresh_token) return aviso('Conexão não ativada', 'O Google não mandou a autorização permanente. Em myaccount.google.com → Segurança → Conexões de terceiros, remova o acesso deste app e toque em Ativar de novo.');
+          await Cofre.salvar(CHAVE_PERMANENTE, { token: j.refresh_token, criadoEm: agoraISO() });
+          conexaoPermanente.ativa = true; conexaoPermanente.token = j.refresh_token; conexaoPermanente.carregado = true;
+          tokenGoogle = { valor: j.access_token, expira: Date.now() + (Number(j.expires_in) || 3600) * 1000, escopo: ESCOPO_ESCRITA };
+          document.getElementById('faixa-sync')?.remove();
+          await aviso('Conexão permanente ativada', 'Pronto. Neste aparelho a sincronização agora roda sozinha, sem pedir para reconectar. Faça o mesmo no outro aparelho.');
+          render(history.state);
+          sincronizarSozinho();
+        } catch (e) { aviso('Conexão não ativada', 'Confira se a chave secreta foi copiada inteira (começa com GOCSPX-) e tente de novo.'); }
+      },
+      error_callback: () => aviso('Conexão não ativada', 'A janela do Google foi fechada antes de terminar.')
+    });
+    liberarSaidaTemporaria();
+    cliente.requestCode();
+  };
+  if (window.google?.accounts?.oauth2) iniciar();
+  else carregarGoogle().then(iniciar).catch(() => aviso('Sem internet', 'Verifique a internet e tente de novo.'));
+}
+async function trocarNoGoogle(campos) {
+  const cfg = driveCfg();
+  const corpo = new URLSearchParams({ client_id: cfg.clientId.trim(), client_secret: (cfg.clientSecret || '').trim(), ...campos });
+  const r = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: corpo });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(j.error || 'falha'); throw e; }
+  return j;
+}
+let renovando = null;
+async function renovarTokenPermanente() {
+  if (tokenSyncValido()) return true;
+  await lerConexaoPermanente();
+  const cfg = driveCfg();
+  if (!conexaoPermanente.token || !cfg.clientId || !cfg.clientSecret || !navigator.onLine) return false;
+  if (renovando) return renovando;
+  renovando = (async () => {
+    try {
+      const j = await trocarNoGoogle({ refresh_token: conexaoPermanente.token, grant_type: 'refresh_token' });
+      tokenGoogle = { valor: j.access_token, expira: Date.now() + (Number(j.expires_in) || 3600) * 1000, escopo: ESCOPO_ESCRITA };
+      return true;
+    } catch (e) {
+      if (e.message === 'invalid_grant') { conexaoPermanente.ativa = false; conexaoPermanente.token = null; try { await Cofre.apagar(CHAVE_PERMANENTE); } catch { } }
+      return false;
+    } finally { renovando = null; }
+  })();
+  return renovando;
 }
