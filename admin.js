@@ -4070,6 +4070,7 @@ function cartaoAgendaGoogle(linha) {
     linha('calendario', 'Conectar à Agenda do Google', ligada ? `Conectada. Os horários das próximas 8 semanas ficam na agenda "Consultório"${agendaGoogle.ultima ? ` · última atualização: ${dataBR(agendaGoogle.ultima)}` : ''}.`
       : cfg.clientSecret ? 'Cria a agenda "Consultório" na sua conta do Google e mantém os horários atualizados sozinho.' : 'Precisa antes da "Chave secreta do cliente" (acima).',
       el('button', { type: 'button', class: ligada ? 'secundario compacto' : 'primario compacto', text: ligada ? 'Refazer' : 'Conectar', onclick: () => faltaChaveGoogle().then(ok => ok && conectarAgendaGoogle()) })),
+    agendaGoogle.erro && el('p', { class: 'faixa', text: 'Última tentativa: ' + agendaGoogle.erro }),
     ligada && linha('repetir', 'Atualizar agora', 'Também acontece sozinho, junto com a sincronização.',
       el('button', { type: 'button', class: 'secundario compacto', text: 'Atualizar', onclick: () => atualizarAgendaGoogle() })),
     el('label', { class: 'campo' }, el('span', { text: 'Título dos eventos' }), titulo),
@@ -4081,9 +4082,11 @@ function conectarAgendaGoogle() {
   const cfg = driveCfg();
   const iniciar = () => {
     const cliente = google.accounts.oauth2.initCodeClient({
-      client_id: cfg.clientId.trim(), scope: ESCOPO_AGENDA, ux_mode: 'popup',
+      client_id: cfg.clientId.trim(), scope: ESCOPO_AGENDA, ux_mode: 'popup', prompt: 'consent', include_granted_scopes: false,   // versão 85: força a autorização permanente
       callback: async r => {
-        if (r.error || !r.code) return aviso('Agenda não conectada', 'O Google não autorizou. Tente de novo e toque em "Permitir".');
+        agendaGoogle.erro = null;
+        if (r.error || !r.code) { agendaGoogle.erro = 'O Google não autorizou (' + (r.error || 'sem código') + ').'; render(history.state); return aviso('Agenda não conectada', 'O Google não autorizou. Tente de novo e, na tela do Google, marque a caixa da Agenda antes de tocar em "Continuar"/"Permitir".'); }
+        if (r.scope && !String(r.scope).includes('calendar')) { agendaGoogle.erro = 'A permissão da Agenda não foi marcada.'; render(history.state); return aviso('Falta marcar a Agenda', 'Na tela do Google aparece uma caixinha para "ver, editar, compartilhar e excluir agendas". Ela precisa estar marcada. Toque em Conectar de novo e marque a caixinha antes de continuar.'); }
         try {
           const j = await trocarNoGoogle({ code: r.code, redirect_uri: 'postmessage', grant_type: 'authorization_code' });
           if (!j.refresh_token) return aviso('Agenda não conectada', 'O Google não mandou a autorização permanente. Em myaccount.google.com → Segurança → Conexões de terceiros, remova o acesso deste app e toque em Conectar de novo.');
@@ -4094,10 +4097,11 @@ function conectarAgendaGoogle() {
           await aviso('Agenda do Google conectada', 'Pronto. Abra o app Google Agenda: aparece a agenda "Consultório" com os horários das próximas 8 semanas. Ela se atualiza sozinha.');
           render(history.state);
         } catch (e) {
+          agendaGoogle.erro = 'Erro: ' + e.message; render(history.state);
           aviso('Agenda não conectada', e.message === 'accessNotConfigured' || /disabled|not been used/i.test(e.message) ? 'Falta ligar a "Google Calendar API" no Google Cloud (APIs e serviços → Biblioteca → Google Calendar API → Ativar).' : 'Confira a internet e a chave secreta e tente de novo.');
         }
       },
-      error_callback: () => aviso('Agenda não conectada', 'A janela do Google foi fechada antes de terminar.')
+      error_callback: e => { agendaGoogle.erro = 'A janela do Google fechou antes de terminar (' + (e?.type || '?') + ').'; render(history.state); aviso('Agenda não conectada', 'A janela do Google foi fechada antes de terminar. Toque em Conectar de novo e vá até o fim (Permitir/Continuar).'); }
     });
     liberarSaidaTemporaria();
     cliente.requestCode();
@@ -4191,6 +4195,7 @@ async function atualizarAgendaGoogle({ silencioso = false } = {}) {
     await guardarConexaoAgenda();
     if (!silencioso) indicarStatus(`Agenda do Google atualizada (${novos} novos, ${mudados} alterados, ${removidos} removidos).`);
   } catch (e) {
+    agendaGoogle.erro = 'Erro ao atualizar: ' + e.message;
     if (e.message === 'invalid_grant') { agendaGoogle.refresh = null; try { await Cofre.apagar(CHAVE_AGENDA); } catch { } }
     if (!silencioso) aviso('Agenda do Google não atualizada', e.message === 'invalid_grant' ? 'A conexão com a Agenda foi cortada. Toque em Conectar de novo.'
       : /accessNotConfigured|disabled/i.test(e.message) ? 'Falta ligar a "Google Calendar API" no Google Cloud (APIs e serviços → Biblioteca → Google Calendar API → Ativar).' : 'Verifique a internet e tente de novo.');
