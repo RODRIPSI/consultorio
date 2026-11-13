@@ -2013,7 +2013,7 @@ function telaDrive() {
         linha('cadeado', 'Chave secreta do cliente', cfg.clientSecret ? 'Definida.' : 'Para a conexão permanente: a "Chave secreta do cliente", na mesma tela do Google Cloud.',
           el('button', { type: 'button', class: 'secundario compacto', text: cfg.clientSecret ? 'Trocar' : 'Colar', onclick: editarSegredoGoogle })),
         linha('repetir', 'Conexão permanente', conexaoPermanente.ativa ? 'Ativa neste aparelho: sincroniza sozinho, sem pedir para reconectar.' : cfg.clientSecret ? 'Ainda não ativada neste aparelho.' : 'Cole a chave secreta acima para ativar.',
-          el('button', { type: 'button', class: conexaoPermanente.ativa ? 'secundario compacto' : 'primario compacto', disabled: !(cfg.clientId && cfg.clientSecret), text: conexaoPermanente.ativa ? 'Refazer' : 'Ativar', onclick: ativarConexaoPermanente }))),
+          el('button', { type: 'button', class: conexaoPermanente.ativa ? 'secundario compacto' : 'primario compacto', text: conexaoPermanente.ativa ? 'Refazer' : 'Ativar', onclick: () => faltaChaveGoogle().then(ok => ok && ativarConexaoPermanente()) }))),
       modo === 'dono' && cartaoAgendaGoogle(linha),
       el('p', { class: 'suave pequeno', text: 'O app só lê as listas acima e só escreve os dois arquivos cifrados da sincronização, na pasta compartilhada. Tudo vai direto do aparelho ao Google, sem passar por nenhum outro servidor. A conexão permanente fica guardada cifrada só neste aparelho; para cortá-la, toque em Trancar e troque a chave secreta, ou remova o acesso em myaccount.google.com.' })));
 }
@@ -4069,7 +4069,7 @@ function cartaoAgendaGoogle(linha) {
   return el('section', { class: 'cartao' }, el('h3', { class: 'secao-titulo', text: 'Agenda do Google' }),
     linha('calendario', 'Conectar à Agenda do Google', ligada ? `Conectada. Os horários das próximas 8 semanas ficam na agenda "Consultório"${agendaGoogle.ultima ? ` · última atualização: ${dataBR(agendaGoogle.ultima)}` : ''}.`
       : cfg.clientSecret ? 'Cria a agenda "Consultório" na sua conta do Google e mantém os horários atualizados sozinho.' : 'Precisa antes da "Chave secreta do cliente" (acima).',
-      el('button', { type: 'button', class: ligada ? 'secundario compacto' : 'primario compacto', disabled: !(cfg.clientId && cfg.clientSecret), text: ligada ? 'Refazer' : 'Conectar', onclick: conectarAgendaGoogle })),
+      el('button', { type: 'button', class: ligada ? 'secundario compacto' : 'primario compacto', text: ligada ? 'Refazer' : 'Conectar', onclick: () => faltaChaveGoogle().then(ok => ok && conectarAgendaGoogle()) })),
     ligada && linha('repetir', 'Atualizar agora', 'Também acontece sozinho, junto com a sincronização.',
       el('button', { type: 'button', class: 'secundario compacto', text: 'Atualizar', onclick: () => atualizarAgendaGoogle() })),
     el('label', { class: 'campo' }, el('span', { text: 'Título dos eventos' }), titulo),
@@ -4195,4 +4195,21 @@ async function atualizarAgendaGoogle({ silencioso = false } = {}) {
     if (!silencioso) aviso('Agenda do Google não atualizada', e.message === 'invalid_grant' ? 'A conexão com a Agenda foi cortada. Toque em Conectar de novo.'
       : /accessNotConfigured|disabled/i.test(e.message) ? 'Falta ligar a "Google Calendar API" no Google Cloud (APIs e serviços → Biblioteca → Google Calendar API → Ativar).' : 'Verifique a internet e tente de novo.');
   } finally { agendaGoogle.rodando = false; }
+}
+
+
+// Versão 84: os botões Conectar/Ativar não ficam mais apagados; se faltar a chave secreta, explicam e pedem aqui mesmo.
+// Depois de colar a chave, é preciso tocar de novo em Conectar (o Android só abre a janela do Google direto num toque).
+async function faltaChaveGoogle() {
+  const cfg = driveCfg();
+  if (!cfg.clientId) { await aviso('Falta a chave de conexão', 'Primeiro cole a "Chave de conexão do Google" (o ID do cliente), no quadro acima.'); return false; }
+  if (cfg.clientSecret) return true;
+  const r = await dialogo({ titulo: 'Falta a chave secreta do cliente',
+    texto: 'No Google Cloud (console.cloud.google.com): menu ☰ → APIs e serviços → Credenciais → toque no nome da sua chave → copie a "Chave secreta do cliente" (começa com GOCSPX-). Se não aparecer, toque em "+ Adicionar chave secreta". Cole aqui:',
+    campos: [{ rotulo: 'GOCSPX-…' }], botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }] });
+  if (!r || !String(r).trim()) return false;
+  cfg.clientSecret = String(r).trim(); salvarPerfil(); await salvarAgora();
+  render(history.state);
+  await aviso('Chave salva', 'Agora toque de novo em "Conectar" (ou "Ativar").');
+  return false;
 }
