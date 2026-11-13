@@ -3211,7 +3211,7 @@ async function pacienteRapido() {
 // Resumo · Quem deve · Lista do mês (formato da "Lista de pagamentos") · Mensais (formato de "Pagamentos mensais").
 // =====================================================================
 function segmentoAbasMes(ym) {
-  return segmentoEscolha(ABAS_MES, abaMes, k => { abaMes = k; telaMes(ym); }, 'tres');
+  return segmentoEscolha(ABAS_MES, abaMes, k => { abaMes = k; if (k === 'devendo') filtroDevendo = 'todos'; telaMes(ym); }, 'tres');
 }
 function devedores() {
   const ym = hojeISO().slice(0, 7);
@@ -3226,19 +3226,19 @@ function cartaoPagamentosInicio(ym, tot) {
   // versão 80: nomes claros (um número não inclui o outro) e o total devido
   const ds = devedores(), emAtraso = ds.filter(x => x.atraso > 0);
   const mesNome = nomeMes(ym).split(' ')[0];
-  const caixa = (rot, valor, extra, cls = '', aba = null) => el(aba ? 'button' : 'div', { type: aba ? 'button' : undefined, class: 'pag-numero ' + cls + (aba ? ' tocavel' : ''), onclick: aba ? () => { abaMes = aba; ir({ tela: 'mes' }); } : undefined },
+  const caixa = (rot, valor, extra, cls = '', aba = null) => el(aba ? 'button' : 'div', { type: aba ? 'button' : undefined, class: 'pag-numero ' + cls + (aba ? ' tocavel' : ''), onclick: aba ? () => { const [a2, f2] = aba.split(':'); abaMes = a2; filtroDevendo = f2 || 'todos'; ir({ tela: 'mes' }); } : undefined },
     el('small', { text: rot }), el('strong', { text: 'R$ ' + reais(valor) }), extra && el('span', { class: 'suave pequeno', text: extra }));
   return el('section', { class: 'cartao pagamentos-inicio' },
     el('button', { type: 'button', class: 'cartao-titulo dia-botao', onclick: () => { abaMes = 'mes'; ir({ tela: 'mes' }); } },
       el('span', { class: 'ic-bolha' }, icone('moeda')), el('span', { text: `Pagamentos de ${mesNome.toLowerCase()}` }), el('span', { class: 'dia-mais', 'aria-hidden': 'true', text: '›' })),
     el('div', { class: 'pag-numeros' },
       caixa('Recebido no mês', tot.recebido, null, 'ok', 'mes'),
-      caixa(`${mesNome}: falta receber`, tot.aReceber, null, '', 'devendo'),
-      caixa('Meses anteriores: falta receber', tot.anteriores, emAtraso.length ? `${emAtraso.length} ${emAtraso.length === 1 ? 'paciente' : 'pacientes'}` : 'ninguém', tot.anteriores > 0 ? 'alerta' : '', 'devendo')),
+      caixa(`${mesNome}: falta receber`, tot.aReceber, null, '', 'devendo:mes'),
+      caixa('Meses anteriores: falta receber', tot.anteriores, emAtraso.length ? `${emAtraso.length} ${emAtraso.length === 1 ? 'paciente' : 'pacientes'}` : 'ninguém', tot.anteriores > 0 ? 'alerta' : '', 'devendo:anteriores')),
     el('p', { class: 'suave pequeno', text: `Total devido hoje: R$ ${reais(tot.aReceber + tot.anteriores)}` }),
     el('div', { class: 'botoes-linha' },
       el('button', { type: 'button', class: 'primario compacto', text: 'Mês', onclick: () => { abaMes = 'mes'; ir({ tela: 'mes' }); } }),
-      el('button', { type: 'button', class: 'secundario compacto', text: `Quem deve (${ds.length})`, onclick: () => { abaMes = 'devendo'; ir({ tela: 'mes' }); } }),
+      el('button', { type: 'button', class: 'secundario compacto', text: `Quem deve (${ds.length})`, onclick: () => { abaMes = 'devendo'; filtroDevendo = 'todos'; ir({ tela: 'mes' }); } }),
       el('button', { type: 'button', class: 'secundario compacto', text: 'Ano', onclick: () => { abaMes = 'ano'; ir({ tela: 'mes' }); } })));
 }
 const MESES_CURTOS = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
@@ -3935,6 +3935,7 @@ async function lancarSessaoNaoPaga(c) {
 // Versão 80: Pagamentos reorganizado em 3 abas — Mês, Quem deve (por mês) e Ano.
 // "Falta receber" de um mês nunca inclui os outros meses; o total devido é a soma de todos.
 // =====================================================================
+let filtroDevendo = 'todos';   // versão 82: 'todos', 'mes' (só o mês atual) ou 'anteriores'
 function telaPagamentos(ym) {
   const hojeYm = hojeISO().slice(0, 7);
   const mesNome = nomeMes(ym).split(' ')[0];
@@ -3977,8 +3978,8 @@ function telaPagamentos(ym) {
         el('span', { text: f.previsto ? `Das sessões do mês: ${f.pct}% pago (R$ ${reais(f.recebido)} de R$ ${reais(f.previsto)})` : 'Nenhuma sessão cobrável neste mês' }),
         f.previsto > 0 && el('span', { class: 'barra-fechamento' }, barra(f.pct, 'ok'), barra(100 - f.pct, 'alerta'))),
       el('div', { class: 'resumo-fin' },
-        numero(`${mesNome}: falta receber`, f.naoRecebido, `${abertos.length} ${abertos.length === 1 ? 'paciente' : 'pacientes'} · só deste mês`, f.naoRecebido ? 'alerta' : 'ok', () => { abaMes = 'devendo'; telaMes(ym); }),
-        numero('Meses anteriores: falta receber', anteriores, 'antes deste mês · toque para ver', anteriores ? 'alerta' : 'ok', () => { abaMes = 'devendo'; telaMes(ym); })),
+        numero(`${mesNome}: falta receber`, f.naoRecebido, `${abertos.length} ${abertos.length === 1 ? 'paciente' : 'pacientes'} · só deste mês`, f.naoRecebido ? 'alerta' : 'ok', () => { abaMes = 'devendo'; filtroDevendo = 'mes'; telaMes(ym); }),
+        numero('Meses anteriores: falta receber', anteriores, 'antes deste mês · toque para ver', anteriores ? 'alerta' : 'ok', () => { abaMes = 'devendo'; filtroDevendo = 'anteriores'; telaMes(ym); })),
       ym === hojeYm && el('p', { class: 'suave pequeno centro', text: `Total devido hoje (todos os meses): R$ ${reais(totalDevido)}` }),
       cartao(`🔴 Falta receber de ${mesNome.toLowerCase()} (${abertos.length})`, 'moeda',
         abertos.length ? ordenar(abertos).map(x => linhaPac(x.c, x.v ? 'R$ ' + reais(x.v) : 'valor a definir', `${x.n} ${x.n === 1 ? 'sessão' : 'sessões'}`, 'texto-alerta'))
@@ -4001,20 +4002,27 @@ function telaPagamentos(ym) {
       const g = porMes.get(m) || new Map(); const y = g.get(x.c.id) || { c: x.c, v: 0, n: 0, divida: false };
       y.v += valorDe(a); y.n++; y.divida ||= !!a.divida; g.set(x.c.id, y); porMes.set(m, g);
     }
-    const meses = [...porMes.keys()].sort().reverse();
+    const hoje7 = hojeISO().slice(0, 7);
+    const todosMeses = [...porMes.keys()].sort().reverse();
+    const meses = todosMeses.filter(m => filtroDevendo === 'mes' ? m >= hoje7 : filtroDevendo === 'anteriores' ? m < hoje7 : true);
+    const somaMeses = l => l.reduce((t, m) => t + [...porMes.get(m).values()].reduce((x, y) => x + y.v, 0), 0);
+    const pacientesEm = l => new Set(l.flatMap(m => [...porMes.get(m).keys()])).size;
+    const totalFiltro = somaMeses(meses), nPac = pacientesEm(meses);
+    const rotuloTotal = filtroDevendo === 'mes' ? `${nomeMes(hoje7).split(' ')[0]}: falta receber` : filtroDevendo === 'anteriores' ? 'Meses anteriores: falta receber' : 'Total devido (todos os meses)';
     corpo = [
-      el('div', { class: 'cartao destaque total-clinica' }, el('small', { text: 'Total devido (todos os meses)' }), el('strong', { text: 'R$ ' + reais(totalDevido) }),
-        el('span', { text: `${ds.length} ${ds.length === 1 ? 'paciente' : 'pacientes'} · ${meses.length} ${meses.length === 1 ? 'mês' : 'meses'}` })),
+      segmentoEscolha({ todos: 'Todos', mes: nomeMes(hoje7).split(' ')[0], anteriores: 'Meses anteriores' }, filtroDevendo, k => { filtroDevendo = k; telaMes(ym); }),
+      el('div', { class: 'cartao destaque total-clinica' }, el('small', { text: rotuloTotal }), el('strong', { text: 'R$ ' + reais(totalFiltro) }),
+        el('span', { text: `${nPac} ${nPac === 1 ? 'paciente' : 'pacientes'} · ${meses.length} ${meses.length === 1 ? 'mês' : 'meses'}${filtroDevendo !== 'todos' ? ` · total de todos os meses: R$ ${reais(totalDevido)}` : ''}` })),
       ...meses.map((m, i) => {
         const lista = [...porMes.get(m).values()].sort((a, b) => a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
         const tot = lista.reduce((t, y) => t + y.v, 0);
         const det = el('details', { class: 'cartao mes-devendo' },
           el('summary', {}, el('strong', { text: nomeMes(m) }), el('span', { class: 'texto-alerta', text: ` R$ ${reais(tot)} · ${lista.length} ${lista.length === 1 ? 'paciente' : 'pacientes'}` })),
           ...lista.map(y => linhaPac(y.c, y.v ? 'R$ ' + reais(y.v) : 'valor a definir', y.divida ? 'dívida lançada' : `${y.n} ${y.n === 1 ? 'sessão' : 'sessões'}`, 'texto-alerta')));
-        if (i < 2) det.open = true;
+        if (i < 2 || filtroDevendo !== 'todos') det.open = true;
         return det;
       }),
-      !meses.length && el('div', { class: 'cartao vazio-cartao' }, el('span', { class: 'ic-bolha grande' }, icone('moeda')), el('p', { text: 'Ninguém devendo. 🎉' })),
+      !meses.length && el('div', { class: 'cartao vazio-cartao' }, el('span', { class: 'ic-bolha grande' }, icone('moeda')), el('p', { text: filtroDevendo === 'anteriores' ? 'Ninguém devendo de meses anteriores. 🎉' : 'Ninguém devendo. 🎉' })),
       el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => lancarDividaAnterior() }, icone('mais'), el('span', { text: 'Lançar dívida de meses anteriores' })),
       el('p', { class: 'suave pequeno', text: 'Cada mês mostra o que ficou sem pagar das sessões daquele mês. Toque no paciente para registrar o pagamento ou corrigir uma cobrança.' })];
   } else {
