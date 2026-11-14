@@ -4259,7 +4259,7 @@ function cartaoAgendaGoogle(linha) {
   const cfg = driveCfg();
   if (!agendaGoogle.carregado) lerConexaoAgenda().then(() => { if (agendaGoogle.refresh) render(history.state); });
   const titulo = el('select', { 'aria-label': 'Título dos eventos' },
-    el('option', { value: 'iniciais', text: 'Sessão – iniciais (ex.: Sessão – A.S.)' }), el('option', { value: 'sessao', text: 'Só "Sessão"' }));
+    el('option', { value: 'iniciais', text: 'Sessão – iniciais (ex.: Sessão – A.S.)' }), el('option', { value: 'nome', text: 'Sessão – nome completo' }), el('option', { value: 'sessao', text: 'Só "Sessão"' }));
   titulo.value = cfg.agendaTitulo || 'iniciais';
   titulo.addEventListener('change', async () => { cfg.agendaTitulo = titulo.value; salvarPerfil(); await salvarAgora(); atualizarAgendaGoogle(); });
   const duracao = el('select', { 'aria-label': 'Duração da sessão' }, ...[30, 40, 45, 50, 60].map(m => el('option', { value: String(m), text: m + ' minutos' })));
@@ -4349,7 +4349,7 @@ function eventosDesejados() {
       const fmt = x => new Date(x.getTime() - 3 * 3600e3).toISOString().slice(0, 19);
       const ins = iniciais(c.nome).split('').join('.') + (iniciais(c.nome) ? '.' : '');
       const id = idEventoAgenda(c.id, d, it.hora);
-      mapa.set(id, { id, summary: cfg.agendaTitulo === 'sessao' || !ins ? 'Sessão' : `Sessão – ${ins}`,
+      mapa.set(id, { id, summary: cfg.agendaTitulo === 'sessao' || !ins ? 'Sessão' : cfg.agendaTitulo === 'nome' ? `Sessão – ${(c.nome || '').trim()}` : `Sessão – ${ins}`,
         start: { dateTime: fmt(ini), timeZone: 'America/Sao_Paulo' }, end: { dateTime: fmt(fim), timeZone: 'America/Sao_Paulo' },
         extendedProperties: { private: { consultorio: '1' } }, reminders: { useDefault: true } });
     }
