@@ -11,7 +11,8 @@ let atendimentos = [];   // x:a:<pid>:<id>  (data, hora, presença, pagamento, v
 let lembretesAdm = [];   // x:l:<id>  (versão 58: lembretes do Rodrigo para o administrativo; sem dados clínicos)
 let pagamentos = [];     // x:g:<pid>:<id>  (data, valor, atendimentos pagos, comprovante, nota fiscal)
 const lapides = new Map(); // registros excluídos, guardados só como marca para a troca entre aparelhos
-let senhaTroca = null;   // senha dos arquivos trocados com o outro aparelho (guardada dentro do cofre)
+let senhaTroca = null;
+let papelAparelho = null;   // versão 99: 'principal' (tablet) ou 'celular' (segundo aparelho do Rodrigo); fica só neste aparelho   // senha dos arquivos trocados com o outro aparelho (guardada dentro do cofre)
 let entradaIds = [];     // comprovantes recebidos pelo compartilhamento, ainda sem paciente
 let pagamentoRasc = null;
 let verTodosAtend = false;
@@ -64,6 +65,7 @@ async function carregarAdm() {
   perfil = Object.assign(PERFIL_PADRAO(), (await Cofre.ler('x:perfil')) || {});
   if (modo === 'adm') assinatura = await Cofre.ler('x:assinatura');
   senhaTroca = (await Cofre.ler('x:senhatroca'))?.senha || null;
+  papelAparelho = (await Cofre.ler('x:aparelho'))?.papel || null;   // versão 99
   documentos = modo === 'adm' ? ds : [...documentos.filter(d => !d.adm), ...ds];
   try { entradaIds = (await Cofre.listarEntrada()).map(i => i.id); } catch { entradaIds = []; }
 }
@@ -1480,7 +1482,7 @@ async function trocarSenhaAdmAtual() {
 }
 
 // ---------- Troca de arquivo entre os aparelhos ----------
-const FORA_DA_TROCA = new Set(['x:entradapriv', 'x:senhatroca', 'x:conexaogoogle', 'x:conexaoagenda', 'x:migrado7', 'c:chaveadm', 'c:senhabackup']);
+const FORA_DA_TROCA = new Set(['x:aparelho', 'x:entradapriv', 'x:senhatroca', 'x:conexaogoogle', 'x:conexaoagenda', 'x:migrado7', 'c:chaveadm', 'c:senhabackup']);
 async function registrosAdm(paraBackup) {
   await salvarAgora();
   const r = {};
@@ -1500,7 +1502,7 @@ async function registrosAdm(paraBackup) {
   return r;
 }
 const CAMPOS_PROFISSIONAIS = ['nome', 'titulo', 'crp', 'clinica', 'cnpj', 'cidade', 'endereco', 'telefone', 'email', 'logo', 'nfUrl', 'nfDescricao', 'assinaturaNoAdm', 'whatsAdm', 'whatsDono', 'pixChave'];
-async function mesclarRegistros(registros, filtro) {
+async function mesclarRegistros(registros, filtro, origem = null) {
   let novos = 0, atualizados = 0, mantidos = 0;
   const conteudo = k => k.startsWith('a:') || k.startsWith('x:f:');
   const entradas = Object.entries(registros).map(([k, o]) => [k === 'c:perfil' ? 'x:perfil' : k, o])
@@ -1516,8 +1518,13 @@ async function mesclarRegistros(registros, filtro) {
       const novo = (o.atualizadoEm || '') > (atual.atualizadoEm || '');
       const [maisNovo, maisVelho] = novo ? [o, atual] : [atual, o];
       const junto = { ...maisNovo };
-      for (const [campo, v] of Object.entries(maisVelho)) if ((junto[campo] === undefined || junto[campo] === '' || junto[campo] === null) && v !== '' && v != null) junto[campo] = v;
-      const doRodrigo = modo === 'dono' ? atual : o;
+      const vazio = v => v === undefined || v === '' || v === null || (Array.isArray(v) && !v.length);
+      for (const [campo, v] of Object.entries(maisVelho)) if (vazio(junto[campo]) && !vazio(v)) junto[campo] = v;
+      // versão 99: os dados profissionais valem os do tablet (aparelho principal). O celular do Rodrigo recebe os do tablet;
+      // o tablet e o administrativo nunca pegam esses campos do celular. A configuração do Google de cada aparelho do Rodrigo fica a dele.
+      const doCelular = origem === 'celular', souCelular = modo === 'dono' && papelAparelho === 'celular';
+      const doRodrigo = modo === 'dono' ? (souCelular && !doCelular && origem !== 'adm' ? o : atual) : (doCelular ? atual : o);
+      if (modo === 'dono' && atual.drive?.clientId) junto.drive = atual.drive;
       for (const campo of CAMPOS_PROFISSIONAIS) if (doRodrigo[campo] !== undefined && doRodrigo[campo] !== '' && doRodrigo[campo] !== null) junto[campo] = doRodrigo[campo];
       if (JSON.stringify(junto) !== JSON.stringify(atual)) { await Cofre.salvar(k, junto); atualizados++; } else mantidos++;
     }
@@ -1593,7 +1600,7 @@ async function exportarAdm() {
   const s = await senhaDosArquivos('Escolha uma senha para os arquivos trocados entre os dois aparelhos. O outro aparelho vai pedir a mesma senha.');
   if (!s) return;
   const registros = await registrosAdm(false);
-  const texto = await Cofre.cifrarPacote(s.senha, { formato: 'consultorio-adm', versao: 1, de: modo, criadoEm: agoraISO(), registros });
+  const texto = await Cofre.cifrarPacote(s.senha, { formato: 'consultorio-adm', versao: 1, de: modo, papel: modo === 'dono' ? (papelAparelho || 'principal') : 'adm', criadoEm: agoraISO(), registros });
   const arquivo = new File([texto], `consultorio-administrativo-${hojeISO()}.cifrado.txt`, { type: 'text/plain' });
   if (await entregarArquivo(arquivo, 'Dados do administrativo')) await oferecerLembrarSenha(s);
   if (Cofre.aberto()) render(history.state);
@@ -2103,6 +2110,8 @@ function telaDrive() {
       el('section', { class: 'cartao' }, el('h3', { class: 'secao-titulo', text: 'Sincronização com o outro aparelho' }),
         linha('repetir', 'Pasta compartilhada', cfg.pastaSync ? 'Pasta definida.' : 'Crie uma pasta no Drive, compartilhe com a conta Google do outro aparelho e cole o link aqui.',
           el('button', { type: 'button', class: 'secundario compacto', text: cfg.pastaSync ? 'Trocar' : 'Colar link', onclick: editarPastaSync })),
+        modo === 'dono' && linha('pessoa', 'Este aparelho', papelAparelho ? NOMES_PAPEL[papelAparelho] : 'Ainda não escolhido: o app pergunta na primeira sincronização.',
+          el('button', { type: 'button', class: 'secundario compacto', text: papelAparelho ? 'Trocar' : 'Escolher', onclick: () => escolherPapelAparelho() })),
         el('button', { type: 'button', class: 'primario com-icone centralizado', disabled: !(cfg.clientId && cfg.pastaSync), onclick: sincronizarDrive }, icone('repetir'), el('span', { text: 'Sincronizar agora' })),
         el('p', { class: 'suave pequeno', text: (() => { let u = null; try { u = localStorage.getItem('consultorio-ultima-sync'); } catch { } return u ? `Última sincronização neste aparelho: ${dataBR(u)}, ${new Date(u).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.` : 'Nenhuma sincronização ainda neste aparelho.'; })() })),
       el('section', { class: 'cartao' }, el('h3', { class: 'secao-titulo', text: 'Conexão' }),
@@ -2652,7 +2661,21 @@ async function abrirDiaDoMes(d, lista, sem) {
 // ---------- Versão 15: sincronizar pelo Google Drive (botão nos dois aparelhos) ----------
 // Cada aparelho guarda na pasta compartilhada um arquivo seu, cifrado com a senha dos arquivos,
 // só com a parte administrativa (registros "x:"). Ao sincronizar: lê o do outro, junta, e grava o seu.
-const ARQ_SYNC = { dono: 'consultorio-sync-principal.cifrado.txt', adm: 'consultorio-sync-administrativo.cifrado.txt' };
+const ARQ_SYNC = { dono: 'consultorio-sync-principal.cifrado.txt', adm: 'consultorio-sync-administrativo.cifrado.txt', celular: 'consultorio-sync-celular.cifrado.txt' };
+// Versão 99: três aparelhos. Cada um grava o próprio arquivo e lê os de todos os outros.
+const ehArquivoSync = nome => /^consultorio-sync-[\w-]+\.cifrado\.txt$/.test(nome || '');
+const meuArquivoSync = () => modo === 'adm' ? ARQ_SYNC.adm : papelAparelho === 'celular' ? ARQ_SYNC.celular : ARQ_SYNC.dono;
+const NOMES_PAPEL = { principal: 'Tablet (aparelho principal)', celular: 'Meu celular (segundo aparelho)' };
+async function escolherPapelAparelho(primeiraVez = false) {
+  const r = await janela('Qual é este aparelho?', [
+    el('p', { class: 'suave pequeno', text: (primeiraVez ? 'Este aparelho ainda não sincronizou. ' : '') + 'O tablet é o aparelho principal. No celular, escolha "Meu celular": ele recebe e envia só a parte administrativa (pacientes, agenda, pagamentos, recados). Fichas e anotações de sessão não passam de um aparelho para o outro.' })],
+    [{ rotulo: 'Cancelar', valor: null }, { rotulo: NOMES_PAPEL.principal, valor: 'principal', estilo: papelAparelho === 'principal' ? 'primario' : undefined },
+      { rotulo: NOMES_PAPEL.celular, valor: 'celular', estilo: papelAparelho !== 'principal' ? 'primario' : undefined }]);
+  if (!r) return null;
+  papelAparelho = r; await Cofre.salvar('x:aparelho', { papel: r, em: agoraISO() });
+  if (!primeiraVez) render(history.state);
+  return r;
+}
 const idDaPasta = link => ((link || '').match(/folders\/([\w-]{20,})/) || [])[1] || idDoLink(link);
 function botaoSincronizar() {
   if (!driveCfg().pastaSync || !driveCfg().clientId) return null;
@@ -2728,31 +2751,39 @@ async function sincronizarDrive(opcoes = {}) {
     try { if (!tokenSyncValido()) await renovarTokenPermanente(); if (tokenSyncValido()) token = tokenGoogle.valor; else { await carregarGoogle(); token = await pedirTokenGoogle(ESCOPO_ESCRITA); } }
     catch (e) { return aviso('Sem conexão com o Google', e.message === 'sem-internet' ? 'Verifique a internet e tente de novo.' : 'O acesso ao Google não foi concedido. Toque em Sincronizar de novo e entre na conta.'); }
   }
+  // versão 99: num aparelho do Rodrigo que nunca sincronizou, pergunta antes se é o tablet ou o celular
+  if (modo === 'dono' && !papelAparelho) {
+    let ja = null; try { ja = localStorage.getItem('consultorio-ultima-sync'); } catch { }
+    if (ja) { papelAparelho = 'principal'; await Cofre.salvar('x:aparelho', { papel: 'principal', em: agoraISO() }); }
+    else if (silencioso || !(await escolherPapelAparelho(true))) return;
+  }
   sincronizando = true; indicarStatus('Sincronizando…');
   let mudou = false;
   try {
-    const eu = modo === 'dono' ? 'dono' : 'adm', outro = eu === 'dono' ? 'adm' : 'dono';
     const q = encodeURIComponent(`'${pasta}' in parents and trashed = false`);
     const lista = await (await driveApi(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&supportsAllDrives=true&includeItemsFromAllDrives=true&pageSize=100`, token)).json();
     const achar = nome => (lista.files || []).find(f => f.name === nome);
     let r = { novos: 0, atualizados: 0, mantidos: 0 }, recebeu = false, outraSenha = false;
-    const doOutro = achar(ARQ_SYNC[outro]);
-    let pacote = null;
-    if (doOutro) {
+    // versão 99: lê o arquivo de cada um dos outros aparelhos (tablet, celular do Rodrigo, administrativo)
+    const outros = (lista.files || []).filter(f => ehArquivoSync(f.name) && f.name !== meuArquivoSync());
+    const antes = fotoParaAvisos();
+    for (const doOutro of outros) {
       const texto = await (await driveApi(`https://www.googleapis.com/drive/v3/files/${doOutro.id}?alt=media&supportsAllDrives=true`, token)).text();
       // Versão 52: arquivo do outro aparelho com outra senha (antigo, ou o outro ainda não sincronizou com a senha nova):
       // não trava; envia os dados deste aparelho e avisa.
+      let pacote = null;
       try { pacote = await Cofre.decifrarPacote(s.senha, texto); if (pacote.formato !== 'consultorio-adm') pacote = null; }
       catch (e) { if (e.message === 'senha-incorreta') outraSenha = true; else pacote = null; }
-    }
-    if (pacote) {
+      if (!pacote) continue;
       await salvarAgora();
-      const antes = fotoParaAvisos();
-      r = await mesclarRegistros(pacote.registros || {}, k => k.startsWith('x:'));
-      mudou = (r.novos || 0) + (r.atualizados || 0) > 0;
-      if (modo === 'adm' && pacote.registros?.['x:perfil'] && !pacote.registros['x:perfil'].assinaturaNoAdm) await Cofre.apagar('x:assinatura');
-      await recarregarTudo({ clinica: false });   // a troca só traz dados administrativos; a área clínica não muda
+      const ri = await mesclarRegistros(pacote.registros || {}, k => k.startsWith('x:'), pacote.papel || (pacote.de === 'dono' ? 'principal' : 'adm'));
+      r = { novos: r.novos + ri.novos, atualizados: r.atualizados + ri.atualizados, mantidos: r.mantidos + ri.mantidos };
+      if (modo === 'adm' && pacote.papel !== 'celular' && pacote.registros?.['x:perfil'] && !pacote.registros['x:perfil'].assinaturaNoAdm) await Cofre.apagar('x:assinatura');
       recebeu = true;
+    }
+    if (recebeu) {
+      mudou = (r.novos || 0) + (r.atualizados || 0) > 0;
+      await recarregarTudo({ clinica: false });   // a troca só traz dados administrativos; a área clínica não muda
       if (mudou) avisarNovidades(antes);
     }
     // Versão 66: quem preencheu o Google Forms entra (ou é atualizado) sozinho, a cada sincronização.
@@ -2761,11 +2792,11 @@ async function sincronizarDrive(opcoes = {}) {
     await salvarAgora();
     const registros = await registrosAdm(false);
     const conteudo = await Cofre.cifrarPacote(s.senha, { formato: 'consultorio-adm', versao: 1, de: modo, criadoEm: agoraISO(), registros });
-    const meu = achar(ARQ_SYNC[eu]);
+    const meu = achar(meuArquivoSync());
     if (meu) await driveApi(`https://www.googleapis.com/upload/drive/v3/files/${meu.id}?uploadType=media&supportsAllDrives=true`, token, { method: 'PATCH', headers: { 'Content-Type': 'text/plain' }, body: conteudo });
     else {
       const limite = 'consultorio' + Date.now();
-      const corpo = `--${limite}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name: ARQ_SYNC[eu], parents: [pasta], mimeType: 'text/plain' })}\r\n--${limite}\r\nContent-Type: text/plain\r\n\r\n${conteudo}\r\n--${limite}--`;
+      const corpo = `--${limite}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name: meuArquivoSync(), parents: [pasta], mimeType: 'text/plain' })}\r\n--${limite}\r\nContent-Type: text/plain\r\n\r\n${conteudo}\r\n--${limite}--`;
       await driveApi('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true', token, { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + limite }, body: corpo });
     }
     try { localStorage.setItem('consultorio-ultima-sync', agoraISO()); } catch { } // fora do perfil, para não sobrescrever dados do outro aparelho
@@ -2783,7 +2814,7 @@ async function sincronizarDrive(opcoes = {}) {
     indicarStatus('Sincronizado. Agora sincroniza sozinho enquanto o app estiver aberto.');
     await aviso(outraSenha ? 'Seus dados foram enviados' : 'Sincronizado', outraSenha
       ? 'O arquivo do outro aparelho que está no Drive usa outra senha: é antigo, ou o outro aparelho ainda não sincronizou com a senha nova. Os seus dados foram enviados. Quando o outro aparelho tocar no 🔁 com a mesma senha, os dois ficam iguais.'
-      : recebeu ? `Recebidos do outro aparelho: ${r.novos} novos, ${r.atualizados} atualizados. Os seus dados também foram enviados.`
+      : recebeu ? `Recebidos dos outros aparelhos: ${r.novos} novos, ${r.atualizados} atualizados. Os seus dados também foram enviados.`
         : 'Os seus dados foram enviados. O outro aparelho ainda não sincronizou nenhuma vez.');
   } catch (e) {
     console.warn('sincronização', e);
