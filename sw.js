@@ -3,9 +3,9 @@
    Também recebe comprovantes compartilhados de outros apps (WhatsApp, banco)
    e os guarda já cifrados, sem enviá-los a lugar nenhum.
    Ao publicar uma nova versão, mude o número abaixo. */
-const VERSAO = 'consultorio-v103';
+const VERSAO = 'consultorio-v104';
 const ARQUIVOS = ['./', './index.html', './estilo.css', './cofre.js', './app.js', './admin.js',
-  './manifest.webmanifest', './icone-192.png', './icone-512.png'];
+  './manifest.webmanifest', './icone-192.png', './icone-512.png', './topo-entrelacos.jpg', './rodape-entrelacos.jpg'];
 
 self.addEventListener('install', e => {
   // cache: 'reload' busca cada arquivo direto do site, sem usar cópias antigas do navegador.

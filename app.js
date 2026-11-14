@@ -5,9 +5,9 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 99';
+const VERSAO = 'versão 100';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
-const PALETAS = [['', 'Granada (atual)', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
+const PALETAS = [['entrelacos', 'Entrelaços: natureza e ouro (escuro)', '#E8BC52', '#011816'], ['', 'Granada', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
 function aplicarPaleta(k) {
   const pal = PALETAS.find(x => x[0] === k) || PALETAS[0];
@@ -15,9 +15,11 @@ function aplicarPaleta(k) {
   document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', pal[0] ? pal[3] : (m.media.includes('dark') ? '#161A1B' : '#E9ECE6')));
   try { localStorage.setItem('consultorio-paleta', pal[0]); } catch { }
 }
-try { aplicarPaleta(localStorage.getItem('consultorio-paleta') ?? 'noite'); } catch { aplicarPaleta('noite'); }
+// versão 100: a paleta Entrelaços passa a ser a padrão (uma vez só; depois vale a escolha em Configurações → Aparência)
+try { if (!localStorage.getItem('consultorio-paleta-v100')) { localStorage.setItem('consultorio-paleta-v100', '1'); if ((localStorage.getItem('consultorio-paleta') ?? 'noite') === 'noite') localStorage.setItem('consultorio-paleta', 'entrelacos'); } } catch { }
+try { aplicarPaleta(localStorage.getItem('consultorio-paleta') ?? 'entrelacos'); } catch { aplicarPaleta('entrelacos'); }
 function linhaAparencia(linha) {
-  let atual = 'noite'; try { atual = localStorage.getItem('consultorio-paleta') ?? 'noite'; } catch { }
+  let atual = 'entrelacos'; try { atual = localStorage.getItem('consultorio-paleta') ?? 'entrelacos'; } catch { }
   const sel = el('select', { 'aria-label': 'Cores do app' }, PALETAS.map(([k, nome]) => el('option', { value: k, text: nome })));
   sel.value = atual;
   sel.addEventListener('change', () => aplicarPaleta(sel.value));
@@ -444,6 +446,60 @@ function avisoBackup() {
 }
 
 // Versão 30: a tela inicial mostra o resumo do dia; a lista completa fica em "Todos os pacientes".
+// ---------- Versão 100: tela inicial no estilo Entrelaços ----------
+function topoEntrelacos(ativos) {
+  const dia = new Date().toLocaleDateString('pt-BR', { weekday: 'long' }).replace('-feira', '');
+  const nome = typeof perfil !== 'undefined' && perfil?.nome ? perfil.nome.trim().split(/\s+/)[0] : '';
+  return el('header', { class: 'topo-ent' },
+    el('div', { class: 'topo-ent-arte' },
+      el('img', { src: 'topo-entrelacos.jpg', alt: 'Entrelaços · Consultório' }),
+      el('button', { type: 'button', class: 'topo-ent-menu', 'aria-label': 'Menu', title: 'Menu', onclick: menuInicio })),
+    el('div', { class: 'topo-ent-linha' },
+      el('div', { class: 'titulo' },
+        el('h1', { id: 'titulo-tela', text: `Hoje, ${dia}` }),
+        el('div', { class: 'sub' }, el('span', { text: (nome ? `Bem-vindo, ${nome}` : 'Bem-vindo') + ` · ${ativos} em acompanhamento` }),
+          el('span', { id: 'status', class: 'status', 'aria-live': 'polite' }))),
+      el('div', { class: 'acoes' }, botaoIcone('Buscar em todos os pacientes', 'busca', () => ir({ tela: 'busca' })), botaoSincronizar(),
+        botaoIcone('Bloquear agora', 'cadeado', trancar))));
+}
+function menuInicio() {
+  const item = (ic, texto, acao) => el('button', { type: 'button', class: 'cartao paciente', onclick: () => { fecharDialogos(); acao(); } },
+    el('span', { class: 'ic-bolha' }, icone(ic)), el('span', { class: 'info' }, el('span', { class: 'nome', text: texto })), icone('seguinte'));
+  return janela('Menu', [el('div', { class: 'pilha-pequena' },
+    item('pessoa', 'Todos os pacientes', () => ir({ tela: 'pacientes' })),
+    item('busca', 'Buscar em todos os pacientes', () => ir({ tela: 'busca' })),
+    item('calendario', 'Agenda', () => ir({ tela: 'agenda' })),
+    item('moeda', 'Pagamentos', () => ir({ tela: 'mes' })),
+    item('arquivo', 'Quem pede recibo', () => ir({ tela: 'recibos', ym: hojeISO().slice(0, 7) })),
+    item('mensagem', 'Administrativo: recados e pendências', () => ir({ tela: 'admInicio' })),
+    item('caixa', 'Arquivados', () => { verArquivados = true; ir({ tela: 'pacientes' }); }),
+    item('tabela', 'Importar planilha', abrirPlanilha),
+    item('ajustes', 'Configurações', () => ir({ tela: 'config' })),
+    item('cadeado', 'Bloquear agora', trancar))], [{ rotulo: 'Fechar', valor: null }]);
+}
+function atalhosInicio() {
+  const a = (ic, texto, acao, aviso = false) => el('button', { type: 'button', class: 'atalho-grande', onclick: acao },
+    icone(ic), el('span', { text: texto }), aviso && el('span', { class: 'ponto-aviso', 'aria-label': 'Aviso pendente' }));
+  return el('div', { class: 'atalhos-grandes' },
+    a('pessoa', 'Pacientes', () => ir({ tela: 'pacientes' })),
+    a('calendario', 'Agenda', () => ir({ tela: 'agenda' }), typeof temAvisoAgenda === 'function' && temAvisoAgenda()),
+    a('moeda', 'Pagamentos', () => ir({ tela: 'mes' })),
+    a('arquivo', 'Recibos', () => ir({ tela: 'recibos', ym: hojeISO().slice(0, 7) })));
+}
+function resumoInicio() {
+  if (typeof devedores !== 'function') return null;
+  const hoje = hojeISO(), ym = hoje.slice(0, 7);
+  let nHoje = 0;
+  try { nHoje = cadastros.filter(c => !c.arquivado).flatMap(c => ocorrenciasNoPeriodo(c, hoje, hoje)).filter(o => !o.cancelada).length; } catch { }
+  const recebido = pagamentos.filter(g => (g.data || '').slice(0, 7) === ym).reduce((t, g) => t + valorNum(g.valor), 0);
+  const deve = devedores().reduce((t, x) => t + x.total, 0);
+  const n = (ic, rot, valor, acao) => el('button', { type: 'button', class: 'resumo-item', onclick: acao },
+    icone(ic), el('span', { class: 'resumo-txt' }, el('small', { text: rot }), el('strong', { text: valor })));
+  return el('section', { class: 'cartao resumo-inicio' },
+    n('calendario', 'Sessões hoje', String(nHoje), () => ir({ tela: 'agenda' })),
+    n('moeda', `Recebido em ${nomeMes(ym).split(' ')[0].toLowerCase()}`, 'R$ ' + reais(recebido), () => ir({ tela: 'mes' })),
+    n('relogio' in ICONES ? 'relogio' : 'repetir', 'Quem deve', 'R$ ' + reais(deve), () => ir({ tela: 'devendo', filtro: 'todos' })));
+}
 function telaLista(todos = false) {
   if (!todos) verArquivados = false;
   const busca = el('input', { type: 'search', placeholder: 'Procurar pelo nome', 'aria-label': 'Procurar paciente pelo nome' });
@@ -521,7 +577,9 @@ function telaLista(todos = false) {
   };
   busca.addEventListener('input', desenhar);
 
+  const ent = !todos && document.documentElement.dataset.paleta === 'entrelacos';
   mostrar(
+    ent ? topoEntrelacos(ativos) :
     todos ? cabecalho(verArquivados ? 'Arquivados' : 'Todos os pacientes', { voltar: true, sub: verArquivados ? null : `${ativos} em acompanhamento` }) : cabecalho('Consultório', {
       grande: true,
       sub: `${ativos} em acompanhamento`,
@@ -533,6 +591,7 @@ function telaLista(todos = false) {
         { atuais: `Atendendo agora (${pacientes.filter(atendendoAgora).length})`, todos: `Todos (${ativos})` }, filtroPacientes,
         k => { filtroPacientes = k; telaLista(true); }, 'dois'),
       todos && !verArquivados && filtroPacientes === 'atuais' && el('p', { class: 'suave pequeno', text: 'Quem tem horário fixo na agenda, sessão marcada ou foi atendido nos últimos 45 dias.' }),
+      !todos && atalhosInicio(),
       !todos && cartaoLembretes(),
       !todos && typeof cartaoLembretesAdm === 'function' && cartaoLembretesAdm(true),
       !todos && cartaoAvisosAgenda(),
@@ -540,13 +599,16 @@ function telaLista(todos = false) {
       !todos && cartaoEntrada(),
       !todos && cartaoAniversarios(),
       !todos && cartaoAgenda(),
+      !todos && resumoInicio(),
+      !todos && el('button', { type: 'button', class: 'cartao linha-recados', onclick: () => ir({ tela: 'admInicio' }) },
+        el('span', { class: 'ic-bolha' }, icone('mensagem')), el('span', { class: 'nome', text: 'Recados e pendências' }), icone('seguinte')),
       el('label', { class: 'campo-busca' }, icone('busca'), busca),
       lista,
-      !todos && el('button', { type: 'button', class: 'cartao paciente todos-pacientes', onclick: () => ir({ tela: 'pacientes' }) },
+      !todos && !ent && el('button', { type: 'button', class: 'cartao paciente todos-pacientes', onclick: () => ir({ tela: 'pacientes' }) },
         el('span', { class: 'ic-bolha' }, icone('pessoa')),
         el('span', { class: 'info' }, el('span', { class: 'nome', text: 'Todos os pacientes' }), el('span', { class: 'meta' }, el('span', { text: `${pacientes.filter(atendendoAgora).length} atendendo agora · ${ativos} cadastrados` }))),
         icone('seguinte')),
-      el('div', { class: 'atalhos' },
+      !ent && el('div', { class: 'atalhos' },
         el('button', {
           type: 'button', class: 'atalho', onclick: () => { if (!todos) { verArquivados = true; ir({ tela: 'pacientes' }); return; } verArquivados = !verArquivados; telaLista(true); }
         }, el('span', { class: 'ic-bolha' }, icone(verArquivados ? 'pessoa' : 'caixa')),
@@ -554,7 +616,8 @@ function telaLista(todos = false) {
         !todos && el('button', { type: 'button', class: 'atalho', onclick: () => ir({ tela: 'admInicio' }) },
           el('span', { class: 'ic-bolha' }, icone('moeda')), el('span', { text: 'Administrativo' })),
         !todos && el('button', { type: 'button', class: 'atalho', onclick: abrirPlanilha },
-          el('span', { class: 'ic-bolha' }, icone('tabela')), el('span', { text: 'Importar planilha' })))),
+          el('span', { class: 'ic-bolha' }, icone('tabela')), el('span', { text: 'Importar planilha' }))),
+      ent && el('img', { class: 'rodape-ent', src: 'rodape-entrelacos.jpg', alt: '' })),
     !verArquivados && el('button', { type: 'button', class: 'fab', 'aria-label': 'Novo paciente', title: 'Novo paciente', onclick: novoPaciente }, icone('mais'))
   );
   desenhar();
