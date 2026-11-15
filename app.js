@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 105';
+const VERSAO = 'versão 106';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['entrelacos', 'Entrelaços: natureza e ouro (escuro)', '#E8BC52', '#011816'], ['', 'Granada', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -536,20 +536,22 @@ function telaLista(todos = false) {
             const t = temProprio && proprio ? `R$ ${reais(proprio)} por sessão` : padrao ? `R$ ${reais(padrao)} por sessão (valor padrão)` : 'Valor da sessão não definido';
             const tSem = c.semCobrancaDesde ? ` · 🚫 sem cobrança desde ${dataCurta(c.semCobrancaDesde)}` : '';
             const ym = hojeISO().slice(0, 7);
-            const doMes = atendimentosDe(c.id).filter(a => a.data.slice(0, 7) === ym && !['cancelada', 'remarcada'].includes(a.presenca) && a.pagamento !== 'naocobrar');
+            const doMes = atendimentosDe(c.id).filter(a => a.data.slice(0, 7) === ym && !a.divida && !['cancelada', 'remarcada'].includes(a.presenca) && !['naocobrar', 'mensalidade'].includes(a.pagamento));
+            const fixa = typeof temMensalidadeFixa === 'function' && temMensalidadeFixa(c);   // versão 106
             const porMes = c.modoPagamento === 'mensal' || c.modoPagamento === 'quinzenal';
-            const totalMes = valorNum(c.valorMensal) || doMes.reduce((x, a) => x + valorDe(a), 0);
+            const totalMes = fixa ? valorNum(c.valorMensal) : doMes.reduce((x, a) => x + valorDe(a), 0);
             const pend = atendimentosDe(c.id).filter(a => a.pagamento === 'areceber');
             const deve = pend.reduce((x, a) => x + valorDe(a), 0);
             const irPag = e => { e.stopPropagation(); ir({ tela: 'adm', id: c.id, aba: 'pagamentos' }); };
             return [
-              el('span', { class: 'meta valor-editavel', role: 'button', tabindex: '0', onclick: e => { e.stopPropagation(); alterarValorSessao(c, () => telaLista(true)); } },
+              // versão 106: quem tem mensalidade fixa não mostra o valor por sessão
+              !fixa && el('span', { class: 'meta valor-editavel', role: 'button', tabindex: '0', onclick: e => { e.stopPropagation(); alterarValorSessao(c, () => telaLista(true)); } },
                 icone('moeda'), el('span', { text: t + tSem + ' ✏️' })),
               // versão 72: forma de pagamento e dia combinado, para todos
               // versão 102: toque para mudar como e quando paga (inclusive "adiantado")
               el('span', { class: 'meta valor-editavel', role: 'button', tabindex: '0', onclick: e => { e.stopPropagation(); editarFormaPagamento(c, () => telaLista(true)); } }, icone('calendario'), el('span', { text:
                 textoFormaPagamento(c).replace(' ✏️', '')
-                + (porMes ? ` · ${nomeMes(ym).split(' ')[0].toLowerCase()}: R$ ${reais(totalMes)}${valorNum(c.valorMensal) ? ' (valor mensal)' : ` (${doMes.length} ${doMes.length === 1 ? 'sessão' : 'sessões'})`}` : '') + ' ✏️' })),
+                + (porMes && !fixa ? ` · ${nomeMes(ym).split(' ')[0].toLowerCase()}: R$ ${reais(totalMes)} (${doMes.length} ${doMes.length === 1 ? 'sessão' : 'sessões'}${new Set(doMes.map(a => valorDe(a))).size > 1 ? ': ' + doMes.map(a => reais(valorDe(a))).join(' + ') : ''})` : '') + ' ✏️' })),
               // versão 92: quem pede recibo ou nota fiscal, marcado direto na lista
               typeof escolherTipoRecibo === 'function' && el('span', { class: 'meta valor-editavel' + (pedeRecibo(c) ? '' : ' suave'), role: 'button', tabindex: '0', onclick: e => { e.stopPropagation(); escolherTipoRecibo(c, () => telaLista(true)); } },
                 el('span', { text: pedeRecibo(c) ? `🧾 Pede ${c.nf ? 'nota fiscal' : 'recibo'} ✏️` : '🧾 Não pede recibo ✏️' })),
