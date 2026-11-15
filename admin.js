@@ -30,7 +30,7 @@ const salvarCadastro = c => agendarSalvar(chaveCad(c), c);
 // versões 110/111: o financeiro começa em novembro de 2026. Antes disso só conta o que foi lançado à mão
 // ("Lançar dívida de meses anteriores" ou "Lançar sessão não paga").
 const INICIO_FINANCEIRO = '2026-11-01';
-const INICIO_TELA_PAG = '2026-10';   // versão 123: a tela Pagamentos começa em outubro (só com os pagamentos registrados daquele mês)
+const INICIO_TELA_PAG = '2026-11';   // versão 124: outubro foi deixado de lado a pedido do Rodrigo; tudo começa em novembro   // versão 123: a tela Pagamentos começa em outubro (só com os pagamentos registrados daquele mês)
 const dentroDoFinanceiro = a => (a.data || '') >= INICIO_FINANCEIRO || a.origem === 'dívida anterior' || a.origem === 'lançada à mão';
 const emAberto = a => a.pagamento === 'areceber' && dentroDoFinanceiro(a);
 const salvarAt = a => { agendarSalvar(chaveAt(a), a); if (a.pagamento === 'mensalidade' && a.data) garantirMensalidade(cadastroDe(a.pid), a.data.slice(0, 7)); };
@@ -128,6 +128,7 @@ function renderAdm(s) {
   // versão 89: cada visão de Pagamentos é um passo do histórico, então o "voltar" volta para a tela anterior
   if (s.tela === 'detalheFin') { telaDetalheFin(s.tipo, s.periodo || hojeISO().slice(0, 7)); return true; }
   if (s.tela === 'devendo') { abaMes = 'devendo'; filtroDevendo = s.filtro || 'todos'; telaPagamentos(hojeISO().slice(0, 7)); return true; }
+  if (s.tela === 'mes') setTimeout(limparOutubroUmaVez, 400);
   if (s.tela === 'mes') { abaMes = s.aba === 'ano' ? 'ano' : 'mes'; telaMes(s.ym || hojeISO().slice(0, 7)); return true; }
   if (s.tela === 'pagar') { telaPagar(s); return true; }
   if (s.tela === 'notaRecebida') { telaNotaRecebida(s); return true; }
@@ -5208,4 +5209,32 @@ async function importarListaPagamentos() {
     render(history.state);
   });
   entrada.click();
+}
+
+// =====================================================================
+// Versão 124: apagar tudo o que é de dinheiro referente a outubro de 2026 (pedido do Rodrigo em 15/11/2026).
+// Apaga: pagamentos referentes a outubro ou feitos em outubro, e dívidas/mensalidades lançadas para outubro.
+// Não apaga sessões, presenças nem anotações. Pergunta uma vez; a marca "feito" vai para os outros aparelhos.
+// =====================================================================
+let limpandoOutubro = false;
+async function limparOutubroUmaVez() {
+  if (limpandoOutubro || !Cofre.aberto()) return;
+  if ((await Cofre.ler('x:limpezaoutubro'))?.feito) return;
+  const ehOut = d => (d || '').slice(0, 7) === '2026-10';
+  const gs = pagamentos.filter(g => ehOut(refDe(g)) || ehOut(g.data));
+  const divs = atendimentos.filter(a => a.divida && ehOut(a.data));
+  if (!gs.length && !divs.length) { await Cofre.salvar('x:limpezaoutubro', { feito: true, n: 0, atualizadoEm: agoraISO() }); return; }
+  limpandoOutubro = true;
+  try {
+    const soma = gs.reduce((t, g) => t + valorNum(g.valor), 0) + divs.reduce((t, a) => t + valorDe(a), 0);
+    const ok = await dialogo({ titulo: 'Apagar tudo de outubro?', texto: `Como você pediu: ${gs.length} ${gs.length === 1 ? 'pagamento' : 'pagamentos'} referentes a outubro${divs.length ? ` e ${divs.length} ${divs.length === 1 ? 'dívida lançada' : 'dívidas lançadas'} em outubro` : ''} (R$ ${reais(soma)}) serão apagados de todos os lugares. Sessões e anotações não são apagadas. A partir de agora, tudo começa em novembro.`,
+      botoes: [{ rotulo: 'Agora não', valor: null }, { rotulo: 'Apagar outubro', valor: true, estilo: 'perigo' }] });
+    if (!ok) return;
+    for (const g of gs) await excluirPagamento(g);
+    for (const a of divs) await excluirAtendimento(a);
+    await Cofre.salvar('x:limpezaoutubro', { feito: true, n: gs.length + divs.length, atualizadoEm: agoraISO() });
+    await salvarAgora();
+    indicarStatus(`Outubro apagado: ${gs.length + divs.length} lançamentos`);
+    render(history.state);
+  } finally { limpandoOutubro = false; }
 }
