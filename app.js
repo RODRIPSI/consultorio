@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 104';
+const VERSAO = 'versão 105';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['entrelacos', 'Entrelaços: natureza e ouro (escuro)', '#E8BC52', '#011816'], ['', 'Granada', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -3118,7 +3118,7 @@ function montarPdf(conteudos, imagens, W, H) {
 // =====================================================================
 let senhaBackup = null; // senha do backup lembrada (guardada cifrada no cofre)
 const DIAS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-const PAGAMENTO = { areceber: 'A receber', pago: 'Pago', naocobrar: 'Não cobrar' };
+const PAGAMENTO = { areceber: 'A receber', pago: 'Pago', naocobrar: 'Não cobrar', mensalidade: 'Na mensalidade' };
 const horariosDe = c => (c?.horarios || []).filter(h => h && h.hora !== undefined);
 const somarDias = (ymd, n) => { const d = paraData(ymd); d.setDate(d.getDate() + n); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
 const agoraHHMM = () => new Date().toTimeString().slice(0, 5);

@@ -25,7 +25,8 @@ const chaveAt = a => `x:a:${a.pid}:${a.id}`;
 const chavePag = g => `x:g:${g.pid}:${g.id}`;
 const cadastroDe = id => cadastros.find(c => c.id === id) || null;
 const salvarCadastro = c => agendarSalvar(chaveCad(c), c);
-const salvarAt = a => agendarSalvar(chaveAt(a), a);
+// versão 105: sessão de quem tem mensalidade fixa não é cobrada sozinha; garante a cobrança única do mês
+const salvarAt = a => { agendarSalvar(chaveAt(a), a); if (a.pagamento === 'mensalidade' && a.data) garantirMensalidade(cadastroDe(a.pid), a.data.slice(0, 7)); };
 const salvarPag = g => agendarSalvar(chavePag(g), g);
 const chaveLem = l => 'x:l:' + l.id;
 const salvarLem = l => { l.atualizadoEm = agoraISO(); agendarSalvar(chaveLem(l), l); };
@@ -224,8 +225,23 @@ function pagamentoInicial(presenca, a = null) {
   // versão 86: paciente atendido sem cobrança (combinado) a partir de uma data
   const c = a?.pid ? cadastroDe(a.pid) : null;
   if (r === 'areceber' && c?.semCobrancaDesde && (a.data || '') >= c.semCobrancaDesde) return 'naocobrar';
+  if (r === 'areceber' && !a?.divida && temMensalidadeFixa(c) && (a.data || '') >= (c.mensalidadeDesde || '')) return 'mensalidade';
   return r;
 }
+// ---------- Versão 105: mensalidade fixa (mesmo valor com 4 ou 5 semanas no mês) ----------
+const temMensalidadeFixa = c => !!(c && c.modoPagamento === 'mensal' && c.mensalidadeFixa && valorNum(c.valorMensal));
+function garantirMensalidade(c, ym) {
+  if (!temMensalidadeFixa(c) || ym < (c.mensalidadeDesde || '').slice(0, 7)) return null;
+  const id = `mens-${c.id}-${ym}`;   // mesmo id em todos os aparelhos: a sincronização não duplica
+  let m = atendimentos.find(a => a.id === id);
+  if (m) return m;
+  const agora = agoraISO();
+  m = { id, pid: c.id, data: ym + '-01', hora: '', presenca: null, pagamento: 'areceber', valor: String(valorNum(c.valorMensal)), divida: true, mensalidade: true,
+    obs: '', origem: 'mensalidade', criadoEm: agora, atualizadoEm: agora };
+  atendimentos.push(m); usarCredito(m); agendarSalvar(chaveAt(m), m);
+  return m;
+}
+const rotuloDivida = a => a.mensalidade ? `Mensalidade · ${nomeMes(a.data.slice(0, 7))}` : `Dívida anterior · ${nomeMes(a.data.slice(0, 7))}`;
 function horaFixa(c, data) { return horariosDe(c).find(h => Number(h.dia) === paraData(data).getDay())?.hora || ''; }
 async function sincronizarAtendimentos() {
   if (modo !== 'dono') return;
@@ -708,7 +724,7 @@ async function dialogoAtendimento(c, a) {
   if (acao !== 'salvar' || !data.value) return;
   const alvo = a || { id: crypto.randomUUID(), pid: c.id, criadoEm: agoraISO() };
   alvo.data = data.value; alvo.hora = hora.value; alvo.presenca = r.presenca; alvo.valor = valor.value;
-  if (!pago) { alvo.pagamento = r.pagamento === 'areceber' ? 'areceber' : 'naocobrar'; alvo.pagamentoManual = pagManual || alvo.pagamentoManual; }
+  if (!pago) { alvo.pagamento = r.pagamento === 'areceber' ? 'areceber' : alvo.pagamento === 'mensalidade' ? 'mensalidade' : 'naocobrar'; alvo.pagamentoManual = pagManual || alvo.pagamentoManual; }
   if (novo) { atendimentos.push(alvo); if (alvo.pagamento === 'areceber') usarCredito(alvo); }
   salvarAt(alvo);
   render(history.state);
@@ -807,7 +823,7 @@ function abaPagamentosAdm(c) {
         el('div', { class: 'pilha-pequena' },
           el('div', { class: 'mes-titulo' }, el('strong', { text: nomeMes(mes) }), el('span', { class: 'suave', text: `${lista.length} ${lista.length === 1 ? 'consulta' : 'consultas'} · R$ ${reais(lista.reduce((t, a) => t + valorDe(a), 0))}` })),
           ...lista.sort((x, y) => x.data.localeCompare(y.data)).map(a => el('div', { class: 'pag-linha' },
-            el('span', { class: 'pag-info' }, el('strong', { text: a.divida ? `Dívida anterior · ${nomeMes(a.data.slice(0, 7))}` : `${dataCurta(a.data)}, ${diaSemana(a.data)}` }),
+            el('span', { class: 'pag-info' }, el('strong', { text: a.divida ? rotuloDivida(a) : `${dataCurta(a.data)}, ${diaSemana(a.data)}` }),
               // versão 104: o valor da sessão em aberto se muda tocando nele
               el('span', { class: 'suave valor-editavel', role: 'button', tabindex: '0', onclick: () => mudarValorSessao(c, a), text: `R$ ${reais(valorDe(a))} ✏️${a.divida && a.obs ? ' · ' + a.obs : ''}${a.presenca === 'falta' ? ' (faltou: cobrada)' : a.presenca === 'tardia' ? ' (desmarcou em cima da hora: cobrada)' : ''}` })),
             botaoIcone('Corrigir ou excluir esta cobrança', 'lixeira', () => corrigirCobranca(c, a)),
@@ -1690,7 +1706,7 @@ const MODOS_PAG = { sessao: 'Por sessão', semanal: 'Semanal', quinzenal: 'Quinz
 function textoFormaPagamento(c) {
   if (!c.modoPagamento) return 'Forma de pagamento não definida ✏️';
   const modo = { sessao: 'por sessão', semanal: 'por semana', quinzenal: 'a cada quinze dias', mensal: 'por mês' }[c.modoPagamento] || c.modoPagamento || '';
-  return `Paga ${modo}${c.pagaAdiantado && c.modoPagamento === 'mensal' ? ' · adiantado 💰' : ''}${c.diaPagamento ? ` · dia ${c.diaPagamento}` : ''} ✏️`;
+  return `Paga ${modo}${temMensalidadeFixa(c) ? ` · mensalidade fixa R$ ${reais(valorNum(c.valorMensal))}` : ''}${c.pagaAdiantado && c.modoPagamento === 'mensal' ? ' · adiantado 💰' : ''}${c.diaPagamento ? ` · dia ${c.diaPagamento}` : ''} ✏️`;
 }
 async function editarFormaPagamento(c, depois) {
   const sel = el('select', { 'aria-label': 'Como paga' }, el('option', { value: '', text: 'Não definido' }), Object.entries(MODOS_PAG).map(([k, v]) => el('option', { value: k, text: v })));
@@ -1700,8 +1716,15 @@ async function editarFormaPagamento(c, depois) {
   const dia = el('input', { type: 'text', inputmode: 'numeric', value: c.diaPagamento || '', placeholder: 'Opcional', 'aria-label': 'Dia do pagamento' });
   const mensal = el('input', { type: 'text', inputmode: 'decimal', value: c.valorMensal || '', placeholder: 'Opcional', 'aria-label': 'Valor mensal' });
   // versão 103: "Quando paga" e "Valor mensal" só aparecem para quem paga por mês
+  const tipoMes = el('select', { 'aria-label': 'Valor do mês' }, el('option', { value: 'sessoes', text: 'Soma das sessões do mês (cada sessão é cobrada)' }),
+    el('option', { value: 'fixo', text: 'Mensalidade fixa (mesmo valor com 4 ou 5 semanas)' }));
+  tipoMes.value = c.mensalidadeFixa ? 'fixo' : 'sessoes';
+  const rotMensal = el('span', { text: '' });
+  const atualizaRot = () => { rotMensal.textContent = tipoMes.value === 'fixo' ? 'Valor da mensalidade (R$)' : 'Valor mensal combinado (R$) · opcional, só para conferência'; };
+  tipoMes.addEventListener('change', atualizaRot); atualizaRot();
   const soMensal = [el('label', { class: 'campo' }, el('span', { text: 'Quando paga o mês' }), quando),
-    el('label', { class: 'campo' }, el('span', { text: 'Valor mensal fechado (R$) · opcional' }), mensal)];
+    el('label', { class: 'campo' }, el('span', { text: 'Valor do mês' }), tipoMes),
+    el('label', { class: 'campo' }, rotMensal, mensal)];
   const mostrarMensal = () => soMensal.forEach(x => { x.style.display = sel.value === 'mensal' ? '' : 'none'; });
   sel.addEventListener('change', mostrarMensal); mostrarMensal();
   const ok = await janela(`Forma de pagamento · ${c.nome}`, [
@@ -1711,8 +1734,24 @@ async function editarFormaPagamento(c, depois) {
     el('p', { class: 'suave pequeno', text: 'O valor de cada sessão continua sendo o da linha "por sessão". Por mês, o previsto é: valor mensal fechado, se houver; se não, sessões do mês × valor da sessão. Quem paga o mês adiantado entra no quadro "Pagam adiantado" em Pagamentos → Mês; o que pagar a mais vira crédito para as próximas sessões.' })],
     [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }]);
   if (!ok) return;
+  if (sel.value === 'mensal' && tipoMes.value === 'fixo' && !valorNum(mensal.value)) return aviso('Falta o valor', 'Digite o valor da mensalidade.');
+  const eraFixa = temMensalidadeFixa(c);
   c.modoPagamento = sel.value; c.pagaAdiantado = sel.value === 'mensal' && quando.value === 'adiantado';
   c.diaPagamento = dia.value.replace(/\D/g, '').slice(0, 2); c.valorMensal = sel.value === 'mensal' ? mensal.value.trim() : '';
+  c.mensalidadeFixa = sel.value === 'mensal' && tipoMes.value === 'fixo';
+  if (c.mensalidadeFixa && !eraFixa) {
+    // começa no mês atual; se já houve sessão paga avulsa neste mês, começa no mês que vem (para não cobrar duas vezes)
+    const ym = hojeISO().slice(0, 7), doMes = atendimentosDe(c.id).filter(a => !a.divida && a.data.slice(0, 7) === ym);
+    const desde = doMes.some(a => a.pagamento === 'pago') ? somarMeses(ym, 1) : ym;
+    c.mensalidadeDesde = desde + '-01';
+    let n = 0;
+    for (const a of atendimentosDe(c.id)) if (!a.divida && a.data >= c.mensalidadeDesde && a.pagamento === 'areceber') { a.pagamento = 'mensalidade'; a.atualizadoEm = agoraISO(); salvarAt(a); n++; }
+    c.atualizadoEm = agoraISO(); salvarCadastro(c); await salvarAgora();
+    await aviso('Mensalidade fixa', `${c.nome}: R$ ${reais(valorNum(c.valorMensal))} por mês, a partir de ${nomeMes(desde).toLowerCase()}. As sessões deixam de ser cobradas uma a uma; cada mês com sessão gera uma cobrança única "Mensalidade".`
+      + (n ? ` ${n} ${n === 1 ? 'sessão em aberto passou' : 'sessões em aberto passaram'} para a mensalidade.` : '') + (desde !== ym ? ' Este mês já tem sessão paga avulsa, por isso começa no mês que vem.' : ''));
+  } else if (!c.mensalidadeFixa && eraFixa) {
+    for (const a of atendimentosDe(c.id)) if (a.pagamento === 'mensalidade' && a.data >= hojeISO().slice(0, 7) + '-01') { a.pagamento = 'areceber'; a.atualizadoEm = agoraISO(); salvarAt(a); }
+  }
   c.atualizadoEm = agoraISO(); salvarCadastro(c); await salvarAgora();
   indicarStatus('Forma de pagamento salva');
   if (depois) depois(); else render(history.state);
@@ -3562,6 +3601,8 @@ function telaMesAba(ym) {
 function chipPagamentoSessao(c, a) {
   if (!a || !a.pagamento) return null;
   if (a.pagamento === 'pago') return el('span', { class: 'chip pago-chip', text: `✅ Pago R$ ${reais(valorDe(a))}` });
+  if (a.pagamento === 'mensalidade') { const m = atendimentos.find(x => x.id === `mens-${c.id}-${a.data.slice(0, 7)}`);
+    return el('button', { type: 'button', class: 'chip', text: m?.pagamento === 'pago' ? '✅ Mensalidade paga' : '📅 Na mensalidade', onclick: e => { e.stopPropagation(); ir({ tela: 'adm', id: c.id, aba: 'pagamentos' }); } }); }
   if (a.pagamento === 'areceber') return el('button', { type: 'button', class: 'chip acao marcado', 'aria-label': `Pagamento da sessão de ${c.nome}`, text: valorDe(a) ? `⏳ A receber R$ ${reais(valorDe(a))}` : '⏳ A receber', onclick: e => { e.stopPropagation(); perguntarPagamento(c, a); } });
   return a.presenca ? el('span', { class: 'chip', text: a.abonada ? '🤝 Abonada' : 'Não cobra' }) : null;
 }
@@ -4115,7 +4156,7 @@ async function lancarDividaAnterior(c0 = null) {
   render(history.state);
 }
 async function corrigirCobranca(c, a) {
-  const desc = a.divida ? `Dívida anterior de ${nomeMes(a.data.slice(0, 7))}` : `Sessão de ${dataComDia(a.data)}${a.hora ? ', ' + horaCurta(a.hora) : ''}`;
+  const desc = a.divida ? rotuloDivida(a) : `Sessão de ${dataComDia(a.data)}${a.hora ? ', ' + horaCurta(a.hora) : ''}`;
   const r = await janela('Corrigir esta cobrança', [el('p', { text: `${c.nome} · ${desc} · R$ ${reais(valorDe(a))}` }),
     el('p', { class: 'suave pequeno', text: a.divida ? 'Excluir apaga este lançamento de dívida.' : '"Não cobrar" mantém a sessão no histórico, mas tira a cobrança. "Excluir" apaga a sessão (use quando ela foi marcada por engano).' })],
     [{ rotulo: 'Fechar', valor: null }, { rotulo: '✏️ Mudar o valor', valor: 'valor' }, !a.divida && { rotulo: 'Não cobrar', valor: 'naocobrar' }, { rotulo: 'Excluir', valor: 'excluir', estilo: 'perigo' }].filter(Boolean));
@@ -4308,7 +4349,7 @@ function linhasCobranca(ats) {
     const sess = l.filter(a => !a.divida), div = l.filter(a => a.divida);
     const partes = [];
     if (sess.length) partes.push(sess.length === 1 ? `sessão de ${ddmm(sess[0].data)}` : `sessões de ${sess.map(a => ddmm(a.data)).join(', ').replace(/, ([^,]*)$/, ' e $1')}`);
-    if (div.length) partes.push('saldo do mês');
+    if (div.length) partes.push(div.some(a => a.mensalidade) ? 'mensalidade' : 'saldo do mês');
     return `• ${mes}: ${partes.join(' + ')} – R$ ${reais(tot)}`;
   }).join('\n');
 }
