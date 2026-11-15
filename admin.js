@@ -2659,8 +2659,10 @@ function linhasDiaClaro(doDia, d, livresDia = []) {
     const hora = el('span', { class: 'ag-hora', text: (horaCurta(o.hora) || '—').replace(/^(\d)h/, '0$1h') });
     if (o.cancelada) {
       const pra = (o.c.avulsos || []).find(a => a.remarcadaDe === o.data);
-      out.push(el('div', { class: 'ag-nota' }, icone('repetir'), el('span', {}, el('strong', { text: o.c.nome }),
-        el('span', { text: pra ? ` · remarcado para ${DIAS_LONGO[diaDaSemana(pra.data)].replace("-feira", "")}, ${dataCurta(pra.data).slice(0, 5)} às ${horaCurta(pra.hora)}` : ' · saiu deste dia' }))));
+      // versão 140: tocar na faixa devolve a sessão para o horário original
+      out.push(el('button', { type: 'button', class: 'ag-nota ag-nota-botao', 'aria-label': `Voltar ${o.c.nome} para este horário`, onclick: () => confirmarRestaurar(o) }, icone('repetir'), el('span', {}, el('strong', { text: o.c.nome }),
+        el('span', { text: pra ? ` · remarcado para ${DIAS_LONGO[diaDaSemana(pra.data)].replace("-feira", "")}, ${dataCurta(pra.data).slice(0, 5)} às ${horaCurta(pra.hora)}` : ' · saiu deste dia' }),
+        el('small', { class: 'ag-nota-dica', text: 'Toque para voltar a sessão para cá' }))));
       if (!ocupadoPorOutro(o)) out.push(el('button', { type: 'button', class: 'ag-linha livre', onclick: () => dialogoHorarioLivre(o, pra) }, hora, icone('calendario'), el('strong', { class: 'ag-nome', text: 'Horário disponível' }), icone('seguinte')));
       continue;
     }
@@ -2672,6 +2674,21 @@ function linhasDiaClaro(doDia, d, livresDia = []) {
   }
   return out;
 }
+async function restaurarSessao(o) {
+  const c = o.c, mesma = h => (parseInt(h) || 0) === (parseInt(o.hora) || 0);
+  c.avulsos = (c.avulsos || []).filter(a => a.remarcadaDe !== o.data && !(a.data === o.data && mesma(a.hora)));
+  c.excecoes = (c.excecoes || []).filter(x => !(x.data === o.data && mesma(x.hora)));
+  c.atualizadoEm = agoraISO(); salvarCadastro(c); await salvarAgora(); indicarStatus(`Sessão de ${primeiroNome(c.nome)} restaurada`); render(history.state);
+}
+async function confirmarRestaurar(o) {
+  const pra = (o.c.avulsos || []).find(a => a.remarcadaDe === o.data);
+  const quando = `${DIAS[diaDaSemana(o.data)]}, ${dataCurta(o.data).slice(0, 5)} às ${horaCurta(o.hora)}`;
+  const outro = ocupadoPorOutro(o) && cadastros.find(x => x !== o.c && !x.arquivado && ocorrenciasNoPeriodo(x, o.data, o.data).some(y => !y.cancelada && !y.feriado && (parseInt(y.hora) || 0) === (parseInt(o.hora) || 0)));
+  const ok = await dialogo({ titulo: `Voltar ${primeiroNome(o.c.nome)} para cá?`,
+    texto: `A sessão volta para ${quando}${pra ? `, e sai de ${DIAS[diaDaSemana(pra.data)]}, ${dataCurta(pra.data).slice(0, 5)} às ${horaCurta(pra.hora)}` : ''}.` + (outro ? ` Atenção: ${outro.nome} já está marcado neste horário.` : ''),
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Voltar a sessão', valor: true, estilo: 'primario' }] });
+  if (ok) await restaurarSessao(o);
+}
 async function dialogoHorarioLivre(o, pra) {
   const c = o.c, h = o.hi !== undefined ? horariosDe(c)[o.hi] : null;
   const r = await janela('Horário disponível', [
@@ -2680,12 +2697,7 @@ async function dialogoHorarioLivre(o, pra) {
       el('span', { text: pra ? ` · remarcado para ${DIAS_LONGO[diaDaSemana(pra.data)].replace("-feira", "")}, ${dataCurta(pra.data).slice(0, 5)} às ${horaCurta(pra.hora)}.` : ' · saiu deste dia.' }))),
     el('button', { type: 'button', class: 'primario com-icone centralizado largo', onclick: () => { fecharDialogos(); agendamentoRasc = { pid: '', data: o.data, hora: o.hora || '', repetir: 'nao', sessoes: '1', extras: [], ajustado: true }; ir({ tela: 'agendar' }); } }, icone('mais'), el('span', { text: 'Agendar paciente' })),
     el('div', { class: 'botoes-linha' },
-      el('button', { type: 'button', class: 'secundario com-icone', onclick: async () => {
-        fecharDialogos();
-        c.avulsos = (c.avulsos || []).filter(a => a.remarcadaDe !== o.data && !(a.data === o.data && (parseInt(a.hora) || 0) === (parseInt(o.hora) || 0)));
-        c.excecoes = (c.excecoes || []).filter(x => !(x.data === o.data && (parseInt(x.hora) || 0) === (parseInt(o.hora) || 0)));
-        c.atualizadoEm = agoraISO(); salvarCadastro(c); await salvarAgora(); indicarStatus(`Sessão de ${primeiroNome(c.nome)} restaurada`); render(history.state);
-      } }, icone('repetir'), el('span', { text: 'Restaurar sessão' })),
+      el('button', { type: 'button', class: 'secundario com-icone', onclick: async () => { fecharDialogos(); await restaurarSessao(o); } }, icone('repetir'), el('span', { text: 'Restaurar sessão' })),
       el('button', { type: 'button', class: 'secundario com-icone', onclick: () => { fecharDialogos(); ir(modo === 'dono' ? { tela: 'ficha', id: c.id, aba: 'retomar' } : { tela: 'adm', id: c.id, aba: 'atendimentos' }); } }, icone('pessoa'), el('span', { text: 'Ver paciente' }))),
     h && el('button', { type: 'button', class: 'perigo-caixa', onclick: async () => {
       fecharDialogos();

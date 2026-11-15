@@ -808,3 +808,6 @@ body.com-barra .fab { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
 .perigo-caixa { display: flex; gap: .7rem; align-items: flex-start; width: 100%; text-align: left; background: #F8E4E0; color: #A33A30; border: 0; border-radius: 14px; padding: .8rem 1rem; margin-top: .6rem; font: inherit; }
 .perigo-caixa span { display: flex; flex-direction: column; }
 .perigo-caixa small { color: var(--tinta); }
+/* versão 140: faixa "saiu deste dia" é tocável para voltar a sessão */
+button.ag-nota.ag-nota-botao { width: 100%; text-align: left; border: 0; font: inherit; color: inherit; cursor: pointer; }
+.ag-nota-dica { display: block; font-size: .8rem; opacity: .7; margin-top: 2px; }
