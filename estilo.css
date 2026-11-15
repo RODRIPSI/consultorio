@@ -785,3 +785,5 @@ body.com-barra .fab { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
   .linha-emitir > span:nth-child(4) { display: none; }
 }
 .pc-situacao.areceber { background: #F7EBD6; color: #8A5A12; }
+.livres-dia { display: flex; flex-direction: column; gap: .3rem; padding: .4rem 0; border-top: 1px solid var(--linha); }
+.livres-dia .chips { flex-wrap: wrap; }

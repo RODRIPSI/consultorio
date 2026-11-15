@@ -2450,7 +2450,7 @@ function ocorrenciasNoPeriodo(c, de, ate) {
     if (h.dia === undefined || h.dia === '') return;
     for (let d = primeiroDiaNaSemana(de, h.dia); d <= ate; d = somarDias(d, 7)) {
       if (h.fim && d >= h.fim) break;
-      out.push({ c, data: d, hora: h.hora || '', hi, fixo: true, feriado: diaSemAtendimento(d)?.nome || null, cancelada: cancelado(c, d, h.hora) });
+      out.push({ c, data: d, hora: h.hora || '', hi, fixo: true, feriado: null, feriadoAviso: diaSemAtendimento(d)?.nome || null, cancelada: cancelado(c, d, h.hora) });   // versão 134: no feriado o horário fixo continua na lista; o Rodrigo decide
     }
   });
   for (const a of c.avulsos || []) if (a.data >= de && a.data <= ate)
@@ -2601,11 +2601,11 @@ function telaAgenda(inicio) {
       sem && el('p', { class: 'faixa', text: `${sem.feriado ? 'Feriado' : 'Sem atendimento'}: ${sem.nome}` }),
       doDia.length ? doDia.map(o => {
         const riscado = o.feriado || o.cancelada;
-        const etiqueta = o.cancelada ? 'Cancelada' : o.feriado ? 'Feriado: vai para o fim da série' : o.avulsa ? (freqDe(o.c).startsWith('variavel') ? 'Combinado' : 'Avulsa') : o.fixo ? 'Horário fixo' : 'Série';
+        const etiqueta = o.cancelada ? 'Tirado deste dia' : o.feriado ? 'Feriado: vai para o fim da série' : o.avulsa ? (freqDe(o.c).startsWith('variavel') ? 'Combinado' : 'Avulsa') : o.fixo ? 'Horário fixo' : 'Série';
         return el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => acoesOcorrencia(o) },
           el('span', { class: 'pag-info' },
             el('strong', { style: riscado ? 'text-decoration:line-through;opacity:.6' : null, text: `${horaCurta(o.hora) || '—'}  ${o.c.nome}` }),
-            el('span', { class: 'suave', text: etiqueta + (o.feriadoAviso ? ` · atenção: ${o.feriadoAviso}` : '') + (!riscado && estadoConfirmacao(o.c, o.data, o.hora) ? ' · ' + ROTULO_CONF[estadoConfirmacao(o.c, o.data, o.hora)] : '') })));
+            el('span', { class: o.feriadoAviso && !riscado ? 'texto-alerta' : 'suave', text: etiqueta + (o.feriadoAviso && !riscado ? ` · ⚠️ ${o.feriadoAviso}: toque para remarcar ou tirar` : '') + (!riscado && estadoConfirmacao(o.c, o.data, o.hora) ? ' · ' + ROTULO_CONF[estadoConfirmacao(o.c, o.data, o.hora)] : '') })));
       }) : el('button', { type: 'button', class: 'link', text: 'Nenhum atendimento. Toque para agendar neste dia.', onclick: () => acoesDiaAgenda(d) }));
   });
   mostrar(
@@ -2625,16 +2625,17 @@ function telaAgenda(inicio) {
 async function acoesOcorrencia(o) {
   const c = o.c, h = o.hi !== undefined ? horariosDe(c)[o.hi] : null;
   const botoes = [{ rotulo: 'Fechar', valor: null }];
-  if (o.cancelada) botoes.push({ rotulo: 'Desfazer cancelamento', valor: 'desfazer' });
+  if (o.cancelada) botoes.push({ rotulo: 'Voltar a ter sessão neste dia', valor: 'desfazer' });
   else if (!o.feriado) {
-    botoes.push({ rotulo: 'Remarcar este dia', valor: 'remarcar' });
-    botoes.push({ rotulo: o.avulsa ? 'Excluir este agendamento' : 'Cancelar este dia', valor: o.avulsa ? 'excluir' : 'cancelar' });
+    botoes.push({ rotulo: '🗑️ ' + (o.avulsa ? 'Excluir este agendamento' : 'Tirar só deste dia'), valor: o.avulsa ? 'excluir' : 'cancelar' });
+    botoes.push({ rotulo: '🔁 Remarcar para um horário livre', valor: 'remarcar', estilo: o.feriadoAviso ? 'primario' : undefined });
   }
   if (h) botoes.push({ rotulo: 'Encerrar a série a partir daqui', valor: 'encerrar' });
   botoes.push({ rotulo: 'Abrir paciente', valor: 'abrir', estilo: 'primario' });
   const info = o.avulsa ? 'Sessão avulsa.' : h ? resumoSerie(c, h, o.hi).texto : '';
   const r = await janela(c.nome, [el('p', { text: `${dataComDia(o.data)}${o.hora ? ', ' + horaCurta(o.hora) : ''}` }), info && el('p', { class: 'suave pequeno', text: info }),
-    o.feriado && el('p', { class: 'faixa', text: `${o.feriado}: não haverá sessão, e ela passa para o fim da série.` })], botoes);
+    o.feriado && el('p', { class: 'faixa', text: `${o.feriado}: não haverá sessão, e ela passa para o fim da série.` }),
+    o.feriadoAviso && !o.cancelada && el('p', { class: 'faixa', text: `${o.feriadoAviso}. Escolha: tirar só deste dia, ou remarcar para um horário livre.` })], botoes);
   if (!r) return;
   if (r === 'abrir') return ir(modo === 'dono' ? { tela: 'ficha', id: c.id, aba: 'retomar' } : { tela: 'adm', id: c.id, aba: 'atendimentos' });
   if (r === 'cancelar') { (c.excecoes ||= []).push({ data: o.data, hora: o.hora }); }
@@ -2647,8 +2648,7 @@ async function acoesOcorrencia(o) {
     h.fim = o.data;
   }
   if (r === 'remarcar') {
-    const v = await dialogo({ titulo: 'Remarcar este dia', texto: `Nova data e horário para a sessão de ${dataComDia(o.data)}.`,
-      campos: [{ rotulo: 'Nova data', tipo: 'date' }, { rotulo: 'Novo horário', tipo: 'time' }], botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Remarcar', valor: true, estilo: 'primario' }] });
+    const v = await escolherHorarioLivre(c, o);
     if (!v || !v[0]) return;
     if (o.avulsa) c.avulsos = (c.avulsos || []).filter(a => a.id !== o.avulsa);
     else (c.excecoes ||= []).push({ data: o.data, hora: o.hora });
@@ -2657,6 +2657,55 @@ async function acoesOcorrencia(o) {
   salvarCadastro(c); render(history.state);
 }
 
+// Versão 134: horários livres da semana (expediente − sessões marcadas − compromissos − feriados)
+function horariosLivres(seg) {
+  const ocupados = new Set();
+  for (const c of cadastros.filter(c => !c.arquivado)) for (const o of ocorrenciasNoPeriodo(c, seg, somarDias(seg, 6)))
+    if (!o.cancelada && !o.feriado) ocupados.add(`${o.data} ${String(parseInt(o.hora) || 0).padStart(2, '0')}`);
+  const hoje = hojeISO(), agoraH = new Date().getHours(), out = [];
+  for (let i = 0; i < 7; i++) {
+    const d = somarDias(seg, i), dia = diaDaSemana(d), g = gradeDia(dia);
+    if (!g || diaSemAtendimento(d) || d < hoje) continue;
+    const hs = [];
+    for (let h = g.de; h < g.ate; h++) {
+      if (d === hoje && h <= agoraH) continue;
+      if (ocupados.has(`${d} ${String(h).padStart(2, '0')}`)) continue;
+      if (fixosSemPaciente().some(f => Number(f.dia) === dia && h >= f.de && h < f.ate)) continue;
+      if (bloqueiosDia().some(b => b.data === d && Number(b.h) === h)) continue;
+      hs.push(h);
+    }
+    if (hs.length) out.push({ d, hs });
+  }
+  return out;
+}
+function escolherHorarioLivre(c, o) {
+  return new Promise(resolve => {
+    let seg = segundaDaSemana(o.data);
+    const caixa = el('div', { class: 'pilha-pequena' });
+    let ocupado = false;
+    const fim = v => { ocupado = true; fecharDialogos(); resolve(v); };
+    const desenhar = () => {
+      const livres = horariosLivres(seg);
+      caixa.replaceChildren(
+        el('div', { class: 'botoes-linha' },
+          el('button', { type: 'button', class: 'secundario compacto', text: '‹ Semana anterior', onclick: () => { seg = somarDias(seg, -7); desenhar(); } }),
+          el('strong', { text: `${dataCurta(seg).slice(0, 5)} a ${dataCurta(somarDias(seg, 5)).slice(0, 5)}` }),
+          el('button', { type: 'button', class: 'secundario compacto', text: 'Próxima ›', onclick: () => { seg = somarDias(seg, 7); desenhar(); } })),
+        ...(livres.length ? livres.map(({ d, hs }) => el('div', { class: 'livres-dia' }, el('strong', { text: `${DIAS[diaDaSemana(d)]}, ${dataCurta(d).slice(0, 5)}` }),
+          el('div', { class: 'chips' }, hs.map(h => el('button', { type: 'button', class: 'chip acao', text: `${h}h`, onclick: () => fim([d, `${String(h).padStart(2, '0')}:00`]) })))))
+          : [el('p', { class: 'suave', text: 'Nenhum horário livre nesta semana.' })]),
+        el('button', { type: 'button', class: 'link', text: 'Outra data ou horário (digitar)', onclick: async () => {
+          ocupado = true; fecharDialogos();
+          const v = await dialogo({ titulo: 'Remarcar', texto: `Nova data e horário para a sessão de ${dataComDia(o.data)}.`,
+            campos: [{ rotulo: 'Nova data', tipo: 'date' }, { rotulo: 'Novo horário', tipo: 'time' }], botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Remarcar', valor: true, estilo: 'primario' }] });
+          resolve(v);
+        } }));
+    };
+    desenhar();
+    janela(`Remarcar ${c.nome}`, [el('p', { class: 'suave pequeno', text: `Sessão de ${dataComDia(o.data)}${o.hora ? ', ' + horaCurta(o.hora) : ''}. Toque num horário livre (pelo seu expediente, sem sessões nem compromissos).` }), caixa],
+      [{ rotulo: 'Cancelar', valor: null }]).then(v => { if (!ocupado) resolve(null); });
+  });
+}
 // ---------- Novo agendamento ----------
 let agendamentoRasc = null;
 function telaAgendar(pid) {
