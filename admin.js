@@ -26,9 +26,9 @@ const chavePag = g => `x:g:${g.pid}:${g.id}`;
 const cadastroDe = id => cadastros.find(c => c.id === id) || null;
 const salvarCadastro = c => agendarSalvar(chaveCad(c), c);
 // versão 105: sessão de quem tem mensalidade fixa não é cobrada sozinha; garante a cobrança única do mês
-// versão 110: o financeiro começa em outubro de 2026. Antes disso só conta o que foi lançado à mão
+// versões 110/111: o financeiro começa em novembro de 2026. Antes disso só conta o que foi lançado à mão
 // ("Lançar dívida de meses anteriores" ou "Lançar sessão não paga").
-const INICIO_FINANCEIRO = '2026-10-01';
+const INICIO_FINANCEIRO = '2026-11-01';
 const dentroDoFinanceiro = a => (a.data || '') >= INICIO_FINANCEIRO || a.origem === 'dívida anterior' || a.origem === 'lançada à mão';
 const emAberto = a => a.pagamento === 'areceber' && dentroDoFinanceiro(a);
 const salvarAt = a => { agendarSalvar(chaveAt(a), a); if (a.pagamento === 'mensalidade' && a.data) garantirMensalidade(cadastroDe(a.pid), a.data.slice(0, 7)); };
@@ -4220,7 +4220,8 @@ function telaPagamentos(ym) {
   const mesNome = nomeMes(ym).split(' ')[0];
   const passo = abaMes === 'ano' ? 12 : 1;
   const nav = abaMes !== 'devendo' && el('div', { class: 'navega' },
-    el('button', { type: 'button', class: 'secundario compacto com-icone', onclick: () => ir({ tela: 'mes', ym: somarMeses(ym, -passo), aba: abaMes }, false) }, icone('voltar'), el('span', { text: 'Anterior' })),
+    el('button', { type: 'button', class: 'secundario compacto com-icone', disabled: abaMes === 'ano' ? ym.slice(0, 4) <= INICIO_FINANCEIRO.slice(0, 4) : ym <= INICIO_FINANCEIRO.slice(0, 7),
+      onclick: () => ir({ tela: 'mes', ym: somarMeses(ym, -passo), aba: abaMes }, false) }, icone('voltar'), el('span', { text: 'Anterior' })),
     el('strong', { text: abaMes === 'ano' ? `Ano de ${ym.slice(0, 4)}` : nomeMes(ym) }),
     el('button', { type: 'button', class: 'secundario compacto com-icone', disabled: abaMes === 'ano' ? ym.slice(0, 4) >= hojeYm.slice(0, 4) : ym >= hojeYm,
       onclick: () => { const alvo = somarMeses(ym, passo); ir({ tela: 'mes', ym: alvo > hojeYm ? hojeYm : alvo, aba: abaMes }, false); } }, el('span', { text: 'Seguinte' }), icone('seguinte')));
@@ -4731,6 +4732,7 @@ function primeiraSessao(c) {
 }
 function contaPagamentoMes(c, ym) {
   if (c.excluido || c.arquivado) return null;
+  if (fimDoMes(ym) < INICIO_FINANCEIRO) return null;   // versão 111: meses antes de novembro/2026 não entram nos grupos
   if (c.encerradoEm && c.encerradoEm.slice(0, 7) < ym) return null;
   if (c.semCobrancaDesde && c.semCobrancaDesde <= fimDoMes(ym)) return null;
   const hoje = hojeISO(), hojeYm = hoje.slice(0, 7), ini = ym + '-01', fim = fimDoMes(ym);
