@@ -283,6 +283,20 @@ function usarCredito(a) {
   g.atendimentos = [...(g.atendimentos || []), a.id]; salvarPag(g);
   a.pagamento = 'pago'; a.pagoEm = g.data; a.pagamentoId = g.id;
 }
+// Versão 101: crédito de quem paga adiantado (ex.: o mês inteiro no dia 5).
+function creditoDe(pid) { return pagamentos.filter(g => g.pid === pid).reduce((t, g) => t + Math.max(0, saldoDe(g)), 0); }
+function sessoesFuturasDoMes(c) {
+  const hoje = hojeISO(), fim = somarDias(somarMeses(hoje.slice(0, 7), 1) + '-01', -1);
+  try { return ocorrenciasNoPeriodo(c, hoje, fim).filter(o => !o.cancelada && !atendimentos.some(a => a.pid === c.id && a.data === o.data)); } catch { return []; }
+}
+async function abaterDoCredito(c) {
+  const pend = atendimentosDe(c.id).filter(a => a.pagamento === 'areceber').sort((x, y) => x.data.localeCompare(y.data));
+  let n = 0;
+  for (const a of pend) { usarCredito(a); if (a.pagamento === 'pago') { a.atualizadoEm = agoraISO(); salvarAt(a); n++; } }
+  await salvarAgora();
+  indicarStatus(n ? `${n} ${n === 1 ? 'sessão abatida' : 'sessões abatidas'} do crédito` : 'O crédito não cobre a próxima sessão');
+  render(history.state);
+}
 function cartaoAtendimentoSessao(p, s) {
   const a = atendimentos.find(x => x.sid === s.id);
   if (!a || !a.pagamento) return null;
@@ -782,6 +796,10 @@ function abaPagamentosAdm(c) {
     el('div', { class: 'resumo-fin' },
       el('div', { class: 'cartao numero' }, el('small', { text: 'A receber' }), el('strong', { text: 'R$ ' + reais(totalPend) }), el('span', { class: 'suave pequeno', text: `${pend.length} ${pend.length === 1 ? 'atendimento' : 'atendimentos'}` })),
       el('div', { class: 'cartao numero' }, el('small', { text: 'Recebido este mês' }), el('strong', { text: 'R$ ' + reais(r.pago) }), el('span', { class: 'suave pequeno', text: `${r.gs.length} ${r.gs.length === 1 ? 'pagamento' : 'pagamentos'}` }))),
+    (() => { const cr = creditoDe(c.id); if (cr < 0.005) return null; const v = valorPadrao(c) ? valorNum(valorPadrao(c)) : 0;
+      return el('div', { class: 'cartao credito' }, el('strong', { text: `💰 Pago adiantado: R$ ${reais(cr)} de crédito` }),
+        el('span', { class: 'suave pequeno', text: (v ? `Cobre mais ${Math.floor((cr + 0.005) / v)} ${Math.floor((cr + 0.005) / v) === 1 ? 'sessão' : 'sessões'}. ` : '') + 'Ao marcar a presença, a sessão já entra como paga, sem cobrar de novo.' }),
+        pend.length > 0 && el('button', { type: 'button', class: 'primario compacto', text: 'Abater as sessões em aberto deste crédito', onclick: () => abaterDoCredito(c) })); })(),
     el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => escolherRecibo(c, { soPagas: true }) }, icone('assinar'), el('span', { text: 'Recibo ou nota fiscal' })),
     c.nf && r.nfPendente && el('p', { class: 'faixa', text: 'Há pagamento deste mês sem nota fiscal emitida. Toque no pagamento para emitir.' }),
     cartao('Consultas ainda não pagas', 'moeda',
@@ -942,7 +960,14 @@ async function telaPagar(s) {
           el('span', { text: `${dataCurta(a.data)}, ${diaSemana(a.data)} · R$ ${reais(valorDe(a))}` }))))
           : el('p', { class: 'suave pequeno', text: 'Nenhum atendimento a receber. O pagamento fica registrado como adiantado.' })),
       c && cartao('Valor e data', 'moeda',
-        el('div', { class: 'grade duas' }, el('label', { class: 'campo' }, el('span', { text: 'Valor (R$)' }), valor), el('label', { class: 'campo' }, el('span', { text: 'Data' }), data))),
+        el('div', { class: 'grade duas' }, el('label', { class: 'campo' }, el('span', { text: 'Valor (R$)' }), valor), el('label', { class: 'campo' }, el('span', { text: 'Data' }), data)),
+        // versão 101: pagar adiantado o resto do mês
+        (() => { const fut = sessoesFuturasDoMes(c); if (!fut.length) return null;
+          const tf = fut.reduce((t, o) => t + valorNum(valorPadrao(c, o.data)), 0); if (!tf) return null;
+          return el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => { r.valor = reais(soma() + tf); r.valorEditado = true; telaPagar({ ...history.state }); } },
+            icone('calendario'), el('span', { text: `Somar o resto do mês adiantado: ${fut.length} ${fut.length === 1 ? 'sessão' : 'sessões'} (${fut.map(o => ddmm(o.data)).join(', ')}) · R$ ${reais(tf)}` })); })(),
+        creditoDe(c.id) > 0.005 && el('p', { class: 'suave pequeno', text: `Já tem R$ ${reais(creditoDe(c.id))} de crédito adiantado.` })),
+      c && el('p', { class: 'suave pequeno', text: 'Valor maior que as sessões marcadas acima vira crédito: cada sessão seguinte com presença já entra como paga.' }),
       el('p', { class: 'suave pequeno', text: 'O app não lê o valor escrito no comprovante: confira e ajuste o valor acima. O comprovante fica guardado cifrado, junto do pagamento.' })),
     el('button', { type: 'button', class: 'fab estendido', disabled: !c, onclick: concluirPagamento }, icone('moeda'), el('span', { text: 'Registrar' })));
 }

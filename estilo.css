@@ -596,3 +596,6 @@ html.app-oculto #app { filter: blur(22px); }
   .topo-ent-menu { width: 11%; top: 4%; left: 1%; }
 }
 :root[data-paleta="entrelacos"] .agenda-nome span:last-child { font-size: 1.1rem; }
+
+.cartao.credito { display: flex; flex-direction: column; gap: .35rem; padding: .9rem 1rem; border-color: rgba(93, 187, 142, .6); }
+.cartao.credito .primario { align-self: flex-start; }
