@@ -2601,11 +2601,13 @@ function telaAgenda(inicio) {
       sem && el('p', { class: 'faixa', text: `${sem.feriado ? 'Feriado' : 'Sem atendimento'}: ${sem.nome}` }),
       doDia.length ? doDia.map(o => {
         const riscado = o.feriado || o.cancelada;
-        const etiqueta = o.cancelada ? 'Tirado deste dia' : o.feriado ? 'Feriado: vai para o fim da série' : o.avulsa ? (freqDe(o.c).startsWith('variavel') ? 'Combinado' : 'Avulsa') : o.fixo ? 'Horário fixo' : 'Série';
+        // versão 136: quando a sessão sai do dia, o horário aparece como livre (e para onde foi, se foi remarcada)
+        const pra = o.cancelada && (o.c.avulsos || []).find(a => a.remarcadaDe === o.data);
+        const etiqueta = o.cancelada ? `🟢 Horário livre${pra ? ` · ${primeiroNome(o.c.nome)} remarcado para ${DIAS[diaDaSemana(pra.data)].slice(0, 3)} ${dataCurta(pra.data).slice(0, 5)}, ${horaCurta(pra.hora)}` : ` · ${primeiroNome(o.c.nome)} saiu deste dia`} · toque para agendar outro paciente` : o.feriado ? 'Feriado: vai para o fim da série' : o.avulsa ? (freqDe(o.c).startsWith('variavel') ? 'Combinado' : 'Avulsa') : o.fixo ? 'Horário fixo' : 'Série';
         return el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => acoesOcorrencia(o) },
           el('span', { class: 'pag-info' },
             el('strong', { style: riscado ? 'text-decoration:line-through;opacity:.6' : null, text: `${horaCurta(o.hora) || '—'}  ${o.c.nome}` }),
-            el('span', { class: o.feriadoAviso && !riscado ? 'texto-alerta' : 'suave', text: etiqueta + (o.feriadoAviso && !riscado ? ` · ⚠️ ${o.feriadoAviso}: toque para remarcar ou tirar` : '') + (!riscado && estadoConfirmacao(o.c, o.data, o.hora) ? ' · ' + ROTULO_CONF[estadoConfirmacao(o.c, o.data, o.hora)] : '') })));
+            el('span', { class: o.cancelada ? 'texto-livre' : o.feriadoAviso && !riscado ? 'texto-alerta' : 'suave', text: etiqueta + (o.feriadoAviso && !riscado ? ` · ⚠️ ${o.feriadoAviso}: toque para remarcar ou tirar` : '') + (!riscado && estadoConfirmacao(o.c, o.data, o.hora) ? ' · ' + ROTULO_CONF[estadoConfirmacao(o.c, o.data, o.hora)] : '') })));
       }) : el('button', { type: 'button', class: 'link', text: 'Nenhum atendimento. Toque para agendar neste dia.', onclick: () => acoesDiaAgenda(d) }));
   });
   mostrar(
@@ -2625,7 +2627,11 @@ function telaAgenda(inicio) {
 async function acoesOcorrencia(o) {
   const c = o.c, h = o.hi !== undefined ? horariosDe(c)[o.hi] : null;
   const botoes = [{ rotulo: 'Fechar', valor: null }];
-  if (o.cancelada) botoes.push({ rotulo: 'Voltar a ter sessão neste dia', valor: 'desfazer' });
+  if (o.cancelada) {
+    if (!cadastros.some(x => x !== c && ocorrenciasNoPeriodo(x, o.data, o.data).some(y => !y.cancelada && !y.feriado && (parseInt(y.hora) || 0) === (parseInt(o.hora) || 0))))
+      botoes.push({ rotulo: '➕ Agendar outro paciente neste horário', valor: 'ocupar', estilo: 'primario' });
+    botoes.push({ rotulo: `Voltar a ter sessão de ${primeiroNome(c.nome)} neste dia`, valor: 'desfazer' });
+  }
   else if (!o.feriado) {
     botoes.push({ rotulo: '🗑️ ' + (o.avulsa ? 'Excluir este agendamento' : 'Tirar só deste dia'), valor: o.avulsa ? 'excluir' : 'cancelar' });
     botoes.push({ rotulo: '🔁 Remarcar para um horário livre', valor: 'remarcar', estilo: o.feriadoAviso ? 'primario' : undefined });
@@ -2637,6 +2643,7 @@ async function acoesOcorrencia(o) {
     o.feriado && el('p', { class: 'faixa', text: `${o.feriado}: não haverá sessão, e ela passa para o fim da série.` }),
     o.feriadoAviso && !o.cancelada && el('p', { class: 'faixa', text: `${o.feriadoAviso}. Escolha: tirar só deste dia, ou remarcar para um horário livre.` })], botoes);
   if (!r) return;
+  if (r === 'ocupar') { agendamentoRasc = { pid: '', data: o.data, hora: o.hora || '', repetir: 'nao', sessoes: '1', extras: [], ajustado: true }; return ir({ tela: 'agendar' }); }
   if (r === 'abrir') return ir(modo === 'dono' ? { tela: 'ficha', id: c.id, aba: 'retomar' } : { tela: 'adm', id: c.id, aba: 'atendimentos' });
   if (r === 'cancelar') { (c.excecoes ||= []).push({ data: o.data, hora: o.hora }); }
   if (r === 'desfazer') { c.excecoes = (c.excecoes || []).filter(x => !(x.data === o.data && (x.hora || '') === (o.hora || ''))); }
