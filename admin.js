@@ -4821,7 +4821,9 @@ function contaPagamentoMes(c, ym) {
     else if (temMensal) previsto = valorNum(c.valorMensal);
     else previsto = ocs.length * valorSessao;
     // fim do mês: vale o que pagar do dia 6 deste mês até o dia 5 do seguinte (o que pagar no dia 1-5 é do mês anterior)
-    const dLim = String(DIA_LIMITE_FIM).padStart(2, '0'), dIni = String(DIA_LIMITE_FIM + 1).padStart(2, '0');
+    // versão 116: no fim do mês, vale o dia combinado com o paciente (se houver); senão, dia 5 do mês seguinte
+    const diaFim = Math.min(28, Number(c.diaPagamento) || DIA_LIMITE_FIM);
+    const dLim = String(diaFim).padStart(2, '0'), dIni = String(diaFim + 1).padStart(2, '0');
     const limite = grupo === 'fim' ? somarMeses(ym, 1) + '-' + dLim : fim;
     const desde = grupo === 'fim' ? ym + '-' + dIni : ini;
     let pago = pagamentos.filter(g => g.pid === c.id && (g.ref ? g.ref === ym : g.data >= desde && g.data <= limite)).reduce((t, g) => t + valorNum(g.valor), 0);
@@ -4892,7 +4894,7 @@ function linhaGrupo(x, ym) {
   const sub = mensal
     ? (x.mesDeInicio ? `Mês de início: ${x.sessoes} sessões a partir da primeira · R$ ${reais(x.previsto)}` : x.semMensal ? `⚠️ Mensalidade não definida · ${x.sessoes} sessões × valor = R$ ${reais(x.previsto)}` : `R$ ${reais(x.previsto)} por mês`)
       + (x.pago > 0.005 && x.falta > 0.005 ? ` · pagou R$ ${reais(x.pago)}` : '')
-      + (x.status === 'aguardando' ? ` · vence dia ${Number(c.diaPagamento) || DIA_LIMITE_ADIANTADO}` : x.status === 'areceber' ? ` · paga até dia ${DIA_LIMITE_FIM} do mês seguinte` : '')
+      + (x.status === 'aguardando' ? ` · vence dia ${Number(c.diaPagamento) || DIA_LIMITE_ADIANTADO}` : x.status === 'areceber' ? ` · paga até dia ${Math.min(28, Number(c.diaPagamento) || DIA_LIMITE_FIM)} do mês seguinte` : '')
     : x.pend.length ? `${x.pend.length} ${x.pend.length === 1 ? 'sessão' : 'sessões'} sem pagar: ${x.pend.map(a => ddmm(a.data)).join(', ')}`
       : x.semAgenda ? 'Sem sessão na agenda deste mês' : `${x.sessoes} ${x.sessoes === 1 ? 'sessão' : 'sessões'} no mês · R$ ${reais(x.previsto)}${x.pago > 0.005 ? ` · pagou R$ ${reais(x.pago)}` : ''}`;
   const selo = el('span', { class: 'selo-status ' + cls, text: x.status === 'atrasado' ? `${rot} ${x.dias} ${x.dias === 1 ? 'dia' : 'dias'}` : x.status === 'devendo' ? `Devendo R$ ${reais(x.falta)}` : rot });
