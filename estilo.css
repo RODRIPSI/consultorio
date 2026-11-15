@@ -616,3 +616,8 @@ html.app-oculto #app { filter: blur(22px); }
 .selo-status.ok { color: #6FCF97; } .selo-status.aguarda { color: #F2C14E; } .selo-status.atraso { color: #F0938A; }
 .pix-extrato { border-style: dashed; }
 @media (max-width: 620px) { .resumo-fin.tres { grid-template-columns: 1fr; } }
+.linha-marcar-pago { display: flex; align-items: center; gap: .5rem; padding: .3rem 0; border-bottom: 1px solid rgba(232,188,82,.18); }
+.linha-marcar-pago .nome { flex: 1; }
+.linha-marcar-pago input[type="checkbox"] { width: 22px; height: 22px; flex: none; margin: 0; }
+.linha-marcar-pago .nome { text-align: left; min-width: 0; }
+.linha-marcar-pago input[type="text"] { flex: 0 0 8.5rem; }
