@@ -4878,7 +4878,7 @@ function linhaGrupo(x, ym) {
   const c = x.c, [rot, cls] = SELO_STATUS[x.status];
   const mensal = x.grupo === 'adiantado' || x.grupo === 'fim';
   const sub = mensal
-    ? (x.mesDeInicio ? `Mês de início · R$ ${reais(x.previsto)}` : x.semMensal ? `${x.sessoes} sessões × valor = R$ ${reais(x.previsto)}` : `R$ ${reais(x.previsto)} por mês`)
+    ? (x.mesDeInicio ? `Mês de início · R$ ${reais(x.previsto)}` : x.semMensal ? `${x.sessoes} ${x.sessoes === 1 ? 'sessão' : 'sessões'} × R$ ${reais(valorNum(valorPadrao(c)))} = R$ ${reais(x.previsto)}` : `R$ ${reais(x.previsto)} por mês`)
       + (x.pago > 0.005 && x.falta > 0.005 ? ` · pagou R$ ${reais(x.pago)}` : '')
       + (x.status === 'aguardando' ? ` · vence dia ${Number(c.diaPagamento) || DIA_LIMITE_ADIANTADO}` : x.status === 'areceber' ? ` · paga até dia ${Math.min(28, Number(c.diaPagamento) || DIA_LIMITE_FIM)} do mês seguinte` : '')
     : x.pend.length ? `${x.pend.length} ${x.pend.length === 1 ? 'sessão' : 'sessões'} sem pagar: ${x.pend.map(a => ddmm(a.data)).join(', ')}`
@@ -4908,7 +4908,6 @@ function linhaGrupo(x, ym) {
   return el('div', { class: 'linha-grupo' },
     el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => ir({ tela: 'adm', id: c.id, aba: 'pagamentos' }) },
       avatar(c), el('span', { class: 'pag-info' }, el('strong', { text: c.nome }), el('span', { class: 'suave pequeno', text: sub }))),
-    mensal && x.semMensal && el('button', { type: 'button', class: 'link pequeno aviso-link', text: '⚠️ Mensalidade não definida — definir', onclick: () => editarFormaPagamento(c) }),
     el('div', { class: 'linha-grupo-acoes' }, selo, ...acoes));
 }
 // Versão 108: marcar de uma vez quem já pagou o mês (com o valor de cada um, que pode ser corrigido)
@@ -4917,7 +4916,7 @@ async function marcarPagosMes(lista, ym) {
   if (!abertos.length) return;
   const hoje = hojeISO(), sug = ym + '-05' <= hoje ? ym + '-05' : hoje;
   const data = el('input', { type: 'date', value: sug, 'aria-label': 'Data do pagamento' });
-  const guardar = el('input', { type: 'checkbox', checked: true });
+  const guardar = el('input', { type: 'checkbox', checked: false });
   const linhas = abertos.map(x => {
     const marca = el('input', { type: 'checkbox', checked: true, 'aria-label': `Pagou: ${x.c.nome}` });
     const valor = el('input', { type: 'text', inputmode: 'decimal', value: reais(valorNum(x.c.valorMensal) || x.falta), 'aria-label': `Valor de ${x.c.nome}` });
@@ -4928,14 +4927,14 @@ async function marcarPagosMes(lista, ym) {
     el('p', { class: 'suave pequeno', text: 'Desmarque quem ainda não pagou e corrija o valor de quem pagou outro valor. Cada um fica com o pagamento registrado; o que passar das sessões vira crédito.' }),
     el('label', { class: 'campo' }, el('span', { text: 'Data do pagamento' }), data),
     el('div', { class: 'pilha-pequena' }, linhas.map(l => l.el)),
-    el('label', { class: 'marcar' }, guardar, el('span', { text: 'Guardar o valor como mensalidade de quem ainda não tem' }))],
+    el('label', { class: 'marcar' }, guardar, el('span', { text: 'Guardar o valor como mensalidade fixa de quem paga pela soma das sessões (só marque se o valor do mês for sempre o mesmo)' }))],
     [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Registrar pagamentos', valor: true, estilo: 'primario' }]);
   if (!ok) return;
   let n = 0, total = 0;
   for (const l of linhas) {
     const v = valorNum(l.valor.value);
     if (!l.marca.checked || !v) continue;
-    if (guardar.checked && !valorNum(l.x.c.valorMensal)) { l.x.c.valorMensal = reais(v); l.x.c.atualizadoEm = agoraISO(); salvarCadastro(l.x.c); }
+    if (guardar.checked && !valorNum(l.x.c.valorMensal)) { l.x.c.valorMensal = reais(v); l.x.c.mensalidadeFixa = true; l.x.c.mensalidadeDesde ||= somarMeses(ym, 1) + '-01'; l.x.c.atualizadoEm = agoraISO(); salvarCadastro(l.x.c); }
     await registrarComQuitacao(l.x.c, v, data.value || sug, fimDoMes(ym), ym);
     n++; total += v;
   }
