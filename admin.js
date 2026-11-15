@@ -301,6 +301,9 @@ function ajustarPagamentoAoStatus(a) {
 }
 // Pagamento adiantado (ou pacote do mês): cada atendimento novo consome o saldo que sobrou.
 function saldoDe(g) {
+  // versão 120: pagamento referente a um mês anterior ao dia em que foi pago (ex.: pago em novembro, referente a outubro)
+  // quita aquele mês; não vira crédito para as sessões seguintes
+  if (g.ref && g.ref < (g.data || '').slice(0, 7)) return 0;
   const usado = atendimentos.filter(x => (g.atendimentos || []).includes(x.id)).reduce((t, x) => t + valorDe(x), 0);
   return valorNum(g.valor) - usado;
 }
