@@ -236,7 +236,14 @@ function garantirMensalidade(c, ym) {
   let m = atendimentos.find(a => a.id === id);
   if (m) return m;
   const agora = agoraISO();
-  m = { id, pid: c.id, data: ym + '-01', hora: '', presenca: null, pagamento: 'areceber', valor: String(valorNum(c.valorMensal)), divida: true, mensalidade: true,
+  // versão 107: no mês de início, só as sessões a partir da primeira
+  let valorMes = valorNum(c.valorMensal);
+  if (!atendimentosDe(c.id).some(a => !a.divida && a.data < ym + '-01')) {
+    const p1 = atendimentosDe(c.id).find(a => !a.divida && a.data.slice(0, 7) === ym)?.data;
+    const n = p1 ? ocorrenciasDoMes(c, ym, p1).length : 0, v = valorNum(valorPadrao(c, ym + '-01'));
+    if (n && v && n * v < valorMes) valorMes = n * v;
+  }
+  m = { id, pid: c.id, data: ym + '-01', hora: '', presenca: null, pagamento: 'areceber', valor: String(valorMes), divida: true, mensalidade: true,
     obs: '', origem: 'mensalidade', criadoEm: agora, atualizadoEm: agora };
   atendimentos.push(m); usarCredito(m); agendarSalvar(chaveAt(m), m);
   return m;
@@ -4237,39 +4244,31 @@ function telaPagamentos(ym) {
     }
     const anteriores = ds.reduce((t, x) => t + x.pend.filter(a => a.data.slice(0, 7) < ym).reduce((s2, a) => s2 + valorDe(a), 0), 0);
     const ordenar = l => l.sort((a, b) => a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
+    // versão 107: os quatro grupos aprovados (mensal adiantado, mensal no fim do mês, por sessão/semanal, quinzenal)
+    const grupos = gruposDoMes(ym), todosG = Object.values(grupos).flat();
+    const prevT = todosG.reduce((t, x) => t + x.previsto, 0), faltaT = todosG.reduce((t, x) => t + x.falta, 0);
     corpo = [
-      el('div', { class: 'botoes-linha' },
-        el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => ir({ tela: 'recibos', ym }) }, icone('assinar'), el('span', { text: `Quem pede recibo (${cadastros.filter(pedeRecibo).length})` })),
-        el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => pdfFechamento(ym, f, nomeMes(ym)) }, icone('assinar'), el('span', { text: 'PDF do mês' }))),
       nav,
-      el('button', { type: 'button', class: 'cartao destaque total-clinica tocavel', onclick: () => ir({ tela: 'detalheFin', tipo: 'caixa', periodo: ym }) },
-        el('small', { text: `Recebido em ${mesNome.toLowerCase()} ›` }), el('strong', { text: 'R$ ' + reais(recebidoCaixa) }),
-        el('span', { text: f.previsto ? `Das sessões do mês: ${f.pct}% pago (R$ ${reais(f.recebido)} de R$ ${reais(f.previsto)})` : 'Nenhuma sessão cobrável neste mês' }),
-        f.previsto > 0 && el('span', { class: 'barra-fechamento' }, barra(f.pct, 'ok'), barra(100 - f.pct, 'alerta'))),
-      el('div', { class: 'resumo-fin' },
-        numero(`${mesNome}: falta receber`, f.naoRecebido, `${abertos.length} ${abertos.length === 1 ? 'paciente' : 'pacientes'} · só deste mês`, f.naoRecebido ? 'alerta' : 'ok', () => ir({ tela: 'devendo', filtro: 'mes' })),
-        numero('Meses anteriores: falta receber', anteriores, 'antes deste mês · toque para ver', anteriores ? 'alerta' : 'ok', () => ir({ tela: 'devendo', filtro: 'anteriores' }))),
-      ym === hojeYm && el('p', { class: 'suave pequeno centro', text: `Total devido hoje (todos os meses): R$ ${reais(totalDevido)}` }),
-      // versão 102: quem paga adiantado — previsto do mês, quanto já pagou e quanto falta
-      (() => { const ads = contaAdiantados(ym); if (!ads.length) return null;
-        const prev = ads.reduce((t, x) => t + x.previsto, 0), pg = ads.reduce((t, x) => t + Math.min(x.pago, x.previsto || x.pago), 0), fl = ads.reduce((t, x) => t + x.falta, 0);
-        return cartao(`💰 Pagam adiantado (${ads.length}) · previsto R$ ${reais(prev)} · pago R$ ${reais(pg)} · falta R$ ${reais(fl)}`, 'moeda',
-          ...ads.map(x => linhaPac(x.c, x.falta > 0.005 ? `falta R$ ${reais(x.falta)}` : '✅ pago',
-            `${x.sessoes} ${x.sessoes === 1 ? 'sessão' : 'sessões'} no mês · previsto R$ ${reais(x.previsto)} · pagou R$ ${reais(x.pago)}${x.credito > 0.005 ? ` · crédito R$ ${reais(x.credito)}` : ''}`,
-            x.falta > 0.005 ? 'texto-alerta' : '')),
-          el('p', { class: 'suave pequeno', text: 'Previsto = valor mensal fechado, ou as sessões da agenda deste mês × valor da sessão. Marque quem paga adiantado tocando na forma de pagamento, na lista de pacientes.' })); })(),
-      // versão 91: quem pagou e recibos a emitir antes da lista longa de quem falta pagar
-      cartao(`✅ Pagaram em ${mesNome.toLowerCase()} (${pagos.length})`, 'sessoes',
-        pagos.length ? ordenar(pagos).map(x => linhaPac(x.c, 'R$ ' + reais(x.v), `pago em ${x.datas}`))
-          : el('p', { class: 'suave', text: 'Nenhum pagamento registrado neste mês.' })),
+      el('div', { class: 'resumo-fin tres' },
+        numero('Previsto no mês', prevT, `${todosG.length} pacientes`),
+        numero('Recebido', recebidoCaixa, 'toque para ver', 'ok', () => ir({ tela: 'detalheFin', tipo: 'caixa', periodo: ym })),
+        numero('Falta receber', faltaT, anteriores ? `+ R$ ${reais(anteriores)} de meses anteriores` : 'só deste mês', faltaT ? 'alerta' : 'ok', () => ir({ tela: 'devendo', filtro: anteriores ? 'todos' : 'mes' }))),
+      el('div', { class: 'botoes-linha acoes-pag' },
+        el('button', { type: 'button', class: 'primario com-icone', onclick: conferirExtrato }, el('span', { text: '🏦 Conferir Pix do extrato' })),
+        el('button', { type: 'button', class: 'secundario com-icone', onclick: () => ir({ tela: 'devendo', filtro: 'todos' }) }, el('span', { text: `Quem deve · R$ ${reaisCurto(totalDevido)}` })),
+        el('button', { type: 'button', class: 'secundario com-icone', onclick: () => ir({ tela: 'recibos', ym }) }, el('span', { text: `Recibos (${cadastros.filter(pedeRecibo).length})` })),
+        el('button', { type: 'button', class: 'secundario com-icone', onclick: () => pdfFechamento(ym, f, nomeMes(ym)) }, el('span', { text: 'PDF do mês' }))),
+      cartaoPixExtrato(),
       notas.length > 0 && cartao(`🧾 Recibo ou nota a emitir (${notas.length})`, 'assinar',
         ...ordenar(notas).map(x => el('div', { class: 'pag-linha' }, avatar(x.c),
           el('span', { class: 'pag-info' }, el('strong', { text: x.c.nome }), el('span', { class: 'suave pequeno', text: `${x.c.nf ? 'Nota fiscal' : 'Recibo'} · R$ ${reais(x.v)} · pago em ${x.gs.map(g => ddmm(g.data)).join(', ')}` })),
           el('button', { type: 'button', class: 'secundario compacto', text: 'Já foi feito', onclick: async () => { for (const g of x.gs) await marcarComprovanteFeito(x.c, g); } }),
           el('button', { type: 'button', class: 'primario compacto', text: 'Emitir', onclick: () => x.gs.length === 1 ? emitirPendencia(x.c, x.gs[0]) : escolherRecibo(x.c, { soPagas: true, de: ym + '-01', ate: ym + '-31' }) })))),
-      cartao(`🔴 Falta receber de ${mesNome.toLowerCase()} (${abertos.length})`, 'moeda',
-        abertos.length ? ordenar(abertos).map(x => linhaPac(x.c, x.v ? 'R$ ' + reais(x.v) : 'valor a definir', `${x.n} ${x.n === 1 ? 'sessão' : 'sessões'}`, 'texto-alerta'))
-          : el('p', { class: 'suave', text: 'Ninguém deve sessões deste mês. 🎉' }))];
+      ...GRUPOS_PAG.map(([k, t]) => cartaoGrupo(k, t, grupos[k], ym)),
+      !todosG.length && el('p', { class: 'suave centro', text: 'Nenhum paciente com sessão ou mensalidade neste mês.' }),
+      (() => { const d = el('details', { class: 'cartao' }, el('summary', {}, el('strong', { text: `✅ Pagamentos recebidos em ${mesNome.toLowerCase()} (${pagos.length})` })),
+        pagos.length ? ordenar(pagos).map(x => linhaPac(x.c, 'R$ ' + reais(x.v), `pago em ${x.datas}`)) : el('p', { class: 'suave', text: 'Nenhum pagamento registrado neste mês.' })); return d; })(),
+      el('p', { class: 'suave pequeno', text: `Mensal adiantado: vence no dia ${DIA_LIMITE_ADIANTADO} (ou no dia combinado de cada um). Mensal no fim do mês: paga até o dia ${DIA_LIMITE_FIM} do mês seguinte. Por sessão, semanal e quinzenal: previsto = sessões do mês na agenda × valor; a lista mostra só quem fez sessão e não pagou. Mês de início: só as sessões a partir da primeira.` })];
   } else if (abaMes === 'devendo') {
     // agrupa tudo que está em aberto pelo mês da sessão (ou da dívida lançada)
     const porMes = new Map();
@@ -4325,7 +4324,7 @@ function telaPagamentos(ym) {
   mostrar(
     cabecalho(abaMes === 'devendo' ? 'Quem deve' : 'Pagamentos', { voltar: true }),
     el('div', { class: 'conteudo pilha' }, abaMes !== 'devendo' && segmentoAbasMes(ym),
-      abaMes !== 'devendo' && el('button', { type: 'button', class: 'cartao atalho-largo', onclick: () => ir({ tela: 'devendo', filtro: 'todos' }) },
+      abaMes === 'ano' && el('button', { type: 'button', class: 'cartao atalho-largo', onclick: () => ir({ tela: 'devendo', filtro: 'todos' }) },
         el('span', { class: 'ic-bolha' }, icone('moeda')),
         el('span', { class: 'info' }, el('strong', { text: `Quem deve: R$ ${reais(totalDevido)}` }), el('small', { class: 'suave', text: `${ds.length} ${ds.length === 1 ? 'paciente' : 'pacientes'} · todos os meses · toque para ver` })),
         icone('seguinte')),
@@ -4699,4 +4698,265 @@ function telaDetalheFin(tipo, periodo) {
         el('strong', { text: 'R$ ' + reais(g.v) }))))
         : el('div', { class: 'cartao vazio-cartao' }, el('p', { text: 'Nada neste período.' })),
       el('p', { class: 'suave pequeno', text: 'Toque no paciente para ver os pagamentos dele. A setinha ‹ volta para o Fechamento.' })));
+}
+
+// =====================================================================
+// Versão 107: Pagamentos organizado em quatro grupos (aprovado pelo Rodrigo em 15/11/2026)
+//   1. Mensal adiantado — paga o mês cheio até o dia combinado (padrão: dia 10). Pago / aguardando / atrasado.
+//   2. Mensal no fim do mês — paga depois das sessões, até o dia 5 do mês seguinte.
+//   3. Por sessão e semanal — previsto = sessões do mês na agenda × valor; lista só quem fez sessão e não pagou.
+//   4. Quinzenal — igual ao 3, separado.
+// Mês de início: só as sessões a partir da primeira. Cancelamento com 24h ou mais: não muda a mensalidade (repõe no mês).
+// E a conferência dos Pix pelo extrato do banco (OFX ou CSV), lido só dentro do aparelho.
+// =====================================================================
+const DIA_LIMITE_ADIANTADO = 10, DIA_LIMITE_FIM = 5;
+const fimDoMes = ym => somarDias(somarMeses(ym, 1) + '-01', -1);
+const GRUPOS_PAG = [
+  ['adiantado', '1 · Mensal adiantado'], ['fim', '2 · Mensal no fim do mês'], ['sessao', '3 · Por sessão e semanal'], ['quinzenal', '4 · Quinzenal']];
+function grupoPagamento(c) {
+  if (c.modoPagamento === 'mensal') return c.pagaAdiantado ? 'adiantado' : 'fim';
+  return c.modoPagamento === 'quinzenal' ? 'quinzenal' : 'sessao';
+}
+function ocorrenciasDoMes(c, ym, desde = ym + '-01') {
+  try { return ocorrenciasNoPeriodo(c, desde, fimDoMes(ym)).filter(o => !o.cancelada); } catch { return []; }
+}
+const cobravel = a => ['areceber', 'pago'].includes(a.pagamento);
+function primeiraSessao(c) {
+  return atendimentosDe(c.id).find(a => !a.divida && ['realizada', 'falta', 'tardia'].includes(a.presenca))?.data || '';
+}
+function contaPagamentoMes(c, ym) {
+  if (c.excluido || c.arquivado) return null;
+  if (c.encerradoEm && c.encerradoEm.slice(0, 7) < ym) return null;
+  if (c.semCobrancaDesde && c.semCobrancaDesde <= fimDoMes(ym)) return null;
+  const hoje = hojeISO(), hojeYm = hoje.slice(0, 7), ini = ym + '-01', fim = fimDoMes(ym);
+  const grupo = grupoPagamento(c);
+  const ats = atendimentosDe(c.id).filter(a => !a.divida && a.data >= ini && a.data <= fim);
+  const ocs = ocorrenciasDoMes(c, ym);
+  const pend = atendimentosDe(c.id).filter(a => a.pagamento === 'areceber' && a.data >= ini && a.data <= fim);
+  if (grupo === 'adiantado' || grupo === 'fim') {
+    if (!ocs.length && !ats.length && !pend.length) return null;
+    const p1 = primeiraSessao(c) || ocs[0]?.data || '';
+    const mesDeInicio = p1.slice(0, 7) === ym;
+    const valorSessao = valorNum(valorPadrao(c, ini)) || valorNum(perfil?.valorSessao);
+    const temMensal = valorNum(c.valorMensal) > 0;
+    let previsto;
+    if (mesDeInicio) previsto = ocorrenciasDoMes(c, ym, p1).length * valorSessao || ats.filter(cobravel).reduce((t, a) => t + valorDe(a), 0);
+    else if (temMensal) previsto = valorNum(c.valorMensal);
+    else previsto = ocs.length * valorSessao;
+    // fim do mês: vale o que pagar do dia 6 deste mês até o dia 5 do seguinte (o que pagar no dia 1-5 é do mês anterior)
+    const dLim = String(DIA_LIMITE_FIM).padStart(2, '0'), dIni = String(DIA_LIMITE_FIM + 1).padStart(2, '0');
+    const limite = grupo === 'fim' ? somarMeses(ym, 1) + '-' + dLim : fim;
+    const desde = grupo === 'fim' ? ym + '-' + dIni : ini;
+    let pago = pagamentos.filter(g => g.pid === c.id && g.data >= desde && g.data <= limite).reduce((t, g) => t + valorNum(g.valor), 0);
+    const mens = atendimentos.find(a => a.id === `mens-${c.id}-${ym}`);
+    if (mens?.pagamento === 'pago') pago = Math.max(pago, valorDe(mens));
+    const falta = Math.max(0, previsto - pago);
+    let status = 'pago', dias = 0;
+    if (falta > 0.005) {
+      const venc = grupo === 'adiantado' ? ym + '-' + String(Math.min(28, Number(c.diaPagamento) || DIA_LIMITE_ADIANTADO)).padStart(2, '0') : limite;
+      if (hoje <= venc) status = grupo === 'adiantado' ? 'aguardando' : 'areceber';
+      else { status = 'atrasado'; dias = Math.round((paraData(hoje) - paraData(venc)) / 864e5); }
+      if (ym > hojeYm) status = grupo === 'adiantado' ? 'aguardando' : 'areceber';
+    }
+    return { c, grupo, previsto, pago: Math.min(pago, previsto || pago), falta, status, dias, mesDeInicio, semMensal: !temMensal && !mesDeInicio, pend, sessoes: ocs.length };
+  }
+  // por sessão, semanal e quinzenal
+  const feitas = ats.filter(cobravel);
+  const futuras = ym < hojeYm ? [] : ocs.filter(o => o.data >= (ym === hojeYm ? hoje : ini) && !ats.some(a => a.data === o.data));
+  const previsto = feitas.reduce((t, a) => t + valorDe(a), 0) + futuras.reduce((t, o) => t + valorNum(valorPadrao(c, o.data)), 0);
+  const recebido = feitas.filter(a => a.pagamento === 'pago').reduce((t, a) => t + valorDe(a), 0);
+  const devendo = pend.reduce((t, a) => t + valorDe(a), 0);
+  if (!previsto && !devendo) return null;
+  return { c, grupo, previsto, pago: recebido, falta: devendo, status: devendo > 0.005 ? 'devendo' : 'emdia', pend, sessoes: feitas.length + futuras.length };
+}
+function gruposDoMes(ym) {
+  const g = Object.fromEntries(GRUPOS_PAG.map(([k]) => [k, []]));
+  for (const c of cadastros) { const x = contaPagamentoMes(c, ym); if (x) g[x.grupo].push(x); }
+  const ordem = { atrasado: 0, devendo: 0, aguardando: 1, areceber: 1, pago: 2, emdia: 2 };
+  for (const k in g) g[k].sort((a, b) => ordem[a.status] - ordem[b.status] || a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
+  return g;
+}
+// "Pagou" de um mensal: registra o valor e quita o que estiver em aberto do mês; o que sobrar vira crédito.
+async function pagouMensal(c, x, ym) {
+  const r = await dialogo({ titulo: `Pagamento · ${c.nome}`, texto: `${nomeMes(ym)}: falta R$ ${reais(x.falta)}. Se pagou outro valor, corrija.`,
+    campos: [{ rotulo: 'Valor pago (R$)', valor: reais(x.falta || x.previsto), inputmode: 'decimal' }, { rotulo: 'Data do pagamento', tipo: 'date', valor: hojeISO() }],
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Registrar', valor: true, estilo: 'primario' }] });
+  if (!r) return;
+  const [valor, data] = r;
+  if (!valorNum(valor)) return aviso('Falta o valor', 'Digite quanto pagou.');
+  await registrarComQuitacao(c, valorNum(valor), data || hojeISO(), fimDoMes(ym));
+  indicarStatus(`Pagamento de ${primeiroNome(c.nome)} registrado: R$ ${reais(valorNum(valor))}.`);
+  render(history.state);
+}
+// Quita do mais antigo para o mais novo até onde o valor alcança; a sobra fica de crédito.
+async function registrarComQuitacao(c, valor, data, ate = '9999-12-31') {
+  const pend = atendimentosDe(c.id).filter(a => a.pagamento === 'areceber' && a.data <= ate).sort((a, b) => a.data.localeCompare(b.data));
+  const ids = []; let resta = valor;
+  for (const a of pend) { const v = valorDe(a); if (v && v <= resta + 0.005) { ids.push(a.id); resta -= v; } }
+  return registrarPagamento(c, { valor, data, ids });
+}
+async function avisoMensalidade(c, x, ym, atrasado) {
+  const n = numeroWhats(c.telefone);
+  const caixa = el('textarea', { rows: '6', 'aria-label': 'Mensagem' });
+  caixa.value = `Olá, ${primeiroNome(c.nome)}! Tudo bem? ${atrasado ? 'Ainda não identifiquei o pagamento' : 'Passando para lembrar do pagamento'} de ${nomeMes(ym).split(' ')[0].toLowerCase()}: R$ ${reais(x.falta)}.\nPara pagar por Pix, a chave é: ${perfil.pixChave || '[chave Pix]'}\nSe já pagou, por favor me desconsidere. Obrigado!`;
+  const r = await janela(`${atrasado ? 'Cobrar' : 'Lembrar'} ${c.nome}`, [el('p', { class: 'suave pequeno', text: 'Dá para mudar o texto antes de enviar.' }), caixa],
+    [{ rotulo: 'Cancelar', valor: null }, { rotulo: '📲 Abrir no WhatsApp', valor: true, estilo: 'primario' }]);
+  if (!r) return;
+  abrirExterno(`https://wa.me/${n || ''}?text=${encodeURIComponent(caixa.value)}`);
+  marcarCobrado(c); await salvarAgora(); render(history.state);
+}
+const SELO_STATUS = { pago: ['✅ Pago', 'ok'], aguardando: ['⏳ Aguardando', 'aguarda'], areceber: ['⏳ A receber', 'aguarda'], atrasado: ['🔴 Atrasado', 'atraso'], devendo: ['Devendo', 'atraso'], emdia: ['✅ Em dia', 'ok'] };
+function linhaGrupo(x, ym) {
+  const c = x.c, [rot, cls] = SELO_STATUS[x.status];
+  const mensal = x.grupo === 'adiantado' || x.grupo === 'fim';
+  const sub = mensal
+    ? (x.mesDeInicio ? `Mês de início: ${x.sessoes} sessões a partir da primeira · R$ ${reais(x.previsto)}` : x.semMensal ? `⚠️ Mensalidade não definida · ${x.sessoes} sessões × valor = R$ ${reais(x.previsto)}` : `R$ ${reais(x.previsto)} por mês`)
+      + (x.pago > 0.005 && x.falta > 0.005 ? ` · pagou R$ ${reais(x.pago)}` : '')
+      + (x.status === 'aguardando' ? ` · vence dia ${Number(c.diaPagamento) || DIA_LIMITE_ADIANTADO}` : x.status === 'areceber' ? ` · paga até dia ${DIA_LIMITE_FIM} do mês seguinte` : '')
+    : `${x.pend.length} ${x.pend.length === 1 ? 'sessão' : 'sessões'} sem pagar: ${x.pend.map(a => ddmm(a.data)).join(', ')}`;
+  const selo = el('span', { class: 'selo-status ' + cls, text: x.status === 'atrasado' ? `${rot} ${x.dias} ${x.dias === 1 ? 'dia' : 'dias'}` : x.status === 'devendo' ? `Devendo R$ ${reais(x.falta)}` : rot });
+  const acoes = [];
+  if (mensal && x.semMensal) acoes.push(el('button', { type: 'button', class: 'chip acao', text: 'Definir mensalidade', onclick: () => editarFormaPagamento(c) }));
+  if (mensal && x.falta > 0.005) {
+    acoes.push(el('button', { type: 'button', class: 'chip acao', text: x.status === 'atrasado' ? '💬 Cobrar' : '💬 Lembrar', onclick: () => avisoMensalidade(c, x, ym, x.status === 'atrasado') }));
+    acoes.push(el('button', { type: 'button', class: 'chip acao marcado', text: 'Pagou', onclick: () => pagouMensal(c, x, ym) }));
+  }
+  if (!mensal && x.falta > 0.005) {
+    acoes.push(el('button', { type: 'button', class: 'chip acao', text: '💬 Cobrar', onclick: () => cobrarPaciente(c, x.pend) }));
+    acoes.push(el('button', { type: 'button', class: 'chip acao marcado', text: 'Pagou', onclick: () => pagarDividaMes(c, x.pend, ym) }));
+  }
+  return el('div', { class: 'linha-grupo' },
+    el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => ir({ tela: 'adm', id: c.id, aba: 'pagamentos' }) },
+      avatar(c), el('span', { class: 'pag-info' }, el('strong', { text: c.nome }), el('span', { class: 'suave pequeno', text: sub }))),
+    el('div', { class: 'linha-grupo-acoes' }, selo, ...acoes));
+}
+function cartaoGrupo(chave, titulo, lista, ym) {
+  if (!lista.length) return null;
+  const prev = lista.reduce((t, x) => t + x.previsto, 0), rec = lista.reduce((t, x) => t + x.pago, 0), falta = lista.reduce((t, x) => t + x.falta, 0);
+  const porSessao = chave === 'sessao' || chave === 'quinzenal';
+  const mostrar = porSessao ? lista.filter(x => x.falta > 0.005) : lista;
+  const pct = prev ? Math.round(rec / prev * 100) : 0;
+  const barra = el('span', { class: 'barra-fechamento' }); const b1 = el('span', { class: 'barra-preenchida ok' }), b2 = el('span', { class: 'barra-preenchida alerta' });
+  b1.style.width = Math.min(100, pct) + '%'; b2.style.width = Math.max(0, 100 - pct) + '%'; barra.append(b1, b2);
+  return el('section', { class: 'cartao grupo-pag' },
+    el('div', { class: 'grupo-pag-topo' }, el('h3', { class: 'cartao-titulo', text: `${titulo} (${lista.length})` }),
+      el('span', { class: 'grupo-pag-nums' }, `previsto `, el('b', { text: 'R$ ' + reais(prev) }), ` · recebido `, el('b', { text: 'R$ ' + reais(rec) }), ` · ${porSessao ? 'devendo' : 'falta'} `, el('b', { class: falta > 0.005 ? 'texto-alerta' : '', text: 'R$ ' + reais(falta) }))),
+    barra,
+    mostrar.length ? mostrar.map(x => linhaGrupo(x, ym)) : el('p', { class: 'suave pequeno', text: 'Ninguém devendo neste grupo. 🎉' }),
+    porSessao && lista.length > mostrar.length && el('p', { class: 'suave pequeno', text: `${lista.length - mostrar.length} ${lista.length - mostrar.length === 1 ? 'paciente em dia' : 'pacientes em dia'} (sessões pagas ou ainda por vir).` }));
+}
+
+// ---------- Conferência dos Pix pelo extrato do banco ----------
+let pixSugestoes = [];   // só na memória: o arquivo do extrato nunca é guardado
+const normNome = t => (t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z ]/g, ' ').replace(/\s+/g, ' ').trim();
+const PALAVRAS_BANCO = new Set(['PIX', 'RECEBIDO', 'RECEBIDA', 'TRANSF', 'TRANSFERENCIA', 'TED', 'DOC', 'CREDITO', 'DE', 'DA', 'DO', 'DOS', 'DAS', 'E', 'REM', 'CPF', 'CNPJ', 'QR', 'CODE', 'ENVIADO', 'CONTA', 'BANCO', 'LTDA', 'SA', 'ME', 'IP', 'PAGAMENTO']);
+function hashPix(t) { let h = 0; const s = `${t.data}|${t.valor}|${t.descricao}`; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return 'p' + (h >>> 0).toString(36); }
+function lerExtrato(texto) {
+  const lista = [];
+  if (/<STMTTRN>/i.test(texto)) {
+    for (const bloco of texto.split(/<STMTTRN>/i).slice(1)) {
+      const campo = n => (bloco.match(new RegExp(`<${n}>([^<\\r\\n]*)`, 'i')) || [])[1]?.trim() || '';
+      const valor = Number(campo('TRNAMT').replace(',', '.'));
+      const d = campo('DTPOSTED');
+      if (valor > 0 && /^\d{8}/.test(d)) lista.push({ data: `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`, valor, descricao: [campo('NAME'), campo('MEMO')].filter(Boolean).join(' · ') });
+    }
+    return lista;
+  }
+  const linhas = texto.split(/\r?\n/).filter(l => l.trim());
+  const sep = (linhas[0] || '').split(';').length > (linhas[0] || '').split(',').length ? ';' : ',';
+  const partir = l => { const r = []; let cur = '', q = false; for (const ch of l) { if (ch === '"') q = !q; else if (ch === sep && !q) { r.push(cur.trim()); cur = ''; } else cur += ch; } r.push(cur.trim()); return r; };
+  const cab = partir(linhas[0]).map(normNome);
+  const iValor = cab.findIndex(h => /VALOR|QUANTIA|AMOUNT|CREDITO/.test(h)), iDesc = cab.findIndex(h => /DESCRI|HISTOR|LANCAMENTO|DETALH|NOME|IDENTIFICA/.test(h)), iData = cab.findIndex(h => /DATA|DATE/.test(h));
+  const num = t => { t = (t || '').replace(/[R$\s]/g, ''); if (!t) return NaN; if (/,\d{1,2}$/.test(t)) t = t.replace(/\./g, '').replace(',', '.'); else t = t.replace(/,/g, ''); return Number(t); };
+  const dataDe = t => { const m = (t || '').match(/(\d{2})\/(\d{2})\/(\d{4})/) || (t || '').match(/(\d{4})-(\d{2})-(\d{2})/); if (!m) return ''; return m[1].length === 4 ? `${m[1]}-${m[2]}-${m[3]}` : `${m[3]}-${m[2]}-${m[1]}`; };
+  for (const l of linhas.slice(iValor >= 0 ? 1 : 0)) {
+    const cols = partir(l);
+    const data = iData >= 0 ? dataDe(cols[iData]) : dataDe(cols.find(x => dataDe(x)) || '');
+    const valor = iValor >= 0 ? num(cols[iValor]) : num([...cols].reverse().find(x => /\d+[.,]\d{2}$/.test(x)) || '');
+    const descricao = iDesc >= 0 ? cols[iDesc] : cols.filter(x => /[A-Za-z]{3}/.test(x)).sort((a, b) => b.length - a.length)[0] || '';
+    if (data && valor > 0) lista.push({ data, valor, descricao });
+  }
+  return lista;
+}
+function acharPaciente(descricao, valor) {
+  const tokens = new Set(normNome(descricao).split(' ').filter(t => t.length > 1 && !PALAVRAS_BANCO.has(t)));
+  let melhor = null;
+  for (const c of cadastros.filter(c => !c.excluido)) {
+    for (const [nome, ehPagador] of [[c.nome, false], [c.pagador, true]]) {
+      const partes = normNome(nome).split(' ').filter(t => t.length > 1 && !PALAVRAS_BANCO.has(t));
+      if (!partes.length || !tokens.has(partes[0])) continue;
+      const outros = partes.slice(1).filter(t => tokens.has(t)).length;
+      let pontos = 2 + outros;
+      if (partes.length === 1) pontos += 1;
+      if (pontos < 3) continue;
+      const x = contaPagamentoMes(c, hojeISO().slice(0, 7));
+      if (x && Math.abs((x.falta || x.previsto) - valor) < 0.01) pontos += 2;
+      if (!melhor || pontos > melhor.pontos) melhor = { c, pontos, ehPagador };
+    }
+  }
+  return melhor;
+}
+async function conferirExtrato() {
+  const entrada = el('input', { type: 'file', accept: '.ofx,.qfx,.csv,.txt,text/csv,application/x-ofx' });
+  entrada.addEventListener('change', async () => {
+    const f = entrada.files?.[0]; if (!f) return;
+    const buf = await f.arrayBuffer();
+    let texto = new TextDecoder('utf-8').decode(buf);
+    if (texto.includes('�')) texto = new TextDecoder('windows-1252').decode(buf);
+    const creditos = lerExtrato(texto);
+    if (!creditos.length) return aviso('Nada encontrado', 'Não achei entradas de dinheiro nesse arquivo. Baixe o extrato no aplicativo do banco em formato OFX (ou CSV) e tente de novo.');
+    const vistos = new Set((await Cofre.ler('x:pixvistos'))?.lista || []);
+    pixSugestoes = [];
+    for (const t of creditos) {
+      const h = hashPix(t);
+      if (vistos.has(h)) continue;
+      const m = acharPaciente(t.descricao, t.valor);
+      // já registrado? mesmo paciente, mesmo valor, mesma data
+      if (m && pagamentos.some(g => g.pid === m.c.id && Math.abs(valorNum(g.valor) - t.valor) < 0.01 && g.data === t.data)) continue;
+      pixSugestoes.push({ ...t, h, c: m?.c || null, ehPagador: m?.ehPagador || false });
+    }
+    const achados = pixSugestoes.filter(s => s.c).length;
+    await aviso('Extrato lido', `${creditos.length} ${creditos.length === 1 ? 'entrada' : 'entradas'} no arquivo. ${achados} ${achados === 1 ? 'parece' : 'parecem'} de pacientes; ${pixSugestoes.length - achados} sem dono reconhecido. Confira e confirme cada uma na tela Pagamentos. O arquivo não foi guardado.`);
+    render(history.state);
+  });
+  entrada.click();
+}
+async function marcarPixVisto(s) {
+  const atual = (await Cofre.ler('x:pixvistos'))?.lista || [];
+  await Cofre.salvar('x:pixvistos', { lista: [...atual.slice(-2000), s.h], atualizadoEm: agoraISO() });
+  pixSugestoes = pixSugestoes.filter(x => x !== s);
+}
+async function confirmarPix(s) {
+  if (!s.c) return escolherDonoPix(s);
+  await registrarComQuitacao(s.c, s.valor, s.data);
+  await marcarPixVisto(s); await salvarAgora();
+  indicarStatus(`Pix de R$ ${reais(s.valor)} registrado para ${primeiroNome(s.c.nome)}`);
+  render(history.state);
+}
+async function escolherDonoPix(s) {
+  const sel = el('select', { 'aria-label': 'Paciente' }, el('option', { value: '', text: 'Escolha o paciente' }),
+    [...cadastros].filter(c => !c.excluido && !c.arquivado).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')).map(c => el('option', { value: c.id, text: c.nome })));
+  const lembrar = el('input', { type: 'checkbox' });
+  const ok = await janela(`Pix de R$ ${reais(s.valor)} · ${dataCurta(s.data).slice(0, 5)}`, [el('p', { class: 'suave pequeno', text: s.descricao }), sel,
+    el('label', { class: 'marcar' }, lembrar, el('span', { text: 'Guardar este nome como "quem paga" por este paciente' }))],
+    [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Registrar', valor: true, estilo: 'primario' }]);
+  if (!ok || !sel.value) return;
+  const c = cadastroDe(sel.value);
+  if (lembrar.checked) { const nome = normNome(s.descricao).split(' ').filter(t => t.length > 1 && !PALAVRAS_BANCO.has(t)).slice(0, 4).join(' '); if (nome) { c.pagador = nome.toLowerCase().replace(/\b\w/g, l => l.toUpperCase()); c.atualizadoEm = agoraISO(); salvarCadastro(c); } }
+  s.c = c; return confirmarPix(s);
+}
+async function naoEhPaciente(s) { await marcarPixVisto(s); render(history.state); }
+function cartaoPixExtrato() {
+  if (!pixSugestoes.length) return null;
+  return el('section', { class: 'cartao pix-extrato' },
+    el('h3', { class: 'cartao-titulo', text: `🏦 Pix do extrato para confirmar (${pixSugestoes.length})` }),
+    el('p', { class: 'suave pequeno', text: 'Lido só neste aparelho; o arquivo não foi guardado. Confirme cada um com um toque.' }),
+    pixSugestoes.map(s => el('div', { class: 'linha-grupo' },
+      el('span', { class: 'pag-info' }, el('strong', { text: `${s.descricao || 'Sem descrição'} · R$ ${reais(s.valor)} · ${dataCurta(s.data).slice(0, 5)}` }),
+        el('span', { class: 'suave pequeno', text: s.c ? `Parece ser de ${s.c.nome}${s.ehPagador ? ` (quem paga: ${s.c.pagador})` : ''}` : 'Não reconheci. Escolha o paciente ou marque "Não é de paciente".' })),
+      el('div', { class: 'linha-grupo-acoes' },
+        s.c ? el('button', { type: 'button', class: 'chip acao', text: 'Outro paciente', onclick: () => escolherDonoPix(s) })
+          : el('button', { type: 'button', class: 'chip acao', text: 'Não é de paciente', onclick: () => naoEhPaciente(s) }),
+        s.c && el('button', { type: 'button', class: 'chip acao', text: 'Não é de paciente', onclick: () => naoEhPaciente(s) }),
+        el('button', { type: 'button', class: 'chip acao marcado', text: s.c ? '✓ Confirmar' : 'Escolher', onclick: () => confirmarPix(s) })))));
 }

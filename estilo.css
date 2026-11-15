@@ -599,3 +599,20 @@ html.app-oculto #app { filter: blur(22px); }
 
 .cartao.credito { display: flex; flex-direction: column; gap: .35rem; padding: .9rem 1rem; border-color: rgba(93, 187, 142, .6); }
 .cartao.credito .primario { align-self: flex-start; }
+
+/* versão 107: Pagamentos em quatro grupos */
+.resumo-fin.tres { grid-template-columns: repeat(3, 1fr); }
+.acoes-pag { flex-wrap: wrap; }
+.acoes-pag button { flex: 1 1 auto; justify-content: center; }
+.grupo-pag { display: flex; flex-direction: column; gap: .4rem; }
+.grupo-pag-topo { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .8rem; }
+.grupo-pag-topo .cartao-titulo { flex: 1 1 auto; margin: 0; }
+.grupo-pag-nums { font-size: .88rem; color: var(--suave); }
+.grupo-pag-nums b { color: var(--tinta); }
+.linha-grupo { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem; padding: .45rem 0; border-top: 1px solid rgba(232, 188, 82, .18); }
+.linha-grupo > .pag-linha, .linha-grupo > .pag-info { flex: 1 1 280px; min-width: 0; }
+.linha-grupo-acoes { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; margin-left: auto; }
+.selo-status { font-size: .85rem; padding: .2rem .65rem; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.selo-status.ok { color: #6FCF97; } .selo-status.aguarda { color: #F2C14E; } .selo-status.atraso { color: #F0938A; }
+.pix-extrato { border-style: dashed; }
+@media (max-width: 620px) { .resumo-fin.tres { grid-template-columns: 1fr; } }
