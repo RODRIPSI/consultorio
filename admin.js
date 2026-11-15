@@ -4344,7 +4344,13 @@ function telaPagamentos(ym) {
         el('button', { type: 'button', class: 'secundario com-icone', onclick: () => ir({ tela: 'recibos', ym }) }, el('span', { text: `Recibos (${cadastros.filter(pedeRecibo).length})` })),
         el('button', { type: 'button', class: 'secundario com-icone', onclick: () => pdfFechamento(ym, f, nomeMes(ym)) }, el('span', { text: 'PDF do mês' }))),
       cartaoPixExtrato(),
-      ...GRUPOS_PAG.map(([k, t]) => cartaoGrupo(k, t, grupos[k], ym)),
+      // versão 126: os grupos viram abas; só a aba escolhida aparece
+      (() => { const temG = GRUPOS_PAG.filter(([k]) => grupos[k].length);
+        if (!temG.length) return null;
+        if (!temG.some(([k]) => k === abaGrupoPag)) abaGrupoPag = temG[0][0];
+        const nomes = { adiantado: 'Mensal adiantado', fim: 'Mensal no fim do mês', sessao: 'Por sessão e semanal', quinzenal: 'Quinzenal' };
+        return segmentoEscolha(Object.fromEntries(temG.map(([k]) => [k, `${nomes[k]} (${grupos[k].length})`])), abaGrupoPag, k => { abaGrupoPag = k; render(history.state); }, 'abas-grupos'); })(),
+      ...GRUPOS_PAG.filter(([k]) => k === abaGrupoPag).map(([k, t]) => cartaoGrupo(k, t, grupos[k], ym)),
       !todosG.length && el('p', { class: 'suave centro', text: 'Nenhum paciente com sessão ou mensalidade neste mês.' }),
       el('p', { class: 'suave pequeno', text: `Falta receber = sessões já feitas e não pagas (faltas e desmarcações em cima da hora entram) + mensalidades do mês ainda não pagas. Mensal adiantado vence no dia ${DIA_LIMITE_ADIANTADO} (ou no dia combinado); mensal no fim do mês, até o dia ${DIA_LIMITE_FIM} do mês seguinte. Dívidas de meses anteriores ficam na tela própria.` })];
   } else if (abaMes === 'devendo') {
@@ -4788,6 +4794,7 @@ function telaDetalheFin(tipo, periodo) {
 // E a conferência dos Pix pelo extrato do banco (OFX ou CSV), lido só dentro do aparelho.
 // =====================================================================
 const DIA_LIMITE_ADIANTADO = 10, DIA_LIMITE_FIM = 5;
+let abaGrupoPag = 'adiantado';
 const fimDoMes = ym => somarDias(somarMeses(ym, 1) + '-01', -1);
 const GRUPOS_PAG = [
   ['adiantado', '1 · Mensal adiantado'], ['fim', '2 · Mensal no fim do mês'], ['sessao', '3 · Por sessão e semanal'], ['quinzenal', '4 · Quinzenal']];
@@ -5004,7 +5011,7 @@ function cartaoGrupo(chave, titulo, lista, ym) {
     ...(() => { const abertos = mostrar.filter(x => x.falta > 0.005), resolvidos = mostrar.filter(x => x.falta <= 0.005);
       const d = !resolvidos.length ? null : el('details', { class: 'resolvidos' }, el('summary', {}, el('span', { text: `✅ Pagos ou em dia (${resolvidos.length})` })), resolvidos.map(x => linhaGrupo(x, ym)));
       if (d && !abertos.length) d.open = true;   // versão 123: sem ninguém em aberto (ex.: outubro), a lista já vem aberta
-      return [...(abertos.length ? abertos.map(x => linhaGrupo(x, ym)) : []), d]; })(),
+      return [d, ...(abertos.length ? abertos.map(x => linhaGrupo(x, ym)) : [])]; })(),   // versão 126: pagos em cima
 );
 }
 

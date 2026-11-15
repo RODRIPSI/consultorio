@@ -632,3 +632,5 @@ html.app-oculto #app { filter: blur(22px); }
 .linha-importar .pag-info { flex: 1 1 220px; }
 .linha-importar select { flex: 1 1 220px; max-width: 100%; }
 .lista-importar { max-height: 60vh; overflow: auto; }
+.abas-grupos { flex-wrap: wrap; }
+.abas-grupos > * { flex: 1 1 auto; white-space: nowrap; }
