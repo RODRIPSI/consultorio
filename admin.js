@@ -1347,8 +1347,10 @@ function abaCadastro(c) {
     cartao('Forma de pagamento', 'calendario',
       (() => { const sel = el('select', { 'aria-label': 'Modo de pagamento' }, el('option', { value: '', text: 'Não definido' }), Object.entries(MODOS_PAG).map(([k, v]) => el('option', { value: k, text: v })));
         sel.value = c.modoPagamento || ''; sel.addEventListener('change', () => { c.modoPagamento = sel.value; salvar(); }); return sel; })(),
+      el('label', { class: 'marcar' }, el('input', { type: 'checkbox', checked: !!c.pagaAdiantado, onchange: e => { c.pagaAdiantado = e.target.checked; salvar(); } }),
+        el('span', { text: 'Paga adiantado (antes das sessões do período)' })),
       el('div', { class: 'grade duas' },
-        campo('Dia do pagamento', 'diaPagamento', { inputmode: 'numeric', placeholder: 'Ex.: 10' }),
+        campo('Dia do pagamento (opcional)', 'diaPagamento', { inputmode: 'numeric', placeholder: 'Ex.: 10' }),
         campo('Valor mensal (R$)', 'valorMensal', { inputmode: 'decimal' }))),
     cartao('Recibo e quem paga', 'moeda',
       // Versão 57: nem todo paciente pede recibo; os marcados aqui entram na lista "Recibos" dos pagamentos.
@@ -1683,6 +1685,42 @@ const FONTES_DRIVE = {
   pagamentos: { nome: 'Pagamentos mensais', dica: 'Planilha com o nome e o dia de pagamento de cada paciente', tipo: 'tabela' }
 };
 const MODOS_PAG = { sessao: 'Por sessão', semanal: 'Semanal', quinzenal: 'Quinzenal', mensal: 'Mensal' };
+// Versão 102: forma de pagamento editável direto da lista, com "paga adiantado".
+function textoFormaPagamento(c) {
+  if (!c.modoPagamento && !c.pagaAdiantado) return 'Forma de pagamento não definida ✏️';
+  const modo = { sessao: 'por sessão', semanal: 'por semana', quinzenal: 'a cada quinze dias', mensal: 'por mês' }[c.modoPagamento] || c.modoPagamento || '';
+  return `Paga ${modo}${c.pagaAdiantado ? ' · adiantado 💰' : ''}${c.diaPagamento ? ` · dia ${c.diaPagamento}` : ''} ✏️`;
+}
+async function editarFormaPagamento(c, depois) {
+  const sel = el('select', { 'aria-label': 'Como paga' }, el('option', { value: '', text: 'Não definido' }), Object.entries(MODOS_PAG).map(([k, v]) => el('option', { value: k, text: v })));
+  sel.value = c.modoPagamento || '';
+  const quando = el('select', { 'aria-label': 'Quando paga' }, el('option', { value: 'depois', text: 'Depois das sessões' }), el('option', { value: 'adiantado', text: 'Adiantado (antes das sessões)' }));
+  quando.value = c.pagaAdiantado ? 'adiantado' : 'depois';
+  const dia = el('input', { type: 'text', inputmode: 'numeric', value: c.diaPagamento || '', placeholder: 'Opcional', 'aria-label': 'Dia do pagamento' });
+  const mensal = el('input', { type: 'text', inputmode: 'decimal', value: c.valorMensal || '', placeholder: 'Opcional', 'aria-label': 'Valor mensal' });
+  const ok = await janela(`Forma de pagamento · ${c.nome}`, [
+    el('label', { class: 'campo' }, el('span', { text: 'Como paga' }), sel),
+    el('label', { class: 'campo' }, el('span', { text: 'Quando paga' }), quando),
+    el('div', { class: 'grade duas' }, el('label', { class: 'campo' }, el('span', { text: 'Dia (opcional)' }), dia), el('label', { class: 'campo' }, el('span', { text: 'Valor mensal fechado (R$)' }), mensal)),
+    el('p', { class: 'suave pequeno', text: 'Quem paga adiantado entra no quadro "Pagam adiantado" em Pagamentos → Mês, com o previsto do mês e quanto já pagou. O que pagar a mais fica de crédito para as próximas sessões.' })],
+    [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }]);
+  if (!ok) return;
+  c.modoPagamento = sel.value; c.pagaAdiantado = quando.value === 'adiantado';
+  c.diaPagamento = dia.value.replace(/\D/g, '').slice(0, 2); c.valorMensal = mensal.value.trim();
+  c.atualizadoEm = agoraISO(); salvarCadastro(c); await salvarAgora();
+  indicarStatus('Forma de pagamento salva');
+  if (depois) depois(); else render(history.state);
+}
+// Conta do mês de quem paga adiantado: previsto (valor mensal ou sessões da agenda) × pago no mês + crédito.
+function contaAdiantados(ym) {
+  const ini = ym + '-01', fim = somarDias(somarMeses(ym, 1) + '-01', -1);
+  return cadastros.filter(c => !c.arquivado && c.pagaAdiantado && !c.encerradoEm).map(c => {
+    let ocs = []; try { ocs = ocorrenciasNoPeriodo(c, ini, fim).filter(o => !o.cancelada); } catch { }
+    const previsto = valorNum(c.valorMensal) || ocs.reduce((t, o) => t + valorNum(valorPadrao(c, o.data)), 0);
+    const pago = pagamentos.filter(g => g.pid === c.id && (g.data || '').slice(0, 7) === ym).reduce((t, g) => t + valorNum(g.valor), 0);
+    return { c, previsto, pago, falta: Math.max(0, previsto - pago), sessoes: ocs.length, credito: creditoDe(c.id) };
+  }).sort((a, b) => (b.falta > 0) - (a.falta > 0) || a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
+}
 let tokenGoogle = null;   // só na memória, some ao bloquear
 let importacaoDrive = null;
 const driveCfg = () => (perfil.drive ||= { clientId: '', fontes: {} });
@@ -4158,6 +4196,14 @@ function telaPagamentos(ym) {
         numero(`${mesNome}: falta receber`, f.naoRecebido, `${abertos.length} ${abertos.length === 1 ? 'paciente' : 'pacientes'} · só deste mês`, f.naoRecebido ? 'alerta' : 'ok', () => ir({ tela: 'devendo', filtro: 'mes' })),
         numero('Meses anteriores: falta receber', anteriores, 'antes deste mês · toque para ver', anteriores ? 'alerta' : 'ok', () => ir({ tela: 'devendo', filtro: 'anteriores' }))),
       ym === hojeYm && el('p', { class: 'suave pequeno centro', text: `Total devido hoje (todos os meses): R$ ${reais(totalDevido)}` }),
+      // versão 102: quem paga adiantado — previsto do mês, quanto já pagou e quanto falta
+      (() => { const ads = contaAdiantados(ym); if (!ads.length) return null;
+        const prev = ads.reduce((t, x) => t + x.previsto, 0), pg = ads.reduce((t, x) => t + Math.min(x.pago, x.previsto || x.pago), 0), fl = ads.reduce((t, x) => t + x.falta, 0);
+        return cartao(`💰 Pagam adiantado (${ads.length}) · previsto R$ ${reais(prev)} · pago R$ ${reais(pg)} · falta R$ ${reais(fl)}`, 'moeda',
+          ...ads.map(x => linhaPac(x.c, x.falta > 0.005 ? `falta R$ ${reais(x.falta)}` : '✅ pago',
+            `${x.sessoes} ${x.sessoes === 1 ? 'sessão' : 'sessões'} no mês · previsto R$ ${reais(x.previsto)} · pagou R$ ${reais(x.pago)}${x.credito > 0.005 ? ` · crédito R$ ${reais(x.credito)}` : ''}`,
+            x.falta > 0.005 ? 'texto-alerta' : '')),
+          el('p', { class: 'suave pequeno', text: 'Previsto = valor mensal fechado, ou as sessões da agenda deste mês × valor da sessão. Marque quem paga adiantado tocando na forma de pagamento, na lista de pacientes.' })); })(),
       // versão 91: quem pagou e recibos a emitir antes da lista longa de quem falta pagar
       cartao(`✅ Pagaram em ${mesNome.toLowerCase()} (${pagos.length})`, 'sessoes',
         pagos.length ? ordenar(pagos).map(x => linhaPac(x.c, 'R$ ' + reais(x.v), `pago em ${x.datas}`))
