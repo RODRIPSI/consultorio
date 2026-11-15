@@ -837,11 +837,12 @@ function abaPagamentosAdm(c) {
     const x = typeof contaPagamentoMes === 'function' ? contaPagamentoMes(c, m) : null;
     const pagoRef = gs.filter(g => refDe(g) === m).reduce((t, g) => t + valorNum(g.valor), 0);
     const previsto = x ? x.previsto : 0, pago = x ? Math.max(x.pago, pagoRef) : pagoRef, falta = Math.max(0, previsto - pago);
+    const base = temMensalidadeFixa(c) ? `mensalidade fixa R$ ${reais(previsto)}` : `sessões feitas R$ ${reais(previsto)}`;
     return el('div', { class: 'linha-grupo' }, el('span', { class: 'pag-info' }, el('strong', { text: nomeMes(m) }),
-      el('span', { class: 'suave pequeno', text: `previsto R$ ${reais(previsto)} · pago R$ ${reais(pago)}${previsto ? (falta > 0.005 ? ` · falta R$ ${reais(falta)}` : ' · ✅ quitado') : ''}` })));
+      el('span', { class: 'suave pequeno', text: `${base} · pago R$ ${reais(pago)}${previsto ? (falta > 0.005 ? ` · falta R$ ${reais(falta)}` : ' · ✅ quitado') : ''}` })));
   };
   return el('div', { class: 'pilha' },
-    cartao('Conta por mês (igual à tela Pagamentos)', 'moeda', ...mesesConta.map(contaMes)),
+    cartao('Conta do mês', 'moeda', ...mesesConta.map(contaMes)),
     el('div', { class: 'resumo-fin' },
       el('div', { class: 'cartao numero' }, el('small', { text: 'Sessões feitas e não pagas' }), el('strong', { text: 'R$ ' + reais(totalPend) }), el('span', { class: 'suave pequeno', text: `${pend.length} ${pend.length === 1 ? 'sessão' : 'sessões'}` })),
       el('div', { class: 'cartao numero' }, el('small', { text: 'Dinheiro que entrou este mês' }), el('strong', { text: 'R$ ' + reais(r.pago) }), el('span', { class: 'suave pequeno', text: `${r.gs.length} ${r.gs.length === 1 ? 'pagamento' : 'pagamentos'}` }))),
@@ -4836,7 +4837,7 @@ function contaPagamentoMes(c, ym) {
     const mesDeInicio = !!p1 && p1.slice(0, 7) === ym;
     // versão 109: valor atual da sessão (o valor "desde" uma data no meio do mês não pode cair no valor padrão do dia 1º)
     const valorSessao = valorNum(valorPadrao(c)) || valorNum(perfil?.valorSessao);
-    const temMensal = valorNum(c.valorMensal) > 0;
+    const temMensal = temMensalidadeFixa(c);   // versão 128: só quando o Rodrigo escolheu "Mensalidade fixa"; um valor mensal anotado não vira cobrança
     let previsto;
     if (mesDeInicio) previsto = ocorrenciasDoMes(c, ym, p1).length * valorSessao || ats.filter(cobravel).reduce((t, a) => t + valorDe(a), 0);
     else if (temMensal) previsto = valorNum(c.valorMensal);
@@ -4962,7 +4963,7 @@ async function marcarPagosMes(lista, ym) {
   const guardar = el('input', { type: 'checkbox', checked: false });
   const linhas = abertos.map(x => {
     const marca = el('input', { type: 'checkbox', checked: true, 'aria-label': `Pagou: ${x.c.nome}` });
-    const valor = el('input', { type: 'text', inputmode: 'decimal', value: reais(valorNum(x.c.valorMensal) || x.falta), 'aria-label': `Valor de ${x.c.nome}` });
+    const valor = el('input', { type: 'text', inputmode: 'decimal', value: reais(temMensalidadeFixa(x.c) ? valorNum(x.c.valorMensal) : x.falta), 'aria-label': `Valor de ${x.c.nome}` });
     valor.style.maxWidth = '8.5rem';
     return { x, marca, valor, el: el('label', { class: 'linha-marcar-pago' }, marca, el('span', { class: 'nome', text: x.c.nome }), el('span', { class: 'suave pequeno', text: 'R$' }), valor) };
   });
@@ -4991,7 +4992,7 @@ function verListaMes(lista, ym, tipo) {
   const total = itens.reduce((t, x) => t + x[tipo], 0);
   const motivo = x => tipo === 'pago'
     ? pagamentos.filter(g => g.pid === x.c.id && refDe(g) === ym).map(g => `R$ ${reais(valorNum(g.valor))} em ${dataCurta(g.data).slice(0, 5)}`).join(' · ') || 'sessões pagas'
-    : x.pend?.length && !(x.grupo === 'adiantado' || x.grupo === 'fim') ? `sessões sem pagar: ${x.pend.map(a => ddmm(a.data)).join(', ')}` : temMensalidadeFixa(x.c) || valorNum(x.c.valorMensal) ? 'mensalidade do mês' : `${x.sessoes} ${x.sessoes === 1 ? 'sessão feita' : 'sessões feitas'}`;
+    : x.pend?.length && !(x.grupo === 'adiantado' || x.grupo === 'fim') ? `sessões sem pagar: ${x.pend.map(a => ddmm(a.data)).join(', ')}` : temMensalidadeFixa(x.c) ? 'mensalidade fixa do mês' : `${x.sessoes} ${x.sessoes === 1 ? 'sessão feita' : 'sessões feitas'}`;
   return janela(`${tipo === 'pago' ? 'Pago' : 'Falta receber'} · ${nomeMes(ym)} · R$ ${reais(total)}`, [
     el('p', { class: 'suave pequeno', text: `${itens.length} ${itens.length === 1 ? 'paciente' : 'pacientes'}. Toque no nome para abrir a página do paciente.` }),
     el('div', { class: 'pilha-pequena lista-importar' }, itens.map(x => el('button', { type: 'button', class: 'linha-importar linha-botao', onclick: () => { fecharDialogos(); ir({ tela: 'adm', id: x.c.id, aba: 'pagamentos' }); } },
