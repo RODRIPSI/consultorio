@@ -4322,23 +4322,8 @@ function telaPagamentos(ym) {
         el('button', { type: 'button', class: 'secundario com-icone', onclick: () => ir({ tela: 'recibos', ym }) }, el('span', { text: `Recibos (${cadastros.filter(pedeRecibo).length})` })),
         el('button', { type: 'button', class: 'secundario com-icone', onclick: () => pdfFechamento(ym, f, nomeMes(ym)) }, el('span', { text: 'PDF do mês' }))),
       cartaoPixExtrato(),
-      notas.length > 0 && cartao(`🧾 Recibo ou nota a emitir (${notas.length})`, 'assinar',
-        ...ordenar(notas).map(x => el('div', { class: 'pag-linha' }, avatar(x.c),
-          el('span', { class: 'pag-info' }, el('strong', { text: x.c.nome }), el('span', { class: 'suave pequeno', text: `${x.c.nf ? 'Nota fiscal' : 'Recibo'} · R$ ${reais(x.v)} · pago em ${x.gs.map(g => ddmm(g.data)).join(', ')}` })),
-          el('button', { type: 'button', class: 'secundario compacto', text: '✏️ Corrigir', onclick: () => x.gs.length === 1 ? editarPagamento(x.c, x.gs[0]) : corrigirPagamentoMes(x.c, ym) }),
-          el('button', { type: 'button', class: 'secundario compacto', text: '↩️ Desfazer', onclick: () => x.gs.length === 1 ? desfazerPagamento(x.c, x.gs[0]) : desfazerPagamentoMes(x.c, ym) }),
-          el('button', { type: 'button', class: 'secundario compacto', text: 'Já foi feito', onclick: async () => { for (const g of x.gs) await marcarComprovanteFeito(x.c, g); } }),
-          el('button', { type: 'button', class: 'primario compacto', text: 'Emitir', onclick: () => x.gs.length === 1 ? emitirPendencia(x.c, x.gs[0]) : escolherRecibo(x.c, { soPagas: true, de: ym + '-01', ate: ym + '-31' }) })))),
       ...GRUPOS_PAG.map(([k, t]) => cartaoGrupo(k, t, grupos[k], ym)),
       !todosG.length && el('p', { class: 'suave centro', text: 'Nenhum paciente com sessão ou mensalidade neste mês.' }),
-      (() => { const d = el('details', { class: 'cartao' }, el('summary', {}, el('strong', { text: `✅ Pagamentos recebidos em ${mesNome.toLowerCase()} (${pagos.length})` })),
-        pagos.length ? pagamentos.filter(g => g.data.startsWith(ym) && cadastroDe(g.pid)).sort((a, b) => cadastroDe(a.pid).nome.localeCompare(cadastroDe(b.pid).nome, 'pt-BR') || a.data.localeCompare(b.data)).map(g => {
-          const c = cadastroDe(g.pid);
-          return el('div', { class: 'linha-grupo' }, el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => dialogoPagamento(c, g) }, avatar(c),
-            el('span', { class: 'pag-info' }, el('strong', { text: c.nome }), el('span', { class: 'suave pequeno', text: `pago em ${dataCurta(g.data).slice(0, 5)} · R$ ${reais(valorNum(g.valor))}${refDe(g) !== g.data.slice(0, 7) ? ` · referente a ${nomeMesCurto(refDe(g))}` : ''}` }))),
-            el('div', { class: 'linha-grupo-acoes' }, el('button', { type: 'button', class: 'chip acao', text: '✏️ Corrigir', onclick: () => editarPagamento(c, g) }),
-              el('button', { type: 'button', class: 'chip acao', text: '↩️ Desfazer', onclick: () => desfazerPagamento(c, g) })));
-        }) : el('p', { class: 'suave', text: 'Nenhum pagamento registrado neste mês.' })); d.open = true; return d; })(),
       el('p', { class: 'suave pequeno', text: `Mensal adiantado: vence no dia ${DIA_LIMITE_ADIANTADO} (ou no dia combinado de cada um). Mensal no fim do mês: paga até o dia ${DIA_LIMITE_FIM} do mês seguinte. Por sessão, semanal e quinzenal: previsto = sessões do mês na agenda × valor; quem deve aparece primeiro. Cada pagamento conta no mês a que se refere ("referente a"), mesmo que tenha sido pago em outro mês; o "Recebido" lá em cima é o dinheiro que entrou neste mês.` })];
   } else if (abaMes === 'devendo') {
     // agrupa tudo que está em aberto pelo mês da sessão (ou da dívida lançada)
@@ -4888,31 +4873,42 @@ async function avisoMensalidade(c, x, ym, atrasado) {
   marcarCobrado(c); await salvarAgora(); render(history.state);
 }
 const SELO_STATUS = { semvalor: ['Sem sessão na agenda', 'aguarda'], pago: ['✅ Pago', 'ok'], aguardando: ['⏳ Aguardando', 'aguarda'], areceber: ['⏳ A receber', 'aguarda'], atrasado: ['🔴 Atrasado', 'atraso'], devendo: ['Devendo', 'atraso'], emdia: ['✅ Em dia', 'ok'] };
+// Versão 117: cada paciente aparece uma vez só. Na mesma linha: situação, pagamento, recibo a emitir e ações.
 function linhaGrupo(x, ym) {
   const c = x.c, [rot, cls] = SELO_STATUS[x.status];
   const mensal = x.grupo === 'adiantado' || x.grupo === 'fim';
   const sub = mensal
-    ? (x.mesDeInicio ? `Mês de início: ${x.sessoes} sessões a partir da primeira · R$ ${reais(x.previsto)}` : x.semMensal ? `⚠️ Mensalidade não definida · ${x.sessoes} sessões × valor = R$ ${reais(x.previsto)}` : `R$ ${reais(x.previsto)} por mês`)
+    ? (x.mesDeInicio ? `Mês de início · R$ ${reais(x.previsto)}` : x.semMensal ? `${x.sessoes} sessões × valor = R$ ${reais(x.previsto)}` : `R$ ${reais(x.previsto)} por mês`)
       + (x.pago > 0.005 && x.falta > 0.005 ? ` · pagou R$ ${reais(x.pago)}` : '')
       + (x.status === 'aguardando' ? ` · vence dia ${Number(c.diaPagamento) || DIA_LIMITE_ADIANTADO}` : x.status === 'areceber' ? ` · paga até dia ${Math.min(28, Number(c.diaPagamento) || DIA_LIMITE_FIM)} do mês seguinte` : '')
     : x.pend.length ? `${x.pend.length} ${x.pend.length === 1 ? 'sessão' : 'sessões'} sem pagar: ${x.pend.map(a => ddmm(a.data)).join(', ')}`
-      : x.semAgenda ? 'Sem sessão na agenda deste mês' : `${x.sessoes} ${x.sessoes === 1 ? 'sessão' : 'sessões'} no mês · R$ ${reais(x.previsto)}${x.pago > 0.005 ? ` · pagou R$ ${reais(x.pago)}` : ''}`;
+      : x.semAgenda ? 'Sem sessão na agenda deste mês' : `${x.sessoes} ${x.sessoes === 1 ? 'sessão' : 'sessões'} no mês · R$ ${reais(x.previsto)}`;
   const selo = el('span', { class: 'selo-status ' + cls, text: x.status === 'atrasado' ? `${rot} ${x.dias} ${x.dias === 1 ? 'dia' : 'dias'}` : x.status === 'devendo' ? `Devendo R$ ${reais(x.falta)}` : rot });
   const acoes = [];
-  if (x.pago > 0.005) acoes.push(el('button', { type: 'button', class: 'chip acao', text: '✏️ Corrigir', title: 'Corrigir valor ou data do pagamento', onclick: () => corrigirPagamentoMes(c, ym) }),
-    el('button', { type: 'button', class: 'chip acao', text: '↩️ Desfazer', title: 'Apagar o pagamento (tocado por engano)', onclick: () => desfazerPagamentoMes(c, ym) }));
-  if (mensal && x.semMensal) acoes.push(el('button', { type: 'button', class: 'chip acao', text: 'Definir mensalidade', onclick: () => editarFormaPagamento(c) }));
-  if (mensal && x.falta > 0.005) {
-    acoes.push(el('button', { type: 'button', class: 'chip acao', text: x.status === 'atrasado' ? '💬 Cobrar' : '💬 Lembrar', onclick: () => avisoMensalidade(c, x, ym, x.status === 'atrasado') }));
-    acoes.push(el('button', { type: 'button', class: 'chip acao marcado', text: 'Pagou', onclick: () => pagouMensal(c, x, ym) }));
+  // recibo/nota pendente deste mês: um selo que abre "Emitir" ou "Já foi feito"
+  const gsRecibo = pedeRecibo(c) ? pagamentos.filter(g => g.pid === c.id && refDe(g) === ym && comprovantePendente(c, g)) : [];
+  if (gsRecibo.length) acoes.push(el('button', { type: 'button', class: 'chip acao', text: `🧾 ${c.nf ? 'Nota' : 'Recibo'} a emitir`, onclick: async () => {
+    const r = await janela(`${c.nf ? 'Nota fiscal' : 'Recibo'} · ${c.nome}`, [el('p', { text: gsRecibo.map(g => `Pago em ${dataCurta(g.data).slice(0, 5)} · R$ ${reais(valorNum(g.valor))}`).join('\n') })],
+      [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Já foi feito', valor: 'feito' }, { rotulo: 'Emitir', valor: 'emitir', estilo: 'primario' }]);
+    if (r === 'feito') for (const g of gsRecibo) await marcarComprovanteFeito(c, g);
+    if (r === 'emitir') gsRecibo.length === 1 ? emitirPendencia(c, gsRecibo[0]) : escolherRecibo(c, { soPagas: true, de: ym + '-01', ate: ym + '-31' });
+  } }));
+  if (x.falta > 0.005) {
+    acoes.push(el('button', { type: 'button', class: 'chip acao', text: '💬', title: x.status === 'atrasado' || x.status === 'devendo' ? 'Cobrar pelo WhatsApp' : 'Lembrar pelo WhatsApp', 'aria-label': 'Mensagem pelo WhatsApp',
+      onclick: () => mensal ? avisoMensalidade(c, x, ym, x.status === 'atrasado') : cobrarPaciente(c, x.pend) }));
+    acoes.push(el('button', { type: 'button', class: 'chip acao marcado', text: 'Pagou', onclick: () => mensal ? pagouMensal(c, x, ym) : pagarDividaMes(c, x.pend, ym) }));
   }
-  if (!mensal && x.falta > 0.005) {
-    acoes.push(el('button', { type: 'button', class: 'chip acao', text: '💬 Cobrar', onclick: () => cobrarPaciente(c, x.pend) }));
-    acoes.push(el('button', { type: 'button', class: 'chip acao marcado', text: 'Pagou', onclick: () => pagarDividaMes(c, x.pend, ym) }));
-  }
+  if (x.pago > 0.005) acoes.push(el('button', { type: 'button', class: 'chip acao', text: '✏️', title: 'Corrigir ou desfazer o pagamento', 'aria-label': 'Corrigir ou desfazer o pagamento',
+    onclick: async () => {
+      const r = await janela(`Pagamento · ${c.nome}`, [el('p', { class: 'suave pequeno', text: 'Corrigir muda o valor, a data ou o mês de referência. Desfazer apaga o pagamento (quando o "Pagou" foi tocado por engano).' })],
+        [{ rotulo: 'Cancelar', valor: null }, { rotulo: '↩️ Desfazer', valor: 'desfazer' }, { rotulo: '✏️ Corrigir', valor: 'corrigir', estilo: 'primario' }]);
+      if (r === 'corrigir') corrigirPagamentoMes(c, ym);
+      if (r === 'desfazer') desfazerPagamentoMes(c, ym);
+    } }));
   return el('div', { class: 'linha-grupo' },
     el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => ir({ tela: 'adm', id: c.id, aba: 'pagamentos' }) },
       avatar(c), el('span', { class: 'pag-info' }, el('strong', { text: c.nome }), el('span', { class: 'suave pequeno', text: sub }))),
+    mensal && x.semMensal && el('button', { type: 'button', class: 'link pequeno aviso-link', text: '⚠️ Mensalidade não definida — definir', onclick: () => editarFormaPagamento(c) }),
     el('div', { class: 'linha-grupo-acoes' }, selo, ...acoes));
 }
 // Versão 108: marcar de uma vez quem já pagou o mês (com o valor de cada um, que pode ser corrigido)
@@ -4960,7 +4956,10 @@ function cartaoGrupo(chave, titulo, lista, ym) {
       el('span', { class: 'grupo-pag-nums' }, `previsto `, el('b', { text: 'R$ ' + reais(prev) }), ` · recebido `, el('b', { text: 'R$ ' + reais(rec) }), ` · ${porSessao ? 'devendo' : 'falta'} `, el('b', { class: falta > 0.005 ? 'texto-alerta' : '', text: 'R$ ' + reais(falta) }))),
     barra,
     !porSessao && falta > 0.005 && el('button', { type: 'button', class: 'secundario compacto', text: '✅ Marcar quem já pagou (de uma vez)', onclick: () => marcarPagosMes(lista, ym) }),
-    mostrar.length ? mostrar.map(x => linhaGrupo(x, ym)) : el('p', { class: 'suave pequeno', text: 'Ninguém devendo neste grupo. 🎉' }),
+    // versão 117: quem falta pagar fica aberto; quem já pagou ou está em dia fica guardado num "ver" para a página não repetir nomes à toa
+    ...(() => { const abertos = mostrar.filter(x => x.falta > 0.005), resolvidos = mostrar.filter(x => x.falta <= 0.005);
+      const d = !resolvidos.length ? null : el('details', { class: 'resolvidos' }, el('summary', {}, el('span', { text: `✅ Pagos ou em dia (${resolvidos.length})` })), resolvidos.map(x => linhaGrupo(x, ym)));
+      return [...(abertos.length ? abertos.map(x => linhaGrupo(x, ym)) : [el('p', { class: 'suave pequeno', text: 'Ninguém em aberto neste grupo. 🎉' })]), d]; })(),
 );
 }
 
