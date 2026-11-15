@@ -784,3 +784,4 @@ body.com-barra .fab { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
   .linha-emitir.cabeca { display: none; }
   .linha-emitir > span:nth-child(4) { display: none; }
 }
+.pc-situacao.areceber { background: #F7EBD6; color: #8A5A12; }

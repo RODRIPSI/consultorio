@@ -601,7 +601,10 @@ function telaAdm(id, aba) {
   const chips = [];
   const hs = horariosDe(c).filter(h => h.hora);
   if (hs.length) chips.push(hs.map(h => `${DIAS[h.dia].slice(0, 3)} ${horaCurta(h.hora)}`).join(', '));
-  if (valorPadrao(c)) chips.push('R$ ' + reais(valorNum(valorPadrao(c))));
+  // versão 133: quem tem mensalidade fixa mostra o valor do mês, não o da sessão
+  if (temMensalidadeFixa(c)) chips.push(`R$ ${reais(valorNum(c.valorMensal))} por mês`);
+  else if (valorPadrao(c)) chips.push('R$ ' + reais(valorNum(valorPadrao(c))) + ' por sessão');
+  { const sit = situacaoPaciente(c); if (sit) chips.push(sit.texto); }
   const abas = [['atendimentos', 'Agenda', 'calendario'], ['pagamentos', 'Pagamentos', 'moeda'], ['mensagem', 'Mensagem', 'mensagem'],
     ['documentos', 'Documentos', 'assinar'], ['cadastro', 'Cadastro', 'pessoa']];
   const corpo = aba === 'pagamentos' ? abaPagamentosAdm(c)
@@ -5327,4 +5330,25 @@ function telaEmitir(filtro = 'pendentes') {
       el('section', { class: 'cartao' }, corpo),
       el('button', { type: 'button', class: 'link', text: 'Marcar quem pede recibo ou nota', onclick: () => ir({ tela: 'recibos', ym: hojeISO().slice(0, 7) }) })));
   desenhar();
+}
+
+// =====================================================================
+// Versão 133: uma situação só por paciente, usada na lista de pacientes, na página do paciente e em Pagamentos.
+// Vem da mesma conta da tela Pagamentos (mês atual) + o que ficou em aberto de meses anteriores.
+// =====================================================================
+function situacaoPaciente(c) {
+  if (!c) return null;
+  const ym = hojeISO().slice(0, 7);
+  if (c.semCobrancaDesde && c.semCobrancaDesde <= hojeISO()) return { texto: '🚫 Sem cobrança', cls: 'neutro' };
+  const x = contaPagamentoMes(c, ym);
+  const antes = atendimentosDe(c.id).filter(a => emAberto(a) && a.data.slice(0, 7) < ym).reduce((t, a) => t + valorDe(a), 0);
+  const falta = x ? x.falta : 0;
+  if (antes > 0.005 || (x && ['atrasado', 'devendo'].includes(x.status))) return { texto: `⚠️ Deve R$ ${reais(falta + antes)}`, cls: 'deve' };
+  if (falta > 0.005) {
+    const ate = x.grupo === 'fim' ? `${String(Math.min(28, Number(c.diaPagamento) || DIA_LIMITE_FIM)).padStart(2, '0')}/${somarMeses(ym, 1).slice(5, 7)}`
+      : `${String(Math.min(28, Number(c.diaPagamento) || DIA_LIMITE_ADIANTADO)).padStart(2, '0')}/${ym.slice(5, 7)}`;
+    return { texto: `⏳ A receber R$ ${reais(falta)} · até ${ate}`, cls: 'areceber' };
+  }
+  if (x && x.pago > 0.005) return { texto: `✓ Pago ${nomeMes(ym).split(' ')[0].toLowerCase()}`, cls: 'ok' };
+  return { texto: '✓ Em dia', cls: 'ok' };
 }

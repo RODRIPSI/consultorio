@@ -24,7 +24,7 @@ function barraInferior() {
       icone(ic), el('span', { text: rot }))));
   document.body.append(nav);
 }
-const VERSAO = 'versão 132';
+const VERSAO = 'versão 133';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['claro', 'Entrelaços claro (creme e verde)', '#0F4A3C', '#F6F2EA'], ['entrelacos', 'Entrelaços: natureza e ouro (escuro)', '#E8BC52', '#011816'], ['', 'Granada', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -538,9 +538,8 @@ function cartaoPacienteClaro(p, ult) {
   const v = valorNum(valorNaData(c)) || valorNum(perfil?.valorSessao);
   const modo = { sessao: 'Por sessão', semanal: 'Semanal', quinzenal: 'Quinzenal', mensal: 'Mensal' }[c.modoPagamento] || 'Não definido';
   const quando = c.modoPagamento === 'mensal' ? (c.pagaAdiantado ? ' · adiantado' : ' · fim do mês') : '';
-  const pend = atendimentosDe(c.id).filter(emAberto);
-  const deve = pend.reduce((x, a) => x + valorDe(a), 0), cred = creditoDe(c.id);
-  const situacao = c.semCobrancaDesde ? ['🚫 Sem cobrança', 'neutro'] : pend.length ? [`⚠️ Deve R$ ${reais(deve)}`, 'deve'] : cred > 0.005 ? [`Crédito R$ ${reais(cred)}`, 'credito'] : ['✓ Em dia', 'ok'];
+  const sit = situacaoPaciente(c);   // versão 133: a mesma situação da tela Pagamentos
+  const situacao = [sit.texto, sit.cls];
   const atual = atendendoAgora(p);
   return el('div', { class: 'cartao pc' }, topo,
     el('div', { class: 'pc-linha' },
@@ -654,8 +653,7 @@ function telaLista(todos = false) {
               typeof escolherTipoRecibo === 'function' && el('span', { class: 'meta valor-editavel' + (pedeRecibo(c) ? '' : ' suave'), role: 'button', tabindex: '0', onclick: e => { e.stopPropagation(); escolherTipoRecibo(c, () => telaLista(true)); } },
                 el('span', { text: pedeRecibo(c) ? `🧾 Pede ${c.nf ? 'nota fiscal' : 'recibo'} ✏️` : '🧾 Não pede recibo ✏️' })),
               el('span', { class: 'meta valor-editavel ' + (deve || pend.length ? 'devendo' : 'em-dia'), role: 'button', tabindex: '0', onclick: irPag },
-                el('span', { text: pend.length ? `⚠️ Devendo R$ ${reais(deve)}${deve ? '' : ' (valor a definir)'} — ver sessões`
-                  : typeof creditoDe === 'function' && creditoDe(c.id) > 0.005 ? `✅ Pago adiantado · crédito R$ ${reais(creditoDe(c.id))}` : '✅ Em dia' })),
+                el('span', { text: typeof situacaoPaciente === 'function' ? situacaoPaciente(c).texto + ' — ver' : pend.length ? `⚠️ Devendo R$ ${reais(deve)}` : '✅ Em dia' })),
               // versão 70: encerrar (parou de vir) ou retomar, direto da lista
               c.encerradoEm && !atendendoAgora(p)
                 ? el('span', { class: 'meta valor-editavel', role: 'button', tabindex: '0', onclick: e => { e.stopPropagation(); retomarAtendimento(c, () => telaLista(true)); } },
