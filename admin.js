@@ -908,6 +908,25 @@ async function editarPagamento(c, g) {
   indicarStatus(`Pagamento corrigido: R$ ${reais(v)} em ${dataCurta(g.data).slice(0, 5)}`);
   render(history.state);
 }
+// Versão 114: ações diretas "Corrigir" e "Desfazer" (para quando o "Pagou" foi tocado por engano)
+async function escolherPagamentoMes(c, ym, verbo) {
+  const gs = pagamentos.filter(g => g.pid === c.id && g.data.slice(0, 7) >= ym && g.data <= somarMeses(ym, 1) + '-05').sort((a, b) => a.data.localeCompare(b.data));
+  if (!gs.length) { await aviso('Sem pagamento', 'Não há pagamento registrado neste mês.'); return null; }
+  if (gs.length === 1) return gs[0];
+  const r = await janela(`${verbo} · ${c.nome}`, [el('p', { class: 'suave pequeno', text: 'Qual destes pagamentos?' })],
+    [{ rotulo: 'Cancelar', valor: null }, ...gs.map((g, i) => ({ rotulo: `${dataCurta(g.data).slice(0, 5)} · R$ ${reais(valorNum(g.valor))}`, valor: String(i) }))]);
+  return r == null ? null : gs[Number(r)];
+}
+async function corrigirPagamentoMes(c, ym) { const g = await escolherPagamentoMes(c, ym, 'Corrigir'); if (g) return editarPagamento(c, g); }
+async function desfazerPagamento(c, g) {
+  const ok = await dialogo({ titulo: 'Desfazer este pagamento?', texto: `${c.nome} · R$ ${reais(valorNum(g.valor))} em ${dataCurta(g.data).slice(0, 5)}. O pagamento é apagado e as sessões voltam a ficar "a receber". Vale para tudo: Pagamentos, Quem deve e a página do paciente.`,
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Desfazer', valor: true, estilo: 'perigo' }] });
+  if (!ok) return;
+  await excluirPagamento(g);
+  indicarStatus('Pagamento desfeito');
+  render(history.state);
+}
+async function desfazerPagamentoMes(c, ym) { const g = await escolherPagamentoMes(c, ym, 'Desfazer'); if (g) return desfazerPagamento(c, g); }
 // Escolhe qual pagamento do mês corrigir (quando há mais de um)
 async function corrigirPagamentosDoMes(c, ym) {
   const gs = pagamentos.filter(g => g.pid === c.id && g.data.slice(0, 7) >= ym && g.data <= somarMeses(ym, 1) + '-05').sort((a, b) => a.data.localeCompare(b.data));
@@ -4304,6 +4323,8 @@ function telaPagamentos(ym) {
       notas.length > 0 && cartao(`🧾 Recibo ou nota a emitir (${notas.length})`, 'assinar',
         ...ordenar(notas).map(x => el('div', { class: 'pag-linha' }, avatar(x.c),
           el('span', { class: 'pag-info' }, el('strong', { text: x.c.nome }), el('span', { class: 'suave pequeno', text: `${x.c.nf ? 'Nota fiscal' : 'Recibo'} · R$ ${reais(x.v)} · pago em ${x.gs.map(g => ddmm(g.data)).join(', ')}` })),
+          el('button', { type: 'button', class: 'secundario compacto', text: '✏️ Corrigir', onclick: () => x.gs.length === 1 ? editarPagamento(x.c, x.gs[0]) : corrigirPagamentoMes(x.c, ym) }),
+          el('button', { type: 'button', class: 'secundario compacto', text: '↩️ Desfazer', onclick: () => x.gs.length === 1 ? desfazerPagamento(x.c, x.gs[0]) : desfazerPagamentoMes(x.c, ym) }),
           el('button', { type: 'button', class: 'secundario compacto', text: 'Já foi feito', onclick: async () => { for (const g of x.gs) await marcarComprovanteFeito(x.c, g); } }),
           el('button', { type: 'button', class: 'primario compacto', text: 'Emitir', onclick: () => x.gs.length === 1 ? emitirPendencia(x.c, x.gs[0]) : escolherRecibo(x.c, { soPagas: true, de: ym + '-01', ate: ym + '-31' }) })))),
       ...GRUPOS_PAG.map(([k, t]) => cartaoGrupo(k, t, grupos[k], ym)),
@@ -4314,8 +4335,7 @@ function telaPagamentos(ym) {
           return el('div', { class: 'linha-grupo' }, el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => dialogoPagamento(c, g) }, avatar(c),
             el('span', { class: 'pag-info' }, el('strong', { text: c.nome }), el('span', { class: 'suave pequeno', text: `pago em ${dataCurta(g.data).slice(0, 5)} · R$ ${reais(valorNum(g.valor))}` }))),
             el('div', { class: 'linha-grupo-acoes' }, el('button', { type: 'button', class: 'chip acao', text: '✏️ Corrigir', onclick: () => editarPagamento(c, g) }),
-              el('button', { type: 'button', class: 'chip acao', text: '🗑️ Excluir', onclick: async () => {
-                if (await dialogo({ titulo: 'Excluir este pagamento?', texto: `${c.nome} · R$ ${reais(valorNum(g.valor))} em ${dataCurta(g.data).slice(0, 5)}. As sessões voltam a ficar "a receber".`, botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Excluir', valor: true, estilo: 'perigo' }] })) { await excluirPagamento(g); render(history.state); } } })));
+              el('button', { type: 'button', class: 'chip acao', text: '↩️ Desfazer', onclick: () => desfazerPagamento(c, g) })));
         }) : el('p', { class: 'suave', text: 'Nenhum pagamento registrado neste mês.' })); d.open = true; return d; })(),
       el('p', { class: 'suave pequeno', text: `Mensal adiantado: vence no dia ${DIA_LIMITE_ADIANTADO} (ou no dia combinado de cada um). Mensal no fim do mês: paga até o dia ${DIA_LIMITE_FIM} do mês seguinte. Por sessão, semanal e quinzenal: previsto = sessões do mês na agenda × valor; a lista mostra só quem fez sessão e não pagou. Mês de início: só as sessões a partir da primeira.` })];
   } else if (abaMes === 'devendo') {
@@ -4868,7 +4888,8 @@ function linhaGrupo(x, ym) {
     : `${x.pend.length} ${x.pend.length === 1 ? 'sessão' : 'sessões'} sem pagar: ${x.pend.map(a => ddmm(a.data)).join(', ')}`;
   const selo = el('span', { class: 'selo-status ' + cls, text: x.status === 'atrasado' ? `${rot} ${x.dias} ${x.dias === 1 ? 'dia' : 'dias'}` : x.status === 'devendo' ? `Devendo R$ ${reais(x.falta)}` : rot });
   const acoes = [];
-  if (x.pago > 0.005) acoes.push(el('button', { type: 'button', class: 'chip acao', text: '✏️ Pagamento', title: 'Corrigir ou excluir o pagamento', onclick: () => corrigirPagamentosDoMes(c, ym) }));
+  if (x.pago > 0.005) acoes.push(el('button', { type: 'button', class: 'chip acao', text: '✏️ Corrigir', title: 'Corrigir valor ou data do pagamento', onclick: () => corrigirPagamentoMes(c, ym) }),
+    el('button', { type: 'button', class: 'chip acao', text: '↩️ Desfazer', title: 'Apagar o pagamento (tocado por engano)', onclick: () => desfazerPagamentoMes(c, ym) }));
   if (mensal && x.semMensal) acoes.push(el('button', { type: 'button', class: 'chip acao', text: 'Definir mensalidade', onclick: () => editarFormaPagamento(c) }));
   if (mensal && x.falta > 0.005) {
     acoes.push(el('button', { type: 'button', class: 'chip acao', text: x.status === 'atrasado' ? '💬 Cobrar' : '💬 Lembrar', onclick: () => avisoMensalidade(c, x, ym, x.status === 'atrasado') }));
