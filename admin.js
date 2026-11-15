@@ -5377,7 +5377,19 @@ function telaEmitir(filtro = 'pendentes') {
         segmentoEscolha({ pendentes: `Pendentes (${nPend})`, emitidos: 'Emitidos', todos: 'Todos' }, filtro, k => ir({ tela: 'emitir', filtro: k }, false)),
         el('label', { class: 'campo-busca' }, icone('busca'), busca)),
       el('section', { class: 'cartao' }, corpo),
-      el('button', { type: 'button', class: 'link', text: 'Marcar quem pede recibo ou nota', onclick: () => ir({ tela: 'recibos', ym: hojeISO().slice(0, 7) }) })));
+      // versão 135: a lista de quem pede recibo ou nota continua aqui, sempre visível
+      (() => { const pedem = cadastros.filter(c => pedeRecibo(c) && !c.excluido && !c.arquivado).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+        return el('section', { class: 'cartao' },
+          el('h3', { class: 'cartao-titulo' }, el('span', { class: 'ic-bolha' }, icone('arquivo')), el('span', { text: `Pacientes que pedem recibo ou nota (${pedem.length})` })),
+          pedem.length ? pedem.map(c => { const ult = pagamentosDe(c.id).slice(-1)[0];
+            return el('div', { class: 'linha-grupo' },
+              el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => ir({ tela: 'adm', id: c.id, aba: 'documentos' }) }, avatar(c),
+                el('span', { class: 'pag-info' }, el('strong', { text: c.nome }), el('span', { class: 'suave pequeno', text: (c.nf ? 'Nota fiscal' : 'Recibo') + (ult ? ` · último pagamento ${dataCurta(ult.data).slice(0, 5)}, R$ ${reais(valorNum(ult.valor))}` : ' · sem pagamento registrado') }))),
+              el('div', { class: 'linha-grupo-acoes' },
+                el('button', { type: 'button', class: 'chip acao', text: (c.nf ? 'Nota fiscal' : 'Recibo') + ' ✏️', onclick: () => escolherTipoRecibo(c) }),
+                el('button', { type: 'button', class: 'chip acao marcado', text: 'Emitir', onclick: () => escolherRecibo(c, { soPagas: true }) }))); })
+            : el('p', { class: 'suave', text: 'Ninguém marcado ainda.' }),
+          el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: escolherPacientesRecibo }, icone('mais'), el('span', { text: 'Marcar ou desmarcar pacientes' }))); })()));
   desenhar();
 }
 
