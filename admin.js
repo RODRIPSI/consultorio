@@ -17,6 +17,7 @@ let entradaIds = [];     // comprovantes recebidos pelo compartilhamento, ainda 
 let pagamentoRasc = null;
 let verTodosAtend = false;
 let verArquivadosAdm = false;
+let filtroAdm = 'atendendo';   // versão 112: mesma regra de "Atendendo agora" do aparelho do Rodrigo
 let aparelhoComClinica = false;
 
 const PRESENCA = { realizada: 'Veio', falta: 'Faltou', tardia: 'Desmarcou em cima da hora', cancelada: 'Desmarcou (24h ou mais)', remarcada: 'Remarcada' };
@@ -493,6 +494,8 @@ async function abrirEntradaSePendente() {
   return true;
 }
 
+// versão 112: a mesma regra de "Atendendo agora" do aparelho do Rodrigo (horário fixo, sessão marcada ou atendido nos últimos 45 dias)
+const emAtendimentoAgora = c => !c.arquivado && !c.excluido && (typeof atendendoAgora === 'function' ? atendendoAgora({ id: c.id, arquivado: c.arquivado }) : true);
 // ---------- Tela inicial do administrativo ----------
 // Versão 48: a tela inicial mostra só o resumo; a lista completa fica em "Todos os pacientes".
 function telaInicioAdm(todos = false) {
@@ -502,7 +505,8 @@ function telaInicioAdm(todos = false) {
   const ym = hojeISO().slice(0, 7);
   const desenhar = () => {
     const q = semAcento(busca.value.trim());
-    let itens = cadastros.filter(c => !!c.arquivado === verArquivadosAdm && (!q || semAcento(c.nome).includes(q)))
+    let itens = cadastros.filter(c => !!c.arquivado === verArquivadosAdm && (!q || semAcento(c.nome).includes(q))
+      && (verArquivadosAdm || !todos || filtroAdm === 'todos' || q || emAtendimentoAgora(c)))
       .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
     if (!todos && cadastros.length) {
       if (!q) { lista.replaceChildren(); return; }   // na tela inicial, os nomes só aparecem quando a pessoa digita
@@ -524,8 +528,9 @@ function telaInicioAdm(todos = false) {
   };
   busca.addEventListener('input', desenhar);
   const tot = totaisMes(ym);
+  const nAtend = cadastros.filter(emAtendimentoAgora).length, nCad = cadastros.filter(c => !c.arquivado).length;
   mostrar(
-    todos ? cabecalho(verArquivadosAdm ? 'Arquivados' : 'Todos os pacientes', { voltar: true, sub: `${cadastros.filter(c => !c.arquivado).length} ativos` }) : cabecalho(modo === 'adm' ? 'Consultório' : 'Administrativo', {
+    todos ? cabecalho(verArquivadosAdm ? 'Arquivados' : 'Todos os pacientes', { voltar: true, sub: `${nAtend} em atendimento · ${nCad} cadastrados` }) : cabecalho(modo === 'adm' ? 'Consultório' : 'Administrativo', {
       grande: modo === 'adm', voltar: modo === 'dono', sub: modo === 'adm' ? 'Área administrativa' : null,
       acoes: [botaoSincronizar(), botaoConfirmacoes(), botaoAgenda(), botaoIcone('Pagamentos do mês', 'moeda', () => ir({ tela: 'mes' })),
         botaoIcone('Bloquear agora', 'cadeado', trancar), botaoIcone('Configurações', 'ajustes', () => ir({ tela: 'config' }))]
@@ -539,11 +544,12 @@ function telaInicioAdm(todos = false) {
       !todos && cartaoSemNota(),
       !todos && cartaoAgenda(),
       !todos && cartaoPagamentosInicio(ym, tot),
+      todos && !verArquivadosAdm && segmentoEscolha({ atendendo: `Atendendo agora (${nAtend})`, todos: `Todos (${nCad})` }, filtroAdm, k => { filtroAdm = k; telaInicioAdm(true); }),
       el('label', { class: 'campo-busca' }, icone('busca'), busca),
       lista,
       !todos && cadastros.length > 0 && el('button', { type: 'button', class: 'cartao paciente todos-pacientes', onclick: () => ir({ tela: 'admPacientes' }) },
         el('span', { class: 'ic-bolha' }, icone('pessoa')),
-        el('span', { class: 'info' }, el('span', { class: 'nome', text: 'Todos os pacientes' }), el('span', { class: 'meta' }, el('span', { text: `${cadastros.filter(c => !c.arquivado).length} ativos · arquivados` }))),
+        el('span', { class: 'info' }, el('span', { class: 'nome', text: 'Todos os pacientes' }), el('span', { class: 'meta' }, el('span', { text: `${nAtend} em atendimento agora · ${nCad} cadastrados` }))),
         icone('seguinte')),
       el('div', { class: 'atalhos' },
         el('button', { type: 'button', class: 'atalho', onclick: () => { if (!todos) { verArquivadosAdm = true; ir({ tela: 'admPacientes' }); return; } verArquivadosAdm = !verArquivadosAdm; telaInicioAdm(true); } },
