@@ -24,7 +24,7 @@ function barraInferior() {
       icone(ic), el('span', { text: rot }))));
   document.body.append(nav);
 }
-const VERSAO = 'versão 130';
+const VERSAO = 'versão 131';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['claro', 'Entrelaços claro (creme e verde)', '#0F4A3C', '#F6F2EA'], ['entrelacos', 'Entrelaços: natureza e ouro (escuro)', '#E8BC52', '#011816'], ['', 'Granada', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -522,9 +522,46 @@ function resumoInicio() {
     n('moeda', `Recebido em ${nomeMes(ym).split(' ')[0].toLowerCase()}`, 'R$ ' + reais(recebido), () => ir({ tela: 'mes' })),
     n('relogio' in ICONES ? 'relogio' : 'repetir', 'Quem deve', 'R$ ' + reais(deve), () => ir({ tela: 'devendo', filtro: 'todos' })));
 }
+// versão 131: cartão de paciente no visual claro — nome e última sessão em cima; valor, pagamento, situação e recibo embaixo
+function cartaoPacienteClaro(p, ult) {
+  const c = cadastroDe(p.id);
+  const abrir = () => ir({ tela: 'ficha', id: p.id, aba: 'retomar' });
+  const celula = (ic, rot, valor, onclick, cls = '') => el('button', { type: 'button', class: 'pc-celula ' + cls, onclick: e => { e.stopPropagation(); onclick(); } },
+    icone(ic), el('span', { class: 'pc-txt' }, rot && el('small', { text: rot }), el('strong', { text: valor })));
+  const topo = el('button', { type: 'button', class: 'pc-topo', onclick: abrir }, avatar(p),
+    el('span', { class: 'pc-nome' }, el('span', { class: 'nome', text: p.nome }),
+      el('span', { class: 'meta' }, icone('calendario'), el('span', { text: ult ? `Última sessão ${relativo(ult.data)}` : 'Nenhuma sessão ainda' }))),
+    icone('seguinte'));
+  if (!c) return el('div', { class: 'cartao pc' }, topo,
+    el('div', { class: 'pc-linha' }, celula('mais', '', 'Colocar em "Atendendo agora"', () => incluirEmAtendimento(p, () => telaLista(true)))));
+  const fixa = temMensalidadeFixa(c);
+  const v = valorNum(valorNaData(c)) || valorNum(perfil?.valorSessao);
+  const modo = { sessao: 'Por sessão', semanal: 'Semanal', quinzenal: 'Quinzenal', mensal: 'Mensal' }[c.modoPagamento] || 'Não definido';
+  const quando = c.modoPagamento === 'mensal' ? (c.pagaAdiantado ? ' · adiantado' : ' · fim do mês') : '';
+  const pend = atendimentosDe(c.id).filter(emAberto);
+  const deve = pend.reduce((x, a) => x + valorDe(a), 0), cred = creditoDe(c.id);
+  const situacao = c.semCobrancaDesde ? ['🚫 Sem cobrança', 'neutro'] : pend.length ? [`⚠️ Deve R$ ${reais(deve)}`, 'deve'] : cred > 0.005 ? [`Crédito R$ ${reais(cred)}`, 'credito'] : ['✓ Em dia', 'ok'];
+  const atual = atendendoAgora(p);
+  return el('div', { class: 'cartao pc' }, topo,
+    el('div', { class: 'pc-linha' },
+      fixa ? celula('moeda', 'Mensalidade fixa', `R$ ${reais(valorNum(c.valorMensal))}`, () => editarFormaPagamento(c, () => telaLista(true)))
+        : celula('moeda', 'Valor por sessão', v ? `R$ ${reais(v)}` : 'definir', () => alterarValorSessao(c, () => telaLista(true))),
+      celula('calendario', 'Pagamento', modo + quando, () => editarFormaPagamento(c, () => telaLista(true))),
+      el('button', { type: 'button', class: 'pc-situacao ' + situacao[1], text: situacao[0], onclick: e => { e.stopPropagation(); ir({ tela: 'adm', id: c.id, aba: 'pagamentos' }); } }),
+      celula('arquivo', '', pedeRecibo(c) ? (c.nf ? 'Pede nota fiscal' : 'Pede recibo') : 'Não pede recibo', () => escolherTipoRecibo(c, () => telaLista(true)), pedeRecibo(c) ? 'forte' : '')),
+    el('button', { type: 'button', class: 'link pequeno pc-encerrar', text: c.encerradoEm && !atual ? `Encerrado em ${dataCurta(c.encerradoEm)} — retomar` : atual ? 'Encerrar atendimento' : 'Colocar em "Atendendo agora"',
+      onclick: e => { e.stopPropagation(); (c.encerradoEm && !atual ? retomarAtendimento(c, () => telaLista(true)) : atual ? encerrarAtendimento(c, () => telaLista(true)) : incluirEmAtendimento(p, () => telaLista(true))); } }));
+}
+function topoBanner(ic, titulo, sub, extra) {
+  return el('header', { class: 'topo-pag' },
+    el('div', { class: 'topo-pag-arte' }, el('img', { src: 'topo-entrelacos.jpg', alt: 'Entrelaços · Consultório' }),
+      el('button', { type: 'button', class: 'topo-ent-menu', 'aria-label': 'Voltar', onclick: () => history.length > 1 ? history.back() : ir({ tela: 'lista' }) })),
+    el('div', { class: 'topo-pag-linha' }, el('span', { class: 'ic-titulo' }, icone(ic)),
+      el('div', { class: 'titulo' }, el('h1', { id: 'titulo-tela', text: titulo }), sub && el('span', { class: 'sub', text: sub })), extra));
+}
 function telaLista(todos = false) {
   if (!todos) verArquivados = false;
-  const busca = el('input', { type: 'search', placeholder: 'Procurar pelo nome', 'aria-label': 'Procurar paciente pelo nome' });
+  const busca = el('input', { type: 'search', placeholder: todos ? 'Buscar paciente por nome' : 'Procurar pelo nome', 'aria-label': 'Procurar paciente pelo nome' });
   const lista = el('div', { class: 'cartoes' });
   const ativos = pacientes.filter(p => !p.arquivado).length;
   const desenhar = () => {
@@ -539,9 +576,11 @@ function telaLista(todos = false) {
       if (!q) { lista.replaceChildren(); return; }
       itens = itens.slice(0, 8);
     }
+    const claro = todos && document.documentElement.dataset.paleta === 'claro' && typeof cadastroDe === 'function';
     lista.replaceChildren(...itens.map(p => {
       const ss = sessoesDe(p.id);
       const ult = ss[ss.length - 1];
+      if (claro) return cartaoPacienteClaro(p, ult);
       return el('button', { type: 'button', class: 'cartao paciente', onclick: () => ir({ tela: 'ficha', id: p.id, aba: 'retomar' }) },
         avatar(p),
         el('span', { class: 'info' },
@@ -605,6 +644,7 @@ function telaLista(todos = false) {
   const ent = !todos && ['entrelacos', 'claro'].includes(document.documentElement.dataset.paleta);
   mostrar(
     ent ? topoEntrelacos(ativos) :
+    todos && document.documentElement.dataset.paleta === 'claro' ? topoBanner('pessoa', verArquivados ? 'Arquivados' : 'Todos os pacientes', 'Controle de atendimentos e histórico do consultório') :
     todos ? cabecalho(verArquivados ? 'Arquivados' : 'Todos os pacientes', { voltar: true, sub: verArquivados ? null : `${ativos} em acompanhamento` }) : cabecalho('Consultório', {
       grande: true,
       sub: `${ativos} em acompanhamento`,
@@ -613,7 +653,7 @@ function telaLista(todos = false) {
     }),
     el('div', { class: 'conteudo' },
       todos && !verArquivados && typeof segmentoEscolha === 'function' && segmentoEscolha(
-        { atuais: `Atendendo agora (${pacientes.filter(atendendoAgora).length})`, todos: `Todos (${ativos})` }, filtroPacientes,
+        { atuais: `👥 Atendendo agora (${pacientes.filter(atendendoAgora).length})`, todos: `Todos (${ativos}) · inclui pacientes antigos` }, filtroPacientes,
         k => { filtroPacientes = k; telaLista(true); }, 'dois'),
       todos && !verArquivados && filtroPacientes === 'atuais' && el('p', { class: 'suave pequeno', text: 'Quem tem horário fixo na agenda, sessão marcada ou foi atendido nos últimos 45 dias.' }),
       !todos && atalhosInicio(),
