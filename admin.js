@@ -808,7 +808,8 @@ function abaPagamentosAdm(c) {
           el('div', { class: 'mes-titulo' }, el('strong', { text: nomeMes(mes) }), el('span', { class: 'suave', text: `${lista.length} ${lista.length === 1 ? 'consulta' : 'consultas'} · R$ ${reais(lista.reduce((t, a) => t + valorDe(a), 0))}` })),
           ...lista.sort((x, y) => x.data.localeCompare(y.data)).map(a => el('div', { class: 'pag-linha' },
             el('span', { class: 'pag-info' }, el('strong', { text: a.divida ? `Dívida anterior · ${nomeMes(a.data.slice(0, 7))}` : `${dataCurta(a.data)}, ${diaSemana(a.data)}` }),
-              el('span', { class: 'suave', text: `R$ ${reais(valorDe(a))}${a.divida && a.obs ? ' · ' + a.obs : ''}${a.presenca === 'falta' ? ' (faltou: cobrada)' : a.presenca === 'tardia' ? ' (desmarcou em cima da hora: cobrada)' : ''}` })),
+              // versão 104: o valor da sessão em aberto se muda tocando nele
+              el('span', { class: 'suave valor-editavel', role: 'button', tabindex: '0', onclick: () => mudarValorSessao(c, a), text: `R$ ${reais(valorDe(a))} ✏️${a.divida && a.obs ? ' · ' + a.obs : ''}${a.presenca === 'falta' ? ' (faltou: cobrada)' : a.presenca === 'tardia' ? ' (desmarcou em cima da hora: cobrada)' : ''}` })),
             botaoIcone('Corrigir ou excluir esta cobrança', 'lixeira', () => corrigirCobranca(c, a)),
             el('button', { type: 'button', class: 'chip acao marcado', text: 'Pagou', onclick: () => pagarSessao(c, a) })))))
         : el('p', { class: 'suave', text: 'Nada pendente. 🎉' })),
@@ -3792,6 +3793,13 @@ async function alterarValorSessao(c, aoFim) {
   c.atualizadoEm = agoraISO(); salvarCadastro(c);
   let mudadas = 0;
   for (const a of ats) if (!valorNum(a.valor) || valorNum(a.valor) === antes.get(a.id)) { a.valor = String(novo); salvarAt(a); mudadas++; }
+  // versão 104: sessões ainda não pagas com outro valor (ex.: antes da data escolhida, com o valor padrão) — pergunta se corrige
+  const outras = atendimentosDe(c.id).filter(a => a.pagamento === 'areceber' && !a.divida && valorDe(a) && Math.abs(valorDe(a) - novo) > 0.005);
+  if (outras.length) {
+    const ok = await dialogo({ titulo: 'Sessões em aberto com outro valor', texto: `${outras.length === 1 ? 'Há 1 sessão ainda não paga' : `Há ${outras.length} sessões ainda não pagas`} com outro valor: ${outras.map(a => `${dataCurta(a.data).slice(0, 5)} (R$ ${reais(valorDe(a))})`).join(', ')}. Passar ${outras.length === 1 ? 'ela' : 'todas'} para R$ ${reais(novo)}?`,
+      botoes: [{ rotulo: 'Manter como estão', valor: null }, { rotulo: `Passar para R$ ${reais(novo)}`, valor: true, estilo: 'primario' }] });
+    if (ok) for (const a of outras) { a.valor = String(novo); a.atualizadoEm = agoraISO(); salvarAt(a); mudadas++; }
+  }
   await salvarAgora();
   indicarStatus(`Valor de ${primeiroNome(c.nome)}: R$ ${reais(novo)} a partir de ${dataCurta(desde)}${mudadas ? ` (${mudadas} ${mudadas === 1 ? 'sessão atualizada' : 'sessões atualizadas'})` : ''}.`);
   if (aoFim) aoFim(); else render(history.state);
