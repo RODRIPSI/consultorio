@@ -705,3 +705,31 @@ body.com-barra .fab { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
   .linha-tabela .col-status { grid-column: 1 / -1; }
   .cabeca-tabela { display: none; }
 }
+
+/* versão 130: cabeçalho de Pagamentos e linhas mais limpas */
+.topo-pag { margin: 0 0 .4rem; }
+.topo-pag-arte { position: relative; }
+.topo-pag-arte img { display: block; width: 100%; height: 150px; object-fit: cover; object-position: center 35%; }
+.topo-pag-linha { display: flex; align-items: center; gap: .8rem; padding: 1rem 1rem .2rem; margin-top: -14px; background: var(--fundo); border-radius: 22px 22px 0 0; position: relative; }
+.topo-pag-linha .ic-titulo .ic { width: 38px; height: 38px; color: var(--granada); }
+.topo-pag-linha .titulo { flex: 1; min-width: 0; }
+.topo-pag-linha h1 { margin: 0; font: 700 1.9rem/1.1 var(--serifa); color: var(--tinta); }
+.topo-pag-linha .sub { color: var(--suave); font-size: .95rem; }
+.topo-pag-linha .segmento { flex: 0 0 auto; min-width: 220px; }
+:root[data-paleta="claro"] .navega { background: none; color: var(--tinta); margin: 0 0 .4rem; padding: 0; justify-content: center; gap: 1.2rem; border-radius: 0; }
+:root[data-paleta="claro"] .navega strong { color: #0F4A3C; font-size: 1.5rem; }
+:root[data-paleta="claro"] .navega .secundario { background: var(--cartao); color: var(--tinta); border: 1px solid var(--linha); width: 46px; height: 46px; padding: 0; justify-content: center; }
+:root[data-paleta="claro"] .navega .rot-nav { display: none; }
+.acoes-pag { display: grid !important; grid-template-columns: 1.4fr repeat(4, 1fr); gap: .6rem; }
+.acoes-pag button { white-space: nowrap; }
+.conferencia-total { margin: -.2rem 0 0; font-size: .85rem; text-align: center; }
+.linha-tabela { grid-template-columns: minmax(0, 2.4fr) auto minmax(0, 1.9fr); }
+.linha-tabela .col-valor { justify-self: end; font-size: 1.1rem; }
+@media (max-width: 760px) {
+  .acoes-pag { grid-template-columns: 1fr 1fr; }
+  .topo-pag-linha { flex-wrap: wrap; }
+  .topo-pag-linha .segmento { min-width: 0; flex: 1 1 100%; }
+  .linha-tabela { grid-template-columns: minmax(0, 1fr) auto; }
+}
+.topo-pag-arte img { height: auto; max-height: 230px; object-position: center top; }
+.abas-grupos { display: grid !important; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
