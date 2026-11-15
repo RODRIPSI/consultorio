@@ -859,9 +859,11 @@ function abaPagamentosAdm(c) {
     el('p', { class: 'suave pequeno', text: 'Sessões em que o paciente veio, faltou ou desmarcou com menos de 24h entram como "a receber" com o valor do cadastro. Toque em "Pagou" quando o paciente pagar. O Rodrigo pode abonar uma sessão.' }));
 }
 
-async function registrarPagamento(c, { valor, data, ids, arquivo }) {
+async function registrarPagamento(c, { valor, data, ids, arquivo, ref }) {
   const agora = agoraISO();
-  const g = { id: crypto.randomUUID(), pid: c.id, data, valor: valorNum(valor), atendimentos: ids, comprovanteId: null, nf: { emitida: false, numero: '' }, criadoEm: agora, atualizadoEm: agora };
+  // versão 115: "referente a" — o mês que este pagamento paga (ex.: pago em novembro, referente a outubro)
+  if (!ref) { const meses = atendimentos.filter(x => ids.includes(x.id)).map(a => a.data.slice(0, 7)).sort(); ref = meses[0] || (data || hojeISO()).slice(0, 7); }
+  const g = { id: crypto.randomUUID(), pid: c.id, data, ref, valor: valorNum(valor), atendimentos: ids, comprovanteId: null, nf: { emitida: false, numero: '' }, criadoEm: agora, atualizadoEm: agora };
   if (arquivo) {
     const d = await guardarDocumento(c, 'comprovante', { nome: arquivo.nome, mime: arquivo.mime, bytes: arquivo.bytes, descricao: `Comprovante de R$ ${reais(g.valor)}`, data, adm: true });
     g.comprovanteId = d.id;
@@ -891,16 +893,16 @@ function desligarComprovante(d) {
 
 // Versão 113: corrigir valor ou data de um pagamento marcado errado. As sessões ligadas são refeitas pelo novo valor.
 async function editarPagamento(c, g) {
-  const r = await dialogo({ titulo: `Corrigir pagamento · ${c.nome}`, texto: 'Mude o valor ou a data. As sessões quitadas por este pagamento são refeitas com o novo valor; o que sobrar vira crédito.',
-    campos: [{ rotulo: 'Valor (R$)', valor: reais(valorNum(g.valor)) }, { rotulo: 'Data', tipo: 'date', valor: g.data }],
+  const r = await dialogo({ titulo: `Corrigir pagamento · ${c.nome}`, texto: 'Mude o valor, a data em que pagou ou o mês a que o pagamento se refere (ex.: pago em novembro, referente a outubro). As sessões quitadas são refeitas; o que sobrar vira crédito.',
+    campos: [{ rotulo: 'Valor (R$)', valor: reais(valorNum(g.valor)) }, { rotulo: 'Data', tipo: 'date', valor: g.data }, { rotulo: 'Referente ao mês', tipo: 'month', valor: refDe(g) }],
     botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }] });
   if (!r) return;
   const v = valorNum(r[0]);
   if (!v) return aviso('Falta o valor', 'Digite o valor pago. Para apagar o pagamento, use "Excluir".');
   for (const a of atendimentos.filter(x => x.pagamentoId === g.id)) { a.pagamento = a.presenca === 'realizada' || !a.presenca ? 'areceber' : 'naocobrar'; a.pagoEm = null; a.pagamentoId = null; a.atualizadoEm = agoraISO(); salvarAt(a); }
-  g.valor = reais(v); g.data = r[1] || g.data; g.atendimentos = []; g.atualizadoEm = agoraISO();
+  g.valor = reais(v); g.data = r[1] || g.data; g.ref = r[2] || refDe(g); g.atendimentos = []; g.atualizadoEm = agoraISO();
   let resta = v;
-  for (const a of atendimentos.filter(x => x.pid === c.id && emAberto(x)).sort((x, y) => x.data.localeCompare(y.data))) {
+  for (const a of atendimentos.filter(x => x.pid === c.id && emAberto(x) && x.data <= fimDoMes(g.ref)).sort((x, y) => x.data.localeCompare(y.data))) {
     const va = valorDe(a); if (!va || va > resta + 0.005) continue;
     a.pagamento = 'pago'; a.pagoEm = g.data; a.pagamentoId = g.id; a.atualizadoEm = agoraISO(); salvarAt(a); g.atendimentos.push(a.id); resta -= va;
   }
@@ -910,7 +912,7 @@ async function editarPagamento(c, g) {
 }
 // Versão 114: ações diretas "Corrigir" e "Desfazer" (para quando o "Pagou" foi tocado por engano)
 async function escolherPagamentoMes(c, ym, verbo) {
-  const gs = pagamentos.filter(g => g.pid === c.id && g.data.slice(0, 7) >= ym && g.data <= somarMeses(ym, 1) + '-05').sort((a, b) => a.data.localeCompare(b.data));
+  const gs = pagamentos.filter(g => g.pid === c.id && (refDe(g) === ym || g.data.slice(0, 7) === ym)).sort((a, b) => a.data.localeCompare(b.data));
   if (!gs.length) { await aviso('Sem pagamento', 'Não há pagamento registrado neste mês.'); return null; }
   if (gs.length === 1) return gs[0];
   const r = await janela(`${verbo} · ${c.nome}`, [el('p', { class: 'suave pequeno', text: 'Qual destes pagamentos?' })],
@@ -4333,11 +4335,11 @@ function telaPagamentos(ym) {
         pagos.length ? pagamentos.filter(g => g.data.startsWith(ym) && cadastroDe(g.pid)).sort((a, b) => cadastroDe(a.pid).nome.localeCompare(cadastroDe(b.pid).nome, 'pt-BR') || a.data.localeCompare(b.data)).map(g => {
           const c = cadastroDe(g.pid);
           return el('div', { class: 'linha-grupo' }, el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => dialogoPagamento(c, g) }, avatar(c),
-            el('span', { class: 'pag-info' }, el('strong', { text: c.nome }), el('span', { class: 'suave pequeno', text: `pago em ${dataCurta(g.data).slice(0, 5)} · R$ ${reais(valorNum(g.valor))}` }))),
+            el('span', { class: 'pag-info' }, el('strong', { text: c.nome }), el('span', { class: 'suave pequeno', text: `pago em ${dataCurta(g.data).slice(0, 5)} · R$ ${reais(valorNum(g.valor))}${refDe(g) !== g.data.slice(0, 7) ? ` · referente a ${nomeMesCurto(refDe(g))}` : ''}` }))),
             el('div', { class: 'linha-grupo-acoes' }, el('button', { type: 'button', class: 'chip acao', text: '✏️ Corrigir', onclick: () => editarPagamento(c, g) }),
               el('button', { type: 'button', class: 'chip acao', text: '↩️ Desfazer', onclick: () => desfazerPagamento(c, g) })));
         }) : el('p', { class: 'suave', text: 'Nenhum pagamento registrado neste mês.' })); d.open = true; return d; })(),
-      el('p', { class: 'suave pequeno', text: `Mensal adiantado: vence no dia ${DIA_LIMITE_ADIANTADO} (ou no dia combinado de cada um). Mensal no fim do mês: paga até o dia ${DIA_LIMITE_FIM} do mês seguinte. Por sessão, semanal e quinzenal: previsto = sessões do mês na agenda × valor; a lista mostra só quem fez sessão e não pagou. Mês de início: só as sessões a partir da primeira.` })];
+      el('p', { class: 'suave pequeno', text: `Mensal adiantado: vence no dia ${DIA_LIMITE_ADIANTADO} (ou no dia combinado de cada um). Mensal no fim do mês: paga até o dia ${DIA_LIMITE_FIM} do mês seguinte. Por sessão, semanal e quinzenal: previsto = sessões do mês na agenda × valor; quem deve aparece primeiro. Cada pagamento conta no mês a que se refere ("referente a"), mesmo que tenha sido pago em outro mês; o "Recebido" lá em cima é o dinheiro que entrou neste mês.` })];
   } else if (abaMes === 'devendo') {
     // agrupa tudo que está em aberto pelo mês da sessão (ou da dívida lançada)
     const porMes = new Map();
@@ -4803,8 +4805,11 @@ function contaPagamentoMes(c, ym) {
   const ats = atendimentosDe(c.id).filter(a => !a.divida && a.data >= ini && a.data <= fim);
   const ocs = ocorrenciasDoMes(c, ym);
   const pend = atendimentosDe(c.id).filter(a => emAberto(a) && a.data >= ini && a.data <= fim);
+  // versão 115: lista-base = todos que estão "Atendendo agora" (mesmo sem sessão na agenda) + quem teve movimento no mês
+  const naBase = ym === hojeYm && typeof emAtendimentoAgora === 'function' && emAtendimentoAgora(c);
+  const pagosRef = pagamentos.filter(g => g.pid === c.id && refDe(g) === ym);
   if (grupo === 'adiantado' || grupo === 'fim') {
-    if (!ocs.length && !ats.length && !pend.length) return null;
+    if (!ocs.length && !ats.length && !pend.length && !naBase && !pagosRef.length) return null;
     // versão 108: "mês de início" só quando marcado no cadastro (inicioEm); o histórico do app é curto e confundia
     const p1 = c.inicioEm || '';
     const mesDeInicio = !!p1 && p1.slice(0, 7) === ym;
@@ -4819,11 +4824,11 @@ function contaPagamentoMes(c, ym) {
     const dLim = String(DIA_LIMITE_FIM).padStart(2, '0'), dIni = String(DIA_LIMITE_FIM + 1).padStart(2, '0');
     const limite = grupo === 'fim' ? somarMeses(ym, 1) + '-' + dLim : fim;
     const desde = grupo === 'fim' ? ym + '-' + dIni : ini;
-    let pago = pagamentos.filter(g => g.pid === c.id && g.data >= desde && g.data <= limite).reduce((t, g) => t + valorNum(g.valor), 0);
+    let pago = pagamentos.filter(g => g.pid === c.id && (g.ref ? g.ref === ym : g.data >= desde && g.data <= limite)).reduce((t, g) => t + valorNum(g.valor), 0);
     const mens = atendimentos.find(a => a.id === `mens-${c.id}-${ym}`);
     if (mens?.pagamento === 'pago') pago = Math.max(pago, valorDe(mens));
     const falta = Math.max(0, previsto - pago);
-    let status = 'pago', dias = 0;
+    let status = previsto <= 0.005 && pago <= 0.005 ? 'semvalor' : 'pago', dias = 0;
     if (falta > 0.005) {
       const venc = grupo === 'adiantado' ? ym + '-' + String(Math.min(28, Number(c.diaPagamento) || DIA_LIMITE_ADIANTADO)).padStart(2, '0') : limite;
       if (hoje <= venc) status = grupo === 'adiantado' ? 'aguardando' : 'areceber';
@@ -4838,35 +4843,38 @@ function contaPagamentoMes(c, ym) {
   const previsto = feitas.reduce((t, a) => t + valorDe(a), 0) + futuras.reduce((t, o) => t + valorNum(valorPadrao(c, o.data)), 0);
   const recebido = feitas.filter(a => a.pagamento === 'pago').reduce((t, a) => t + valorDe(a), 0);
   const devendo = pend.reduce((t, a) => t + valorDe(a), 0);
-  if (!previsto && !devendo) return null;
-  return { c, grupo, previsto, pago: recebido, falta: devendo, status: devendo > 0.005 ? 'devendo' : 'emdia', pend, sessoes: feitas.length + futuras.length };
+  if (!previsto && !devendo && !naBase) return null;
+  return { c, grupo, previsto, pago: recebido, falta: devendo, status: devendo > 0.005 ? 'devendo' : 'emdia', pend, sessoes: feitas.length + futuras.length, semAgenda: !ocs.length && !ats.length };
 }
 function gruposDoMes(ym) {
   const g = Object.fromEntries(GRUPOS_PAG.map(([k]) => [k, []]));
   for (const c of cadastros) { const x = contaPagamentoMes(c, ym); if (x) g[x.grupo].push(x); }
-  const ordem = { atrasado: 0, devendo: 0, aguardando: 1, areceber: 1, pago: 2, emdia: 2 };
+  const ordem = { atrasado: 0, devendo: 0, aguardando: 1, areceber: 1, semvalor: 2, pago: 3, emdia: 3 };
   for (const k in g) g[k].sort((a, b) => ordem[a.status] - ordem[b.status] || a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
   return g;
 }
 // "Pagou" de um mensal: registra o valor e quita o que estiver em aberto do mês; o que sobrar vira crédito.
 async function pagouMensal(c, x, ym) {
   const r = await dialogo({ titulo: `Pagamento · ${c.nome}`, texto: `${nomeMes(ym)}: falta R$ ${reais(x.falta)}. Se pagou outro valor, corrija.`,
-    campos: [{ rotulo: 'Valor pago (R$)', valor: reais(x.falta || x.previsto), inputmode: 'decimal' }, { rotulo: 'Data do pagamento', tipo: 'date', valor: hojeISO() }],
+    campos: [{ rotulo: 'Valor pago (R$)', valor: reais(x.falta || x.previsto), inputmode: 'decimal' }, { rotulo: 'Data do pagamento', tipo: 'date', valor: hojeISO() },
+      { rotulo: 'Referente ao mês', tipo: 'month', valor: ym }],
     botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Registrar', valor: true, estilo: 'primario' }] });
   if (!r) return;
-  const [valor, data] = r;
+  const [valor, data, ref] = r;
   if (!valorNum(valor)) return aviso('Falta o valor', 'Digite quanto pagou.');
-  await registrarComQuitacao(c, valorNum(valor), data || hojeISO(), fimDoMes(ym));
+  await registrarComQuitacao(c, valorNum(valor), data || hojeISO(), fimDoMes(ref || ym), ref || ym);
   indicarStatus(`Pagamento de ${primeiroNome(c.nome)} registrado: R$ ${reais(valorNum(valor))}.`);
   render(history.state);
 }
 // Quita do mais antigo para o mais novo até onde o valor alcança; a sobra fica de crédito.
-async function registrarComQuitacao(c, valor, data, ate = '9999-12-31') {
+async function registrarComQuitacao(c, valor, data, ate = '9999-12-31', ref) {
   const pend = atendimentosDe(c.id).filter(a => emAberto(a) && a.data <= ate).sort((a, b) => a.data.localeCompare(b.data));
   const ids = []; let resta = valor;
   for (const a of pend) { const v = valorDe(a); if (v && v <= resta + 0.005) { ids.push(a.id); resta -= v; } }
-  return registrarPagamento(c, { valor, data, ids });
+  return registrarPagamento(c, { valor, data, ids, ref });
 }
+const refDe = g => g.ref || (g.data || '').slice(0, 7);
+const nomeMesCurto = ym => nomeMes(ym).split(' ')[0].toLowerCase();
 async function avisoMensalidade(c, x, ym, atrasado) {
   const n = numeroWhats(c.telefone);
   const caixa = el('textarea', { rows: '6', 'aria-label': 'Mensagem' });
@@ -4877,7 +4885,7 @@ async function avisoMensalidade(c, x, ym, atrasado) {
   abrirExterno(`https://wa.me/${n || ''}?text=${encodeURIComponent(caixa.value)}`);
   marcarCobrado(c); await salvarAgora(); render(history.state);
 }
-const SELO_STATUS = { pago: ['✅ Pago', 'ok'], aguardando: ['⏳ Aguardando', 'aguarda'], areceber: ['⏳ A receber', 'aguarda'], atrasado: ['🔴 Atrasado', 'atraso'], devendo: ['Devendo', 'atraso'], emdia: ['✅ Em dia', 'ok'] };
+const SELO_STATUS = { semvalor: ['Sem sessão na agenda', 'aguarda'], pago: ['✅ Pago', 'ok'], aguardando: ['⏳ Aguardando', 'aguarda'], areceber: ['⏳ A receber', 'aguarda'], atrasado: ['🔴 Atrasado', 'atraso'], devendo: ['Devendo', 'atraso'], emdia: ['✅ Em dia', 'ok'] };
 function linhaGrupo(x, ym) {
   const c = x.c, [rot, cls] = SELO_STATUS[x.status];
   const mensal = x.grupo === 'adiantado' || x.grupo === 'fim';
@@ -4885,7 +4893,8 @@ function linhaGrupo(x, ym) {
     ? (x.mesDeInicio ? `Mês de início: ${x.sessoes} sessões a partir da primeira · R$ ${reais(x.previsto)}` : x.semMensal ? `⚠️ Mensalidade não definida · ${x.sessoes} sessões × valor = R$ ${reais(x.previsto)}` : `R$ ${reais(x.previsto)} por mês`)
       + (x.pago > 0.005 && x.falta > 0.005 ? ` · pagou R$ ${reais(x.pago)}` : '')
       + (x.status === 'aguardando' ? ` · vence dia ${Number(c.diaPagamento) || DIA_LIMITE_ADIANTADO}` : x.status === 'areceber' ? ` · paga até dia ${DIA_LIMITE_FIM} do mês seguinte` : '')
-    : `${x.pend.length} ${x.pend.length === 1 ? 'sessão' : 'sessões'} sem pagar: ${x.pend.map(a => ddmm(a.data)).join(', ')}`;
+    : x.pend.length ? `${x.pend.length} ${x.pend.length === 1 ? 'sessão' : 'sessões'} sem pagar: ${x.pend.map(a => ddmm(a.data)).join(', ')}`
+      : x.semAgenda ? 'Sem sessão na agenda deste mês' : `${x.sessoes} ${x.sessoes === 1 ? 'sessão' : 'sessões'} no mês · R$ ${reais(x.previsto)}${x.pago > 0.005 ? ` · pagou R$ ${reais(x.pago)}` : ''}`;
   const selo = el('span', { class: 'selo-status ' + cls, text: x.status === 'atrasado' ? `${rot} ${x.dias} ${x.dias === 1 ? 'dia' : 'dias'}` : x.status === 'devendo' ? `Devendo R$ ${reais(x.falta)}` : rot });
   const acoes = [];
   if (x.pago > 0.005) acoes.push(el('button', { type: 'button', class: 'chip acao', text: '✏️ Corrigir', title: 'Corrigir valor ou data do pagamento', onclick: () => corrigirPagamentoMes(c, ym) }),
@@ -4929,7 +4938,7 @@ async function marcarPagosMes(lista, ym) {
     const v = valorNum(l.valor.value);
     if (!l.marca.checked || !v) continue;
     if (guardar.checked && !valorNum(l.x.c.valorMensal)) { l.x.c.valorMensal = reais(v); l.x.c.atualizadoEm = agoraISO(); salvarCadastro(l.x.c); }
-    await registrarComQuitacao(l.x.c, v, data.value || sug, fimDoMes(ym));
+    await registrarComQuitacao(l.x.c, v, data.value || sug, fimDoMes(ym), ym);
     n++; total += v;
   }
   await salvarAgora();
@@ -4940,7 +4949,7 @@ function cartaoGrupo(chave, titulo, lista, ym) {
   if (!lista.length) return null;
   const prev = lista.reduce((t, x) => t + x.previsto, 0), rec = lista.reduce((t, x) => t + x.pago, 0), falta = lista.reduce((t, x) => t + x.falta, 0);
   const porSessao = chave === 'sessao' || chave === 'quinzenal';
-  const mostrar = porSessao ? lista.filter(x => x.falta > 0.005) : lista;
+  const mostrar = lista;   // versão 115: todos aparecem (quem deve primeiro)
   const pct = prev ? Math.round(rec / prev * 100) : 0;
   const barra = el('span', { class: 'barra-fechamento' }); const b1 = el('span', { class: 'barra-preenchida ok' }), b2 = el('span', { class: 'barra-preenchida alerta' });
   b1.style.width = Math.min(100, pct) + '%'; b2.style.width = Math.max(0, 100 - pct) + '%'; barra.append(b1, b2);
@@ -4950,7 +4959,7 @@ function cartaoGrupo(chave, titulo, lista, ym) {
     barra,
     !porSessao && falta > 0.005 && el('button', { type: 'button', class: 'secundario compacto', text: '✅ Marcar quem já pagou (de uma vez)', onclick: () => marcarPagosMes(lista, ym) }),
     mostrar.length ? mostrar.map(x => linhaGrupo(x, ym)) : el('p', { class: 'suave pequeno', text: 'Ninguém devendo neste grupo. 🎉' }),
-    porSessao && lista.length > mostrar.length && el('p', { class: 'suave pequeno', text: `${lista.length - mostrar.length} ${lista.length - mostrar.length === 1 ? 'paciente em dia' : 'pacientes em dia'} (sessões pagas ou ainda por vir).` }));
+);
 }
 
 // ---------- Conferência dos Pix pelo extrato do banco ----------
