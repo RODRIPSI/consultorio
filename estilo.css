@@ -627,3 +627,8 @@ html.app-oculto #app { filter: blur(22px); }
 .grupo-pag details.resolvidos summary { cursor: pointer; color: #6FCF97; font-weight: 600; padding: .3rem 0; }
 .linha-grupo .aviso-link { color: #F2C14E; padding: 0 0 0 3.2rem; flex-basis: 100%; text-align: left; }
 .linha-grupo-acoes .chip { min-width: 2.6rem; justify-content: center; }
+.linha-importar { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem; padding: .45rem 0; border-bottom: 1px solid rgba(232,188,82,.18); }
+.linha-importar input[type=checkbox] { width: 22px; height: 22px; flex: none; }
+.linha-importar .pag-info { flex: 1 1 220px; }
+.linha-importar select { flex: 1 1 220px; max-width: 100%; }
+.lista-importar { max-height: 60vh; overflow: auto; }

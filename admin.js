@@ -303,7 +303,7 @@ function ajustarPagamentoAoStatus(a) {
 function saldoDe(g) {
   // versão 120: pagamento referente a um mês anterior ao dia em que foi pago (ex.: pago em novembro, referente a outubro)
   // quita aquele mês; não vira crédito para as sessões seguintes
-  if (g.ref && g.ref < (g.data || '').slice(0, 7)) return 0;
+  if (g.semCredito || (g.ref && g.ref < (g.data || '').slice(0, 7))) return 0;
   const usado = atendimentos.filter(x => (g.atendimentos || []).includes(x.id)).reduce((t, x) => t + valorDe(x), 0);
   return valorNum(g.valor) - usado;
 }
@@ -873,11 +873,11 @@ function abaPagamentosAdm(c) {
     el('p', { class: 'suave pequeno', text: 'Sessões em que o paciente veio, faltou ou desmarcou com menos de 24h entram como "a receber" com o valor do cadastro. Toque em "Pagou" quando o paciente pagar. O Rodrigo pode abonar uma sessão.' }));
 }
 
-async function registrarPagamento(c, { valor, data, ids, arquivo, ref }) {
+async function registrarPagamento(c, { valor, data, ids, arquivo, ref, semPerguntar }) {
   const agora = agoraISO();
   // versão 121: evita lançar o mesmo pagamento duas vezes
   const igual = pagamentos.find(g => g.pid === c.id && g.data === data && Math.abs(valorNum(g.valor) - valorNum(valor)) < 0.01);
-  if (igual && !(await dialogo({ titulo: 'Pagamento repetido?', texto: `${c.nome} já tem um pagamento de R$ ${reais(valorNum(valor))} em ${dataCurta(data)}. Registrar outro igual mesmo assim?`,
+  if (igual && !semPerguntar && !(await dialogo({ titulo: 'Pagamento repetido?', texto: `${c.nome} já tem um pagamento de R$ ${reais(valorNum(valor))} em ${dataCurta(data)}. Registrar outro igual mesmo assim?`,
     botoes: [{ rotulo: 'Não registrar', valor: null }, { rotulo: 'Registrar outro', valor: true, estilo: 'primario' }] }))) return igual;
   // versão 115: "referente a" — o mês que este pagamento paga (ex.: pago em novembro, referente a outubro)
   if (!ref) { const meses = atendimentos.filter(x => ids.includes(x.id)).map(a => a.data.slice(0, 7)).sort(); ref = meses[0] || (data || hojeISO()).slice(0, 7); }
@@ -4336,6 +4336,7 @@ function telaPagamentos(ym) {
         numero('Falta receber', faltaT, anteriores ? `+ R$ ${reais(anteriores)} de meses anteriores` : 'só deste mês', faltaT ? 'alerta' : 'ok', () => ir({ tela: 'devendo', filtro: anteriores ? 'todos' : 'mes' }))),
       el('div', { class: 'botoes-linha acoes-pag' },
         el('button', { type: 'button', class: 'primario com-icone', onclick: conferirExtrato }, el('span', { text: '🏦 Conferir Pix do extrato' })),
+        el('button', { type: 'button', class: 'secundario com-icone', onclick: importarListaPagamentos }, el('span', { text: '📥 Importar lista de pagamentos' })),
         el('button', { type: 'button', class: 'secundario com-icone', onclick: () => ir({ tela: 'devendo', filtro: 'todos' }) }, el('span', { text: `Quem deve · R$ ${reaisCurto(totalDevido)}` })),
         el('button', { type: 'button', class: 'secundario com-icone', onclick: () => ir({ tela: 'recibos', ym }) }, el('span', { text: `Recibos (${cadastros.filter(pedeRecibo).length})` })),
         el('button', { type: 'button', class: 'secundario com-icone', onclick: () => pdfFechamento(ym, f, nomeMes(ym)) }, el('span', { text: 'PDF do mês' }))),
@@ -5098,4 +5099,93 @@ function cartaoPixExtrato() {
           : el('button', { type: 'button', class: 'chip acao', text: 'Não é de paciente', onclick: () => naoEhPaciente(s) }),
         s.c && el('button', { type: 'button', class: 'chip acao', text: 'Não é de paciente', onclick: () => naoEhPaciente(s) }),
         el('button', { type: 'button', class: 'chip acao marcado', text: s.c ? '✓ Confirmar' : 'Escolher', onclick: () => confirmarPix(s) })))));
+}
+
+// =====================================================================
+// Versão 122: importar uma lista de pagamentos (CSV: paciente; valor; data; referente a; forma).
+// Lida só neste aparelho. Cada linha é ligada a um paciente (sugestão pelo nome, que pode ser trocada) e vira
+// um pagamento "referente a" o mês indicado. O que já estiver registrado (mesmo paciente, dia e valor) não é repetido.
+// Pagamento importado nunca vira crédito para sessões de outros meses.
+// =====================================================================
+function lerCsvPagamentos(texto) {
+  const linhas = texto.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim());
+  const sep = (linhas[0] || '').split(';').length >= (linhas[0] || '').split(',').length ? ';' : ',';
+  const meses = { janeiro: 1, fevereiro: 2, marco: 3, abril: 4, maio: 5, junho: 6, julho: 7, agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12 };
+  const out = [];
+  for (const l of linhas) {
+    const [nome, valor, data, ref, forma] = l.split(sep).map(x => (x || '').trim().replace(/^"|"$/g, ''));
+    const m = (data || '').match(/(\d{2})\/(\d{2})\/(\d{4})/) || (data || '').match(/(\d{4})-(\d{2})-(\d{2})/);
+    const v = Number((valor || '').replace(/[R$\s]/g, '').replace(/\.(?=\d{3}(\D|$))/g, '').replace(',', '.'));
+    if (!m || !(v > 0) || !nome) continue;
+    const iso = m[1].length === 4 ? `${m[1]}-${m[2]}-${m[3]}` : `${m[3]}-${m[2]}-${m[1]}`;
+    let r = (ref || '').match(/^(\d{4})-(\d{2})/)?.[0];
+    if (!r) { const n = normNome(ref).toLowerCase().split(' '); const mm = meses[n.find(x => meses[x])]; const aa = (ref || '').match(/\d{4}/)?.[0] || iso.slice(0, 4); if (mm) r = `${aa}-${String(mm).padStart(2, '0')}`; }
+    out.push({ nome, valor: v, data: iso, ref: r || iso.slice(0, 7), forma: forma || '' });
+  }
+  return out;
+}
+function sugerirPaciente(nome) {
+  const t = normNome(nome).split(' ').filter(x => x.length > 1 && !/^\d+$/.test(x));
+  if (!t.length) return null;
+  let melhor = null;
+  for (const c of cadastros.filter(c => !c.excluido)) {
+    const p = normNome(c.nome).split(' ');
+    if (!p.includes(t[0]) && !p.some(x => x.startsWith(t[0].slice(0, 5)) && t[0].length >= 5)) continue;
+    let pts = p[0] === t[0] ? 3 : 1;
+    const perto = (a, b) => { if (a === b) return true; if (a.length < 4 || Math.abs(a.length - b.length) > 1) return false; let i = 0; while (i < a.length && a[i] === b[i]) i++; return a.slice(i + 1) === b.slice(i + 1) || a.slice(i + 1) === b.slice(i) || a.slice(i) === b.slice(i + 1); };
+    for (const x of t.slice(1)) if (p.some(y => perto(x, y) || (x.length >= 4 && y.startsWith(x.slice(0, 4))))) pts += 2;
+    if (emAtendimentoAgora(c)) pts += 1;
+    if (!melhor || pts > melhor.pts) melhor = { c, pts, empate: false }; else if (pts === melhor.pts) melhor.empate = true;
+  }
+  return melhor && !melhor.empate ? melhor.c : null;
+}
+async function importarListaPagamentos() {
+  const entrada = el('input', { type: 'file', accept: '.csv,.txt,text/csv' });
+  entrada.addEventListener('change', async () => {
+    const f = entrada.files?.[0]; if (!f) return;
+    const buf = await f.arrayBuffer();
+    let texto = new TextDecoder('utf-8').decode(buf); if (texto.includes('�')) texto = new TextDecoder('windows-1252').decode(buf);
+    const itens = lerCsvPagamentos(texto);
+    if (!itens.length) return aviso('Nada encontrado', 'O arquivo precisa ter, em cada linha: paciente; valor; data do pagamento; referente a (mês).');
+    const opcoes = [...cadastros].filter(c => !c.excluido).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    const linhas = itens.map(it => {
+      const sug = sugerirPaciente(it.nome);
+      const sel = el('select', { 'aria-label': `Paciente para ${it.nome}` }, el('option', { value: '', text: '— escolha o paciente —' }), opcoes.map(c => el('option', { value: c.id, text: c.nome })));
+      sel.value = sug?.id || '';
+      const marca = el('input', { type: 'checkbox', checked: true, 'aria-label': `Importar ${it.nome}` });
+      const info = el('span', { class: 'suave pequeno' });
+      const atual = () => {
+        const dup = sel.value && pagamentos.find(g => g.pid === sel.value && g.data === it.data && Math.abs(valorNum(g.valor) - it.valor) < 0.01);
+        info.textContent = !sel.value ? '⚠️ escolha o paciente' : dup ? (refDe(dup) === it.ref ? '✅ já registrado' : `já registrado · muda para referente a ${nomeMesCurto(it.ref)}`) : '';
+        marca.checked = !!sel.value && !(dup && refDe(dup) === it.ref);
+      };
+      sel.addEventListener('change', atual); atual();
+      return { it, sel, marca, el: el('div', { class: 'linha-importar' }, marca,
+        el('span', { class: 'pag-info' }, el('strong', { text: `${it.nome} · R$ ${reais(it.valor)}` }),
+          el('span', { class: 'suave pequeno', text: `pago em ${dataCurta(it.data)} · referente a ${nomeMesCurto(it.ref)}${it.forma ? ' · ' + it.forma : ''}` }), info), sel) };
+    });
+    const total = itens.reduce((t, x) => t + x.valor, 0);
+    const ok = await janela(`Importar pagamentos (${itens.length})`, [
+      el('p', { class: 'suave pequeno', text: `Total da lista: R$ ${reais(total)}. Confira o paciente de cada linha (o app sugere pelo nome). Linhas já registradas ficam desmarcadas. Nada é apagado.` }),
+      el('div', { class: 'pilha-pequena lista-importar' }, linhas.map(l => l.el))],
+      [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Importar marcados', valor: true, estilo: 'primario' }]);
+    if (!ok) return;
+    let n = 0, ajust = 0, soma = 0;
+    for (const l of linhas) {
+      if (!l.marca.checked || !l.sel.value) continue;
+      const c = cadastroDe(l.sel.value), it = l.it;
+      const dup = pagamentos.find(g => g.pid === c.id && g.data === it.data && Math.abs(valorNum(g.valor) - it.valor) < 0.01);
+      if (dup) { dup.ref = it.ref; dup.semCredito = true; dup.atualizadoEm = agoraISO(); salvarPag(dup); ajust++; continue; }
+      const pend = atendimentosDe(c.id).filter(a => emAberto(a) && a.data.slice(0, 7) === it.ref).sort((a, b) => a.data.localeCompare(b.data));
+      const ids = []; let resta = it.valor;
+      for (const a of pend) { const v = valorDe(a); if (v && v <= resta + 0.005) { ids.push(a.id); resta -= v; } }
+      const g = await registrarPagamento(c, { valor: it.valor, data: it.data, ids, ref: it.ref, semPerguntar: true });
+      g.semCredito = true; g.origem = 'lista importada'; salvarPag(g);
+      n++; soma += it.valor;
+    }
+    await salvarAgora();
+    await aviso('Pagamentos importados', `${n} ${n === 1 ? 'pagamento novo' : 'pagamentos novos'} (R$ ${reais(soma)})${ajust ? ` e ${ajust} já existentes ajustados para o mês certo` : ''}. Cada um aparece na página do paciente, com a data e o mês a que se refere.`);
+    render(history.state);
+  });
+  entrada.click();
 }
