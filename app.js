@@ -5,7 +5,7 @@
 
 const app = document.getElementById('app');
 const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 109';
+const VERSAO = 'versão 110';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['entrelacos', 'Entrelaços: natureza e ouro (escuro)', '#E8BC52', '#011816'], ['', 'Granada', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -540,7 +540,7 @@ function telaLista(todos = false) {
             const fixa = typeof temMensalidadeFixa === 'function' && temMensalidadeFixa(c);   // versão 106
             const porMes = c.modoPagamento === 'mensal' || c.modoPagamento === 'quinzenal';
             const totalMes = fixa ? valorNum(c.valorMensal) : doMes.reduce((x, a) => x + valorDe(a), 0);
-            const pend = atendimentosDe(c.id).filter(a => a.pagamento === 'areceber');
+            const pend = atendimentosDe(c.id).filter(typeof emAberto === 'function' ? emAberto : a => a.pagamento === 'areceber');
             const deve = pend.reduce((x, a) => x + valorDe(a), 0);
             const irPag = e => { e.stopPropagation(); ir({ tela: 'adm', id: c.id, aba: 'pagamentos' }); };
             return [

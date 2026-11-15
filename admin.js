@@ -26,6 +26,11 @@ const chavePag = g => `x:g:${g.pid}:${g.id}`;
 const cadastroDe = id => cadastros.find(c => c.id === id) || null;
 const salvarCadastro = c => agendarSalvar(chaveCad(c), c);
 // versão 105: sessão de quem tem mensalidade fixa não é cobrada sozinha; garante a cobrança única do mês
+// versão 110: o financeiro começa em outubro de 2026. Antes disso só conta o que foi lançado à mão
+// ("Lançar dívida de meses anteriores" ou "Lançar sessão não paga").
+const INICIO_FINANCEIRO = '2026-10-01';
+const dentroDoFinanceiro = a => (a.data || '') >= INICIO_FINANCEIRO || a.origem === 'dívida anterior' || a.origem === 'lançada à mão';
+const emAberto = a => a.pagamento === 'areceber' && dentroDoFinanceiro(a);
 const salvarAt = a => { agendarSalvar(chaveAt(a), a); if (a.pagamento === 'mensalidade' && a.data) garantirMensalidade(cadastroDe(a.pid), a.data.slice(0, 7)); };
 const salvarPag = g => agendarSalvar(chavePag(g), g);
 const chaveLem = l => 'x:l:' + l.id;
@@ -313,7 +318,7 @@ function sessoesFuturasDoMes(c) {
   try { return ocorrenciasNoPeriodo(c, hoje, fim).filter(o => !o.cancelada && !atendimentos.some(a => a.pid === c.id && a.data === o.data)); } catch { return []; }
 }
 async function abaterDoCredito(c) {
-  const pend = atendimentosDe(c.id).filter(a => a.pagamento === 'areceber').sort((x, y) => x.data.localeCompare(y.data));
+  const pend = atendimentosDe(c.id).filter(emAberto).sort((x, y) => x.data.localeCompare(y.data));
   let n = 0;
   for (const a of pend) { usarCredito(a); if (a.pagamento === 'pago') { a.atualizadoEm = agoraISO(); salvarAt(a); n++; } }
   await salvarAgora();
@@ -740,12 +745,12 @@ async function dialogoAtendimento(c, a) {
 // ---------- Pagamentos ----------
 const SITUACAO_MES = { pago: 'Pago', parcial: 'Parcial', areceber: 'A receber' };
 function resumoMes(c, ym) {
-  const ats = atendimentosDe(c.id).filter(a => a.data.slice(0, 7) === ym && (a.pagamento === 'areceber' || a.pagamento === 'pago'));
-  const pendentesMes = ats.filter(a => a.pagamento === 'areceber');
+  const ats = atendimentosDe(c.id).filter(a => a.data.slice(0, 7) === ym && dentroDoFinanceiro(a) && (a.pagamento === 'areceber' || a.pagamento === 'pago'));
+  const pendentesMes = ats.filter(emAberto);
   const gs = pagamentos.filter(g => g.pid === c.id && g.data.slice(0, 7) === ym);
   const pago = gs.reduce((t, g) => t + valorNum(g.valor), 0);
   const aReceber = pendentesMes.reduce((t, a) => t + valorDe(a), 0);
-  const anteriores = atendimentosDe(c.id).filter(a => a.pagamento === 'areceber' && a.data.slice(0, 7) < ym).reduce((t, a) => t + valorDe(a), 0);
+  const anteriores = atendimentosDe(c.id).filter(a => emAberto(a) && a.data.slice(0, 7) < ym).reduce((t, a) => t + valorDe(a), 0);
   const status = !ats.length && !pago ? null : !pendentesMes.length ? 'pago' : pago > 0 || ats.some(a => a.pagamento === 'pago') ? 'parcial' : 'areceber';
   const nfPendente = !!c.nf && gs.some(g => !g.nf?.emitida);
   return { ats, pendentesMes, gs, pago, aReceber, anteriores, status, nfPendente };
@@ -811,7 +816,7 @@ function telaMes(ym) {
 
 function abaPagamentosAdm(c) {
   const hoje = hojeISO(), ym = hoje.slice(0, 7);
-  const pend = atendimentosDe(c.id).filter(a => a.pagamento === 'areceber').reverse();
+  const pend = atendimentosDe(c.id).filter(emAberto).reverse();
   const totalPend = pend.reduce((t, a) => t + valorDe(a), 0);
   const r = resumoMes(c, ym);
   const gs = pagamentosDe(c.id);
@@ -949,7 +954,7 @@ async function telaPagar(s) {
   if (!Cofre.aberto()) return;
   const ativos = cadastros.filter(c => !c.arquivado).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
   const c = cadastroDe(r.pid);
-  const pend = c ? atendimentosDe(c.id).filter(a => a.pagamento === 'areceber') : [];
+  const pend = c ? atendimentosDe(c.id).filter(emAberto) : [];
   if (c && r.ids === null) r.ids = new Set(pend.map(a => a.id));
   const soma = () => pend.filter(a => r.ids.has(a.id)).reduce((t, a) => t + valorDe(a), 0);
   if (c && !r.valorEditado) r.valor = soma() ? reais(soma()) : (valorPadrao(c) || '');
@@ -3464,7 +3469,7 @@ function segmentoAbasMes(ym) {
 function devedores() {
   const ym = hojeISO().slice(0, 7);
   return cadastros.map(c => {
-    const pend = atendimentosDe(c.id).filter(a => a.pagamento === 'areceber'); // marcou que veio (ou falta cobrada): já deve, mesmo que a data seja futura
+    const pend = atendimentosDe(c.id).filter(emAberto); // marcou que veio (ou falta cobrada): já deve, mesmo que a data seja futura
     const total = pend.reduce((t, a) => t + valorDe(a), 0);
     const atraso = pend.filter(a => a.data.slice(0, 7) < ym).reduce((t, a) => t + valorDe(a), 0);
     return { c, pend, total, atraso, desde: pend.map(a => a.data).sort()[0] };
@@ -3578,7 +3583,7 @@ function telaMesAba(ym) {
     const mensais = cadastros.filter(c => !c.arquivado && (c.modoPagamento === 'mensal' || c.modoPagamento === 'quinzenal')).sort((a, b) => (Number(a.diaPagamento) || 99) - (Number(b.diaPagamento) || 99) || a.nome.localeCompare(b.nome, 'pt-BR'));
     // Olha as sessões de cada mês: todas pagas ✅, parte paga 🟡, nada pago 🔴 (no mês atual ainda ⏳).
     const marca = (c, m) => {
-      const ats = atendimentosDe(c.id).filter(a => a.data.slice(0, 7) === m && (a.pagamento === 'areceber' || a.pagamento === 'pago'));
+      const ats = atendimentosDe(c.id).filter(a => a.data.slice(0, 7) === m && dentroDoFinanceiro(a) && (a.pagamento === 'areceber' || a.pagamento === 'pago'));
       if (!ats.length) return pagamentos.some(g => g.pid === c.id && g.data.slice(0, 7) === m) ? '✅' : '❌';
       const pagas = ats.filter(a => a.pagamento === 'pago').length;
       if (pagas === ats.length) return '✅';
@@ -3923,7 +3928,7 @@ async function autoImportarForms(token, agora0 = false) {
 // =====================================================================
 let fechamentoAno = false;
 function calcularFechamento(prefixo) {   // prefixo 'aaaa-mm' (mês) ou 'aaaa' (ano)
-  const ats = atendimentos.filter(a => a.data.startsWith(prefixo) && !cadastroDe(a.pid)?.excluido);
+  const ats = atendimentos.filter(a => a.data.startsWith(prefixo) && !cadastroDe(a.pid)?.excluido && dentroDoFinanceiro(a));
   const cobraveis = ats.filter(a => a.pagamento === 'areceber' || a.pagamento === 'pago');
   const soma = l => l.reduce((t, a) => t + valorDe(a), 0);
   const pagas = cobraveis.filter(a => a.pagamento === 'pago'), abertas = cobraveis.filter(a => a.pagamento === 'areceber');
@@ -4675,7 +4680,7 @@ function telaDetalheFin(tipo, periodo) {
   const titulo = (TIPOS_FIN[tipo] || 'Detalhe') + ' · ' + (periodo.length === 4 ? `ano de ${periodo}` : nomeMes(periodo));
   let grupos = new Map(), total = 0, explica = '';
   const add = (pid, valor, linha) => { const c = cadastroDe(pid); if (!c) return; const g = grupos.get(pid) || { c, v: 0, linhas: [] }; g.v += valor; g.linhas.push(linha); grupos.set(pid, g); total += valor; };
-  const ats = atendimentos.filter(a => a.data.startsWith(periodo));
+  const ats = atendimentos.filter(a => a.data.startsWith(periodo) && dentroDoFinanceiro(a));
   const desc = a => a.divida ? `dívida lançada (${nomeMes(a.data.slice(0, 7)).split(' ')[0].toLowerCase()})` : `${ddmm(a.data)}${a.hora ? ' ' + horaCurta(a.hora) : ''}${a.presenca === 'falta' ? ' (faltou)' : a.presenca === 'tardia' ? ' (desmarcou em cima)' : ''}`;
   if (tipo === 'caixa') {
     explica = 'Pagamentos registrados nestas datas, de qualquer mês de sessão.';
@@ -4732,7 +4737,7 @@ function contaPagamentoMes(c, ym) {
   const grupo = grupoPagamento(c);
   const ats = atendimentosDe(c.id).filter(a => !a.divida && a.data >= ini && a.data <= fim);
   const ocs = ocorrenciasDoMes(c, ym);
-  const pend = atendimentosDe(c.id).filter(a => a.pagamento === 'areceber' && a.data >= ini && a.data <= fim);
+  const pend = atendimentosDe(c.id).filter(a => emAberto(a) && a.data >= ini && a.data <= fim);
   if (grupo === 'adiantado' || grupo === 'fim') {
     if (!ocs.length && !ats.length && !pend.length) return null;
     // versão 108: "mês de início" só quando marcado no cadastro (inicioEm); o histórico do app é curto e confundia
@@ -4792,7 +4797,7 @@ async function pagouMensal(c, x, ym) {
 }
 // Quita do mais antigo para o mais novo até onde o valor alcança; a sobra fica de crédito.
 async function registrarComQuitacao(c, valor, data, ate = '9999-12-31') {
-  const pend = atendimentosDe(c.id).filter(a => a.pagamento === 'areceber' && a.data <= ate).sort((a, b) => a.data.localeCompare(b.data));
+  const pend = atendimentosDe(c.id).filter(a => emAberto(a) && a.data <= ate).sort((a, b) => a.data.localeCompare(b.data));
   const ids = []; let resta = valor;
   for (const a of pend) { const v = valorDe(a); if (v && v <= resta + 0.005) { ids.push(a.id); resta -= v; } }
   return registrarPagamento(c, { valor, data, ids });
