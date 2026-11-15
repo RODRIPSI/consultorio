@@ -829,10 +829,20 @@ function abaPagamentosAdm(c) {
   const totalPend = pend.reduce((t, a) => t + valorDe(a), 0);
   const r = resumoMes(c, ym);
   const gs = pagamentosDe(c.id);
+  // versão 121: a mesma conta da tela Pagamentos, mês a mês (pelo "referente a" de cada pagamento)
+  const mesesConta = [...new Set([ym, ...gs.map(refDe)])].filter(m => m >= INICIO_FINANCEIRO.slice(0, 7) || gs.some(g => refDe(g) === m)).sort().reverse().slice(0, 3);
+  const contaMes = m => {
+    const x = typeof contaPagamentoMes === 'function' ? contaPagamentoMes(c, m) : null;
+    const pagoRef = gs.filter(g => refDe(g) === m).reduce((t, g) => t + valorNum(g.valor), 0);
+    const previsto = x ? x.previsto : 0, pago = x ? Math.max(x.pago, pagoRef) : pagoRef, falta = Math.max(0, previsto - pago);
+    return el('div', { class: 'linha-grupo' }, el('span', { class: 'pag-info' }, el('strong', { text: nomeMes(m) }),
+      el('span', { class: 'suave pequeno', text: `previsto R$ ${reais(previsto)} · pago R$ ${reais(pago)}${previsto ? (falta > 0.005 ? ` · falta R$ ${reais(falta)}` : ' · ✅ quitado') : ''}` })));
+  };
   return el('div', { class: 'pilha' },
+    cartao('Conta por mês (igual à tela Pagamentos)', 'moeda', ...mesesConta.map(contaMes)),
     el('div', { class: 'resumo-fin' },
-      el('div', { class: 'cartao numero' }, el('small', { text: 'A receber' }), el('strong', { text: 'R$ ' + reais(totalPend) }), el('span', { class: 'suave pequeno', text: `${pend.length} ${pend.length === 1 ? 'atendimento' : 'atendimentos'}` })),
-      el('div', { class: 'cartao numero' }, el('small', { text: 'Recebido este mês' }), el('strong', { text: 'R$ ' + reais(r.pago) }), el('span', { class: 'suave pequeno', text: `${r.gs.length} ${r.gs.length === 1 ? 'pagamento' : 'pagamentos'}` }))),
+      el('div', { class: 'cartao numero' }, el('small', { text: 'Sessões feitas e não pagas' }), el('strong', { text: 'R$ ' + reais(totalPend) }), el('span', { class: 'suave pequeno', text: `${pend.length} ${pend.length === 1 ? 'sessão' : 'sessões'}` })),
+      el('div', { class: 'cartao numero' }, el('small', { text: 'Dinheiro que entrou este mês' }), el('strong', { text: 'R$ ' + reais(r.pago) }), el('span', { class: 'suave pequeno', text: `${r.gs.length} ${r.gs.length === 1 ? 'pagamento' : 'pagamentos'}` }))),
     (() => { const cr = creditoDe(c.id); if (cr < 0.005) return null; const v = valorPadrao(c) ? valorNum(valorPadrao(c)) : 0;
       return el('div', { class: 'cartao credito' }, el('strong', { text: `💰 Pago adiantado: R$ ${reais(cr)} de crédito` }),
         el('span', { class: 'suave pequeno', text: (v ? `Cobre mais ${Math.floor((cr + 0.005) / v)} ${Math.floor((cr + 0.005) / v) === 1 ? 'sessão' : 'sessões'}. ` : '') + 'Ao marcar a presença, a sessão já entra como paga, sem cobrar de novo.' }),
@@ -854,16 +864,21 @@ function abaPagamentosAdm(c) {
       el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => lancarSessaoNaoPaga(c) }, icone('mais'), el('span', { text: 'Lançar sessão não paga' })),
       el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => lancarDividaAnterior(c) }, icone('mais'), el('span', { text: 'Dívida de meses anteriores' }))),
     cartao('Pagamentos recebidos', 'sessoes',
-      gs.length > 0 && el('p', { class: 'suave pequeno', text: 'Pagamento lançado errado? Toque nele e depois em "Excluir pagamento".' }),
+      gs.length > 0 && el('p', { class: 'suave pequeno', text: 'Pagamento lançado errado? Toque nele: dá para corrigir o valor, a data e o mês a que se refere, ou excluir.' }),
       gs.length ? gs.slice(0, 24).map(g => el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => dialogoPagamento(c, g) },
         el('span', { class: 'pag-info' }, el('strong', { text: `R$ ${reais(valorNum(g.valor))}` }),
-          el('span', { class: 'suave', text: `${dataCurta(g.data)} · ${g.atendimentos?.length || 0} ${g.atendimentos?.length === 1 ? 'atendimento' : 'atendimentos'}${g.comprovanteId ? ' · com comprovante' : ''}` })),
+          el('span', { class: 'suave', text: `pago em ${dataCurta(g.data)} · referente a ${nomeMesCurto(refDe(g))}${g.comprovanteId ? ' · com comprovante' : ''}` }),
+          gs.some(o => o !== g && o.data === g.data && Math.abs(valorNum(o.valor) - valorNum(g.valor)) < 0.01) && el('span', { class: 'texto-alerta pequeno', text: '⚠️ Parece repetido (mesmo dia e valor)' })),
         (c.nf || g.nf?.emitida) && el('span', { class: 'selo ' + (g.nf?.emitida ? 'pago' : 'nota'), text: g.nf?.emitida ? 'Nota emitida' : 'Nota pendente' }))) : el('p', { class: 'suave', text: 'Nenhum pagamento registrado.' })),
     el('p', { class: 'suave pequeno', text: 'Sessões em que o paciente veio, faltou ou desmarcou com menos de 24h entram como "a receber" com o valor do cadastro. Toque em "Pagou" quando o paciente pagar. O Rodrigo pode abonar uma sessão.' }));
 }
 
 async function registrarPagamento(c, { valor, data, ids, arquivo, ref }) {
   const agora = agoraISO();
+  // versão 121: evita lançar o mesmo pagamento duas vezes
+  const igual = pagamentos.find(g => g.pid === c.id && g.data === data && Math.abs(valorNum(g.valor) - valorNum(valor)) < 0.01);
+  if (igual && !(await dialogo({ titulo: 'Pagamento repetido?', texto: `${c.nome} já tem um pagamento de R$ ${reais(valorNum(valor))} em ${dataCurta(data)}. Registrar outro igual mesmo assim?`,
+    botoes: [{ rotulo: 'Não registrar', valor: null }, { rotulo: 'Registrar outro', valor: true, estilo: 'primario' }] }))) return igual;
   // versão 115: "referente a" — o mês que este pagamento paga (ex.: pago em novembro, referente a outubro)
   if (!ref) { const meses = atendimentos.filter(x => ids.includes(x.id)).map(a => a.data.slice(0, 7)).sort(); ref = meses[0] || (data || hojeISO()).slice(0, 7); }
   const g = { id: crypto.randomUUID(), pid: c.id, data, ref, valor: valorNum(valor), atendimentos: ids, comprovanteId: null, nf: { emitida: false, numero: '' }, criadoEm: agora, atualizadoEm: agora };
