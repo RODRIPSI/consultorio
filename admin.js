@@ -2589,6 +2589,7 @@ function telaAgenda(inicio) {
   const ocs = cadastros.filter(c => !c.arquivado).flatMap(c => ocorrenciasNoPeriodo(c, seg, dom));
   const fmt = d => paraData(d).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' });
   const dias = [0, 1, 2, 3, 4, 5, 6].map(i => somarDias(seg, i));
+  const claroAg = document.documentElement.dataset.paleta === 'claro';
   const blocos = dias.map(d => {
     const sem = diaSemAtendimento(d);
     const doDia = ocs.filter(o => o.data === d).sort((a, b) => a.hora.localeCompare(b.hora) || a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
@@ -2599,6 +2600,7 @@ function telaAgenda(inicio) {
         el('span', { text: `${DIAS[diaDaSemana(d)]}, ${dataCurta(d).slice(0, 5)}${d === hoje ? ' (hoje)' : ''}` }),
         el('span', { class: 'dia-mais', 'aria-hidden': 'true', text: '+' })),
       sem && el('p', { class: 'faixa', text: `${sem.feriado ? 'Feriado' : 'Sem atendimento'}: ${sem.nome}` }),
+      claroAg && doDia.length ? linhasDiaClaro(doDia, d) :
       doDia.length ? doDia.map(o => {
         const riscado = o.feriado || o.cancelada;
         // versão 136: quando a sessão sai do dia, o horário aparece como livre (e para onde foi, se foi remarcada)
@@ -2610,21 +2612,75 @@ function telaAgenda(inicio) {
             el('span', { class: o.cancelada ? 'texto-livre' : o.feriadoAviso && !riscado ? 'texto-alerta' : 'suave', text: etiqueta + (o.feriadoAviso && !riscado ? ` · ⚠️ ${o.feriadoAviso}: toque para remarcar ou tirar` : '') + (!riscado && estadoConfirmacao(o.c, o.data, o.hora) ? ' · ' + ROTULO_CONF[estadoConfirmacao(o.c, o.data, o.hora)] : '') })));
       }) : el('button', { type: 'button', class: 'link', text: 'Nenhum atendimento. Toque para agendar neste dia.', onclick: () => acoesDiaAgenda(d) }));
   });
+  const vista = el('select', { class: 'sel-vista', 'aria-label': 'Ver como' }, el('option', { value: 'semana', text: 'Semana' }), el('option', { value: 'lista', text: 'Lista' }), el('option', { value: 'mes', text: 'Mês' }));
+  vista.addEventListener('change', () => { if (vista.value === 'mes') ir({ tela: 'agendaMes', ym: seg.slice(0, 7) }, false); if (vista.value === 'lista') ir({ tela: 'listaSemana', semana: seg }, false); });
   mostrar(
-    cabecalho('Agenda', { voltar: true, sub: `${fmt(seg)} a ${fmt(dom)}`, acoes: [botaoIcone('Feriados e dias sem atendimento', 'ajustes', () => ir({ tela: 'feriados' }))] }),
+    claroAg ? topoBanner('calendario', 'Agenda', 'Atendimentos e organização da semana', vista)
+      : cabecalho('Agenda', { voltar: true, sub: `${fmt(seg)} a ${fmt(dom)}`, acoes: [botaoIcone('Feriados e dias sem atendimento', 'ajustes', () => ir({ tela: 'feriados' }))] }),
     el('div', { class: 'conteudo pilha' },
       cartaoAvisosAgenda(),
-      segmentoEscolha({ semana: 'Semana', lista: 'Lista', mes: 'Mês' }, 'semana', k => { if (k === 'mes') ir({ tela: 'agendaMes', ym: seg.slice(0, 7) }, false); if (k === 'lista') ir({ tela: 'listaSemana', semana: seg }, false); }),
-      el('div', { class: 'botoes-linha' },
+      claroAg && el('div', { class: 'nav-semana' },
+        botaoIcone('Semana anterior', 'voltar', () => ir({ tela: 'agenda', semana: somarDias(seg, -7) }, false)),
+        el('button', { type: 'button', class: 'nav-semana-meio', onclick: () => ir({ tela: 'agenda' }, false) }, icone('calendario'), el('span', { text: `${fmt(seg)} a ${fmt(dom)}` })),
+        botaoIcone('Próxima semana', 'seguinte', () => ir({ tela: 'agenda', semana: somarDias(seg, 7) }, false))),
+      !claroAg && segmentoEscolha({ semana: 'Semana', lista: 'Lista', mes: 'Mês' }, 'semana', k => { if (k === 'mes') ir({ tela: 'agendaMes', ym: seg.slice(0, 7) }, false); if (k === 'lista') ir({ tela: 'listaSemana', semana: seg }, false); }),
+      !claroAg && el('div', { class: 'botoes-linha' },
         el('button', { type: 'button', class: 'secundario compacto', text: '‹ Semana anterior', onclick: () => ir({ tela: 'agenda', semana: somarDias(seg, -7) }, false) }),
         el('button', { type: 'button', class: 'secundario compacto', text: 'Hoje', onclick: () => ir({ tela: 'agenda' }, false) }),
         el('button', { type: 'button', class: 'secundario compacto', text: 'Próxima ›', onclick: () => ir({ tela: 'agenda', semana: somarDias(seg, 7) }, false) })),
       ...blocos,
-      el('button', { type: 'button', class: 'link', text: 'Feriados e dias sem atendimento', onclick: () => ir({ tela: 'feriados' }) })),
+      el('button', { type: 'button', class: 'link', text: 'Feriados, expediente e dias sem atendimento', onclick: () => ir({ tela: 'feriados' }) })),
     el('button', { type: 'button', class: 'fab estendido', onclick: () => { agendamentoRasc = null; ir({ tela: 'agendar' }); } }, icone('mais'), el('span', { text: 'Novo agendamento' })));
 }
 
+// versão 137: linhas da agenda no visual claro — hora | iniciais | nome | ›; horário que ficou vago vira "Horário disponível"
+function ocupadoPorOutro(o) {
+  return cadastros.some(x => x !== o.c && !x.arquivado && ocorrenciasNoPeriodo(x, o.data, o.data).some(y => !y.cancelada && !y.feriado && (parseInt(y.hora) || 0) === (parseInt(o.hora) || 0)));
+}
+function linhasDiaClaro(doDia, d) {
+  const out = [];
+  for (const o of doDia) {
+    const hora = el('span', { class: 'ag-hora', text: (horaCurta(o.hora) || '—').replace(/^(\d)h/, '0$1h') });
+    if (o.cancelada) {
+      const pra = (o.c.avulsos || []).find(a => a.remarcadaDe === o.data);
+      out.push(el('div', { class: 'ag-nota' }, icone('repetir'), el('span', {}, el('strong', { text: o.c.nome }),
+        el('span', { text: pra ? ` · remarcado para ${DIAS_LONGO[diaDaSemana(pra.data)].replace("-feira", "")}, ${dataCurta(pra.data).slice(0, 5)} às ${horaCurta(pra.hora)}` : ' · saiu deste dia' }))));
+      if (!ocupadoPorOutro(o)) out.push(el('button', { type: 'button', class: 'ag-linha livre', onclick: () => dialogoHorarioLivre(o, pra) }, hora, icone('calendario'), el('strong', { class: 'ag-nome', text: 'Horário disponível' }), icone('seguinte')));
+      continue;
+    }
+    const etiqueta = o.feriado ? 'Feriado: vai para o fim da série' : o.avulsa ? (o.c.avulsos?.find(a => a.id === o.avulsa)?.remarcadaDe ? 'Remarcada' : 'Avulsa') : o.fixo ? 'Horário fixo' : 'Série';
+    const conf = estadoConfirmacao(o.c, o.data, o.hora);
+    out.push(el('button', { type: 'button', class: 'ag-linha' + (o.feriadoAviso ? ' aviso' : ''), onclick: () => acoesOcorrencia(o) }, hora, avatar(o.c),
+      el('span', { class: 'ag-nome' }, el('strong', { text: o.c.nome }), el('small', { class: o.feriadoAviso ? 'texto-alerta' : 'suave', text: etiqueta + (o.feriadoAviso ? ` · ⚠️ ${o.feriadoAviso}` : '') + (conf ? ' · ' + ROTULO_CONF[conf] : '') })),
+      icone('seguinte')));
+  }
+  return out;
+}
+async function dialogoHorarioLivre(o, pra) {
+  const c = o.c, h = o.hi !== undefined ? horariosDe(c)[o.hi] : null;
+  const r = await janela('Horário disponível', [
+    el('p', { class: 'hl-quando', text: `${DIAS[diaDaSemana(o.data)]}, ${dataCurta(o.data).slice(0, 5)} às ${horaCurta(o.hora)}` }),
+    el('div', { class: 'ag-nota' }, icone('repetir'), el('span', {}, el('strong', { text: c.nome }),
+      el('span', { text: pra ? ` · remarcado para ${DIAS_LONGO[diaDaSemana(pra.data)].replace("-feira", "")}, ${dataCurta(pra.data).slice(0, 5)} às ${horaCurta(pra.hora)}.` : ' · saiu deste dia.' }))),
+    el('button', { type: 'button', class: 'primario com-icone centralizado largo', onclick: () => { fecharDialogos(); agendamentoRasc = { pid: '', data: o.data, hora: o.hora || '', repetir: 'nao', sessoes: '1', extras: [], ajustado: true }; ir({ tela: 'agendar' }); } }, icone('mais'), el('span', { text: 'Agendar paciente' })),
+    el('div', { class: 'botoes-linha' },
+      el('button', { type: 'button', class: 'secundario com-icone', onclick: async () => {
+        fecharDialogos();
+        if (pra) c.avulsos = c.avulsos.filter(a => a !== pra);
+        c.excecoes = (c.excecoes || []).filter(x => !(x.data === o.data && (x.hora || '') === (o.hora || '')));
+        c.atualizadoEm = agoraISO(); salvarCadastro(c); await salvarAgora(); indicarStatus(`Sessão de ${primeiroNome(c.nome)} restaurada`); render(history.state);
+      } }, icone('repetir'), el('span', { text: 'Restaurar sessão' })),
+      el('button', { type: 'button', class: 'secundario com-icone', onclick: () => { fecharDialogos(); ir(modo === 'dono' ? { tela: 'ficha', id: c.id, aba: 'retomar' } : { tela: 'adm', id: c.id, aba: 'atendimentos' }); } }, icone('pessoa'), el('span', { text: 'Ver paciente' }))),
+    h && el('button', { type: 'button', class: 'perigo-caixa', onclick: async () => {
+      fecharDialogos();
+      const ok = await dialogo({ titulo: 'Encerrar a série?', texto: `As sessões de ${primeiroNome(c.nome)} deixam de aparecer a partir de ${dataCurta(o.data)}, inclusive.`, botoes: [{ rotulo: 'Voltar', valor: null }, { rotulo: 'Encerrar', valor: true, estilo: 'perigo' }] });
+      if (!ok) return; h.fim = o.data; c.atualizadoEm = agoraISO(); salvarCadastro(c); await salvarAgora(); render(history.state);
+    } }, icone('lixeira'), el('span', {}, el('strong', { text: 'Encerrar série' }), el('small', { text: 'Finaliza os atendimentos recorrentes deste paciente a partir desta data.' })))],
+    [{ rotulo: 'Fechar', valor: null }]);
+  return r;
+}
 async function acoesOcorrencia(o) {
+  if (o.cancelada && document.documentElement.dataset.paleta === 'claro') return dialogoHorarioLivre(o, (o.c.avulsos || []).find(a => a.remarcadaDe === o.data));
   const c = o.c, h = o.hi !== undefined ? horariosDe(c)[o.hi] : null;
   const botoes = [{ rotulo: 'Fechar', valor: null }];
   if (o.cancelada) {

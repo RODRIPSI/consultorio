@@ -788,3 +788,23 @@ body.com-barra .fab { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
 .livres-dia { display: flex; flex-direction: column; gap: .3rem; padding: .4rem 0; border-top: 1px solid var(--linha); }
 .livres-dia .chips { flex-wrap: wrap; }
 .texto-livre { color: #1E6B4F; font-weight: 600; }
+
+/* versão 137: agenda no visual claro */
+.sel-vista { border: 1px solid var(--linha); border-radius: 999px; padding: .5rem 1rem; background: var(--cartao); font-weight: 600; }
+.nav-semana { display: flex; align-items: center; gap: .5rem; background: var(--cartao); border: 1px solid var(--linha); border-radius: 16px; padding: .35rem .5rem; }
+.nav-semana-meio { flex: 1; display: flex; justify-content: center; align-items: center; gap: .5rem; background: none; border: 0; font: inherit; color: var(--tinta); }
+.ag-linha { display: grid; grid-template-columns: 4rem auto 1fr auto; align-items: center; gap: .8rem; width: 100%; background: none; border: 0; border-top: 1px solid var(--linha); padding: .5rem .3rem; text-align: left; color: inherit; font: inherit; }
+.ag-hora { background: #F7EBD6; color: var(--tinta); border-radius: 10px; padding: .3rem 0; text-align: center; font-weight: 700; }
+.ag-nome { display: flex; flex-direction: column; min-width: 0; }
+.ag-nome strong { font-family: var(--serifa); }
+.ag-linha.livre { background: #E3EFE6; border-radius: 12px; border-top: 0; margin: .2rem 0; color: #1E6B4F; }
+.ag-linha.livre .ag-hora { background: #CFE4D6; }
+.ag-linha.livre .ic { color: #1E6B4F; }
+.ag-linha.aviso { background: #FBF0DF; border-radius: 12px; }
+.ag-nota { display: flex; align-items: center; gap: .6rem; background: #FBF0DF; border-radius: 12px; padding: .55rem .8rem; margin: .3rem 0; }
+.ag-nota .ic { color: #B7862F; flex: none; }
+.hl-quando { font-size: 1.1rem; margin: 0 0 .4rem; }
+.largo { width: 100%; justify-content: center; }
+.perigo-caixa { display: flex; gap: .7rem; align-items: flex-start; width: 100%; text-align: left; background: #F8E4E0; color: #A33A30; border: 0; border-radius: 14px; padding: .8rem 1rem; margin-top: .6rem; font: inherit; }
+.perigo-caixa span { display: flex; flex-direction: column; }
+.perigo-caixa small { color: var(--tinta); }
