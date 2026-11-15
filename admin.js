@@ -2454,8 +2454,12 @@ function ocorrenciasNoPeriodo(c, de, ate) {
     }
   });
   for (const a of c.avulsos || []) if (a.data >= de && a.data <= ate)
-    out.push({ c, data: a.data, hora: a.hora || '', avulsa: a.id, feriadoAviso: diaSemAtendimento(a.data)?.nome || null, cancelada: cancelado(c, a.data, a.hora) });
-  return out.sort((x, y) => x.data.localeCompare(y.data) || x.hora.localeCompare(y.hora));
+    out.push({ c, data: a.data, hora: a.hora || '', avulsa: a.id, feriadoAviso: diaSemAtendimento(a.data)?.nome || null, cancelada: !!a.cancelada });   // versão 138: a exceção do horário fixo não apaga uma sessão remarcada para o mesmo horário
+  // versão 138: o mesmo paciente não aparece duas vezes no mesmo dia e hora (fica a sessão que vale)
+  const vistos = new Map();
+  for (const o of out) { const k = `${o.data} ${parseInt(o.hora) || 0}`; const j = vistos.get(k);
+    if (!j || (j.cancelada && !o.cancelada)) vistos.set(k, o); }
+  return [...vistos.values()].sort((x, y) => x.data.localeCompare(y.data) || x.hora.localeCompare(y.hora));
 }
 const temAgenda = c => horariosDe(c).length > 0 || (c.avulsos || []).length > 0;
 
@@ -2666,8 +2670,8 @@ async function dialogoHorarioLivre(o, pra) {
     el('div', { class: 'botoes-linha' },
       el('button', { type: 'button', class: 'secundario com-icone', onclick: async () => {
         fecharDialogos();
-        if (pra) c.avulsos = c.avulsos.filter(a => a !== pra);
-        c.excecoes = (c.excecoes || []).filter(x => !(x.data === o.data && (x.hora || '') === (o.hora || '')));
+        c.avulsos = (c.avulsos || []).filter(a => a.remarcadaDe !== o.data && !(a.data === o.data && (parseInt(a.hora) || 0) === (parseInt(o.hora) || 0)));
+        c.excecoes = (c.excecoes || []).filter(x => !(x.data === o.data && (parseInt(x.hora) || 0) === (parseInt(o.hora) || 0)));
         c.atualizadoEm = agoraISO(); salvarCadastro(c); await salvarAgora(); indicarStatus(`Sessão de ${primeiroNome(c.nome)} restaurada`); render(history.state);
       } }, icone('repetir'), el('span', { text: 'Restaurar sessão' })),
       el('button', { type: 'button', class: 'secundario com-icone', onclick: () => { fecharDialogos(); ir(modo === 'dono' ? { tela: 'ficha', id: c.id, aba: 'retomar' } : { tela: 'adm', id: c.id, aba: 'atendimentos' }); } }, icone('pessoa'), el('span', { text: 'Ver paciente' }))),
@@ -2701,7 +2705,7 @@ async function acoesOcorrencia(o) {
   if (!r) return;
   if (r === 'ocupar') { agendamentoRasc = { pid: '', data: o.data, hora: o.hora || '', repetir: 'nao', sessoes: '1', extras: [], ajustado: true }; return ir({ tela: 'agendar' }); }
   if (r === 'abrir') return ir(modo === 'dono' ? { tela: 'ficha', id: c.id, aba: 'retomar' } : { tela: 'adm', id: c.id, aba: 'atendimentos' });
-  if (r === 'cancelar') { (c.excecoes ||= []).push({ data: o.data, hora: o.hora }); }
+  if (r === 'cancelar' && !cancelado(c, o.data, o.hora)) { (c.excecoes ||= []).push({ data: o.data, hora: o.hora }); }
   if (r === 'desfazer') { c.excecoes = (c.excecoes || []).filter(x => !(x.data === o.data && (x.hora || '') === (o.hora || ''))); }
   if (r === 'excluir') { c.avulsos = (c.avulsos || []).filter(a => a.id !== o.avulsa); }
   if (r === 'encerrar') {
@@ -2713,9 +2717,16 @@ async function acoesOcorrencia(o) {
   if (r === 'remarcar') {
     const v = await escolherHorarioLivre(c, o);
     if (!v || !v[0]) return;
+    // versão 138: sem duplicar — se a nova data/hora é o horário fixo original do paciente, só restaura
+    const hNova = v[1] || o.hora, mesmaHora = (a, b) => (parseInt(a) || 0) === (parseInt(b) || 0);
+    const remAvulsa = (o.avulsa && c.avulsos?.find(a => a.id === o.avulsa)) || null;
+    const origem = remAvulsa?.remarcadaDe || o.data;
     if (o.avulsa) c.avulsos = (c.avulsos || []).filter(a => a.id !== o.avulsa);
-    else (c.excecoes ||= []).push({ data: o.data, hora: o.hora });
-    (c.avulsos ||= []).push({ id: crypto.randomUUID(), data: v[0], hora: v[1] || o.hora, remarcadaDe: o.data });
+    else if (!cancelado(c, o.data, o.hora)) (c.excecoes ||= []).push({ data: o.data, hora: o.hora });
+    const fixoLa = (c.excecoes || []).find(x => x.data === v[0] && mesmaHora(x.hora, hNova));
+    if (fixoLa) c.excecoes = c.excecoes.filter(x => x !== fixoLa);
+    else if (!(c.avulsos || []).some(a => a.data === v[0] && mesmaHora(a.hora, hNova)))
+      (c.avulsos ||= []).push({ id: crypto.randomUUID(), data: v[0], hora: hNova, remarcadaDe: origem });
   }
   salvarCadastro(c); render(history.state);
 }
@@ -3560,6 +3571,7 @@ async function definirPresencaLista(o, presenca, extra = {}) {
   if (a.pagamento !== 'pago') { a.pagamento = pagamentoInicial(presenca, a); a.pagamentoManual = false; a.abonada = null; if (a.pagamento === 'areceber') usarCredito(a); }
   salvarAt(a);
   if (extra.liberar && !(c.excecoes || []).some(x => x.data === o.data && (x.hora || '') === (o.hora || ''))) (c.excecoes ||= []).push({ data: o.data, hora: o.hora });
+  if (extra.liberar && o.avulsa) { const av = (c.avulsos || []).find(x => x.id === o.avulsa); if (av) av.cancelada = true; }   // versão 138
   salvarCadastro(c);
   render(history.state);
 }
