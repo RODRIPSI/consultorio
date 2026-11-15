@@ -1348,7 +1348,7 @@ function abaCadastro(c) {
       (() => { const sel = el('select', { 'aria-label': 'Modo de pagamento' }, el('option', { value: '', text: 'Não definido' }), Object.entries(MODOS_PAG).map(([k, v]) => el('option', { value: k, text: v })));
         sel.value = c.modoPagamento || ''; sel.addEventListener('change', () => { c.modoPagamento = sel.value; salvar(); }); return sel; })(),
       el('label', { class: 'marcar' }, el('input', { type: 'checkbox', checked: !!c.pagaAdiantado, onchange: e => { c.pagaAdiantado = e.target.checked; salvar(); } }),
-        el('span', { text: 'Paga adiantado (antes das sessões do período)' })),
+        el('span', { text: 'Paga o mês adiantado (só vale para quem paga mensal)' })),
       el('div', { class: 'grade duas' },
         campo('Dia do pagamento (opcional)', 'diaPagamento', { inputmode: 'numeric', placeholder: 'Ex.: 10' }),
         campo('Valor mensal (R$)', 'valorMensal', { inputmode: 'decimal' }))),
@@ -1687,9 +1687,9 @@ const FONTES_DRIVE = {
 const MODOS_PAG = { sessao: 'Por sessão', semanal: 'Semanal', quinzenal: 'Quinzenal', mensal: 'Mensal' };
 // Versão 102: forma de pagamento editável direto da lista, com "paga adiantado".
 function textoFormaPagamento(c) {
-  if (!c.modoPagamento && !c.pagaAdiantado) return 'Forma de pagamento não definida ✏️';
+  if (!c.modoPagamento) return 'Forma de pagamento não definida ✏️';
   const modo = { sessao: 'por sessão', semanal: 'por semana', quinzenal: 'a cada quinze dias', mensal: 'por mês' }[c.modoPagamento] || c.modoPagamento || '';
-  return `Paga ${modo}${c.pagaAdiantado ? ' · adiantado 💰' : ''}${c.diaPagamento ? ` · dia ${c.diaPagamento}` : ''} ✏️`;
+  return `Paga ${modo}${c.pagaAdiantado && c.modoPagamento === 'mensal' ? ' · adiantado 💰' : ''}${c.diaPagamento ? ` · dia ${c.diaPagamento}` : ''} ✏️`;
 }
 async function editarFormaPagamento(c, depois) {
   const sel = el('select', { 'aria-label': 'Como paga' }, el('option', { value: '', text: 'Não definido' }), Object.entries(MODOS_PAG).map(([k, v]) => el('option', { value: k, text: v })));
@@ -1698,15 +1698,20 @@ async function editarFormaPagamento(c, depois) {
   quando.value = c.pagaAdiantado ? 'adiantado' : 'depois';
   const dia = el('input', { type: 'text', inputmode: 'numeric', value: c.diaPagamento || '', placeholder: 'Opcional', 'aria-label': 'Dia do pagamento' });
   const mensal = el('input', { type: 'text', inputmode: 'decimal', value: c.valorMensal || '', placeholder: 'Opcional', 'aria-label': 'Valor mensal' });
+  // versão 103: "Quando paga" e "Valor mensal" só aparecem para quem paga por mês
+  const soMensal = [el('label', { class: 'campo' }, el('span', { text: 'Quando paga o mês' }), quando),
+    el('label', { class: 'campo' }, el('span', { text: 'Valor mensal fechado (R$) · opcional' }), mensal)];
+  const mostrarMensal = () => soMensal.forEach(x => { x.style.display = sel.value === 'mensal' ? '' : 'none'; });
+  sel.addEventListener('change', mostrarMensal); mostrarMensal();
   const ok = await janela(`Forma de pagamento · ${c.nome}`, [
     el('label', { class: 'campo' }, el('span', { text: 'Como paga' }), sel),
-    el('label', { class: 'campo' }, el('span', { text: 'Quando paga' }), quando),
-    el('div', { class: 'grade duas' }, el('label', { class: 'campo' }, el('span', { text: 'Dia (opcional)' }), dia), el('label', { class: 'campo' }, el('span', { text: 'Valor mensal fechado (R$)' }), mensal)),
-    el('p', { class: 'suave pequeno', text: 'Quem paga adiantado entra no quadro "Pagam adiantado" em Pagamentos → Mês, com o previsto do mês e quanto já pagou. O que pagar a mais fica de crédito para as próximas sessões.' })],
+    ...soMensal,
+    el('label', { class: 'campo' }, el('span', { text: 'Dia do pagamento (opcional)' }), dia),
+    el('p', { class: 'suave pequeno', text: 'O valor de cada sessão continua sendo o da linha "por sessão". Por mês, o previsto é: valor mensal fechado, se houver; se não, sessões do mês × valor da sessão. Quem paga o mês adiantado entra no quadro "Pagam adiantado" em Pagamentos → Mês; o que pagar a mais vira crédito para as próximas sessões.' })],
     [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }]);
   if (!ok) return;
-  c.modoPagamento = sel.value; c.pagaAdiantado = quando.value === 'adiantado';
-  c.diaPagamento = dia.value.replace(/\D/g, '').slice(0, 2); c.valorMensal = mensal.value.trim();
+  c.modoPagamento = sel.value; c.pagaAdiantado = sel.value === 'mensal' && quando.value === 'adiantado';
+  c.diaPagamento = dia.value.replace(/\D/g, '').slice(0, 2); c.valorMensal = sel.value === 'mensal' ? mensal.value.trim() : '';
   c.atualizadoEm = agoraISO(); salvarCadastro(c); await salvarAgora();
   indicarStatus('Forma de pagamento salva');
   if (depois) depois(); else render(history.state);
@@ -1714,7 +1719,7 @@ async function editarFormaPagamento(c, depois) {
 // Conta do mês de quem paga adiantado: previsto (valor mensal ou sessões da agenda) × pago no mês + crédito.
 function contaAdiantados(ym) {
   const ini = ym + '-01', fim = somarDias(somarMeses(ym, 1) + '-01', -1);
-  return cadastros.filter(c => !c.arquivado && c.pagaAdiantado && !c.encerradoEm).map(c => {
+  return cadastros.filter(c => !c.arquivado && c.pagaAdiantado && c.modoPagamento === 'mensal' && !c.encerradoEm).map(c => {
     let ocs = []; try { ocs = ocorrenciasNoPeriodo(c, ini, fim).filter(o => !o.cancelada); } catch { }
     const previsto = valorNum(c.valorMensal) || ocs.reduce((t, o) => t + valorNum(valorPadrao(c, o.data)), 0);
     const pago = pagamentos.filter(g => g.pid === c.id && (g.data || '').slice(0, 7) === ym).reduce((t, g) => t + valorNum(g.valor), 0);
