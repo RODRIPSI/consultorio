@@ -4738,7 +4738,8 @@ function contaPagamentoMes(c, ym) {
     // versão 108: "mês de início" só quando marcado no cadastro (inicioEm); o histórico do app é curto e confundia
     const p1 = c.inicioEm || '';
     const mesDeInicio = !!p1 && p1.slice(0, 7) === ym;
-    const valorSessao = valorNum(valorPadrao(c, ini)) || valorNum(perfil?.valorSessao);
+    // versão 109: valor atual da sessão (o valor "desde" uma data no meio do mês não pode cair no valor padrão do dia 1º)
+    const valorSessao = valorNum(valorPadrao(c)) || valorNum(perfil?.valorSessao);
     const temMensal = valorNum(c.valorMensal) > 0;
     let previsto;
     if (mesDeInicio) previsto = ocorrenciasDoMes(c, ym, p1).length * valorSessao || ats.filter(cobravel).reduce((t, a) => t + valorDe(a), 0);
