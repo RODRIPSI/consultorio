@@ -2594,7 +2594,9 @@ function telaAgenda(inicio) {
   const fmt = d => paraData(d).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' });
   const dias = [0, 1, 2, 3, 4, 5, 6].map(i => somarDias(seg, i));
   const claroAg = document.documentElement.dataset.paleta === 'claro';
+  const livresSemana = claroAg ? horariosLivres(seg) : [];
   const blocos = dias.map(d => {
+    const livresDia = (livresSemana.find(x => x.d === d) || {}).hs || [];
     const sem = diaSemAtendimento(d);
     const doDia = ocs.filter(o => o.data === d).sort((a, b) => a.hora.localeCompare(b.hora) || a.c.nome.localeCompare(b.c.nome, 'pt-BR'));
     if (diaDaSemana(d) === 0 && !doDia.length && !sem) return null;
@@ -2604,7 +2606,7 @@ function telaAgenda(inicio) {
         el('span', { text: `${DIAS[diaDaSemana(d)]}, ${dataCurta(d).slice(0, 5)}${d === hoje ? ' (hoje)' : ''}` }),
         el('span', { class: 'dia-mais', 'aria-hidden': 'true', text: '+' })),
       sem && el('p', { class: 'faixa', text: `${sem.feriado ? 'Feriado' : 'Sem atendimento'}: ${sem.nome}` }),
-      claroAg && doDia.length ? linhasDiaClaro(doDia, d) :
+      claroAg && (doDia.length || livresDia.length) ? linhasDiaClaro(doDia, d, livresDia) :
       doDia.length ? doDia.map(o => {
         const riscado = o.feriado || o.cancelada;
         // versão 136: quando a sessão sai do dia, o horário aparece como livre (e para onde foi, se foi remarcada)
@@ -2641,9 +2643,19 @@ function telaAgenda(inicio) {
 function ocupadoPorOutro(o) {
   return cadastros.some(x => x !== o.c && !x.arquivado && ocorrenciasNoPeriodo(x, o.data, o.data).some(y => !y.cancelada && !y.feriado && (parseInt(y.hora) || 0) === (parseInt(o.hora) || 0)));
 }
-function linhasDiaClaro(doDia, d) {
+function linhasDiaClaro(doDia, d, livresDia = []) {
   const out = [];
-  for (const o of doDia) {
+  // versão 139: todo horário vago do expediente aparece como "Horário disponível", na ordem das horas
+  const hDe = o => parseInt(o.hora) || 0;
+  const jaTem = new Set(doDia.map(hDe));
+  const itens = [...doDia, ...livresDia.filter(h => !jaTem.has(h)).map(h => ({ vago: true, data: d, hora: `${String(h).padStart(2, '0')}:00` }))]
+    .sort((a, b) => hDe(a) - hDe(b) || (a.vago ? 1 : 0) - (b.vago ? 1 : 0));
+  for (const o of itens) {
+    if (o.vago) {
+      out.push(el('button', { type: 'button', class: 'ag-linha livre', onclick: () => dialogoVago(o) },
+        el('span', { class: 'ag-hora', text: horaCurta(o.hora).replace(/^(\d)h/, '0$1h') }), icone('calendario'), el('strong', { class: 'ag-nome', text: 'Horário disponível' }), icone('seguinte')));
+      continue;
+    }
     const hora = el('span', { class: 'ag-hora', text: (horaCurta(o.hora) || '—').replace(/^(\d)h/, '0$1h') });
     if (o.cancelada) {
       const pra = (o.c.avulsos || []).find(a => a.remarcadaDe === o.data);
@@ -2717,20 +2729,55 @@ async function acoesOcorrencia(o) {
   if (r === 'remarcar') {
     const v = await escolherHorarioLivre(c, o);
     if (!v || !v[0]) return;
-    // versão 138: sem duplicar — se a nova data/hora é o horário fixo original do paciente, só restaura
-    const hNova = v[1] || o.hora, mesmaHora = (a, b) => (parseInt(a) || 0) === (parseInt(b) || 0);
-    const remAvulsa = (o.avulsa && c.avulsos?.find(a => a.id === o.avulsa)) || null;
-    const origem = remAvulsa?.remarcadaDe || o.data;
-    if (o.avulsa) c.avulsos = (c.avulsos || []).filter(a => a.id !== o.avulsa);
-    else if (!cancelado(c, o.data, o.hora)) (c.excecoes ||= []).push({ data: o.data, hora: o.hora });
-    const fixoLa = (c.excecoes || []).find(x => x.data === v[0] && mesmaHora(x.hora, hNova));
-    if (fixoLa) c.excecoes = c.excecoes.filter(x => x !== fixoLa);
-    else if (!(c.avulsos || []).some(a => a.data === v[0] && mesmaHora(a.hora, hNova)))
-      (c.avulsos ||= []).push({ id: crypto.randomUUID(), data: v[0], hora: hNova, remarcadaDe: origem });
+    moverOcorrencia(o, v[0], v[1] || o.hora);
   }
   salvarCadastro(c); render(history.state);
 }
 
+// versão 138/139: move uma sessão para outra data/hora sem duplicar (se for o horário fixo original, só restaura)
+function moverOcorrencia(o, data, hNova) {
+  const c = o.c, mesmaHora = (a, b) => (parseInt(a) || 0) === (parseInt(b) || 0);
+  const remAvulsa = (o.avulsa && c.avulsos?.find(a => a.id === o.avulsa)) || null;
+  const origem = remAvulsa?.remarcadaDe || o.data;
+  if (o.avulsa) c.avulsos = (c.avulsos || []).filter(a => a.id !== o.avulsa);
+  else if (!cancelado(c, o.data, o.hora)) (c.excecoes ||= []).push({ data: o.data, hora: o.hora });
+  const fixoLa = (c.excecoes || []).find(x => x.data === data && mesmaHora(x.hora, hNova));
+  if (fixoLa) c.excecoes = c.excecoes.filter(x => x !== fixoLa);
+  else if (!(c.avulsos || []).some(a => a.data === data && mesmaHora(a.hora, hNova)))
+    (c.avulsos ||= []).push({ id: crypto.randomUUID(), data, hora: hNova, remarcadaDe: origem });
+  c.atualizadoEm = agoraISO();
+}
+// versão 139: toque num horário vago da agenda — agendar alguém ou trazer uma sessão de outro dia
+async function dialogoVago(v) {
+  const quando = `${DIAS[diaDaSemana(v.data)]}, ${dataCurta(v.data).slice(0, 5)} às ${horaCurta(v.hora)}`;
+  const r = await janela('Horário disponível', [el('p', { class: 'hl-quando', text: quando }),
+    el('button', { type: 'button', class: 'primario com-icone centralizado largo', onclick: () => { fecharDialogos(); agendamentoRasc = { pid: '', data: v.data, hora: v.hora, repetir: 'nao', sessoes: '1', extras: [], ajustado: true }; ir({ tela: 'agendar' }); } }, icone('mais'), el('span', { text: 'Agendar paciente' })),
+    el('button', { type: 'button', class: 'secundario com-icone centralizado largo', onclick: () => { fecharDialogos(); trazerSessaoPara(v); } }, icone('repetir'), el('span', { text: 'Remarcar uma sessão para cá' }))],
+    [{ rotulo: 'Fechar', valor: null }]);
+  return r;
+}
+async function trazerSessaoPara(v) {
+  const seg = segundaDaSemana(v.data), hoje = hojeISO();
+  const ocs = cadastros.filter(c => !c.arquivado).flatMap(c => ocorrenciasNoPeriodo(c, seg, somarDias(seg, 13)))
+    .filter(o => !o.cancelada && !o.feriado && o.data >= hoje && !(o.data === v.data && (parseInt(o.hora) || 0) === (parseInt(v.hora) || 0)))
+    .sort((a, b) => a.data.localeCompare(b.data) || a.hora.localeCompare(b.hora));
+  const busca = el('input', { type: 'search', placeholder: 'Procurar paciente', 'aria-label': 'Procurar paciente' });
+  const caixa = el('div', { class: 'pilha-pequena' });
+  const desenhar = () => {
+    const t = semAcento(busca.value);
+    const lista = ocs.filter(o => !t || semAcento(o.c.nome).includes(t)).slice(0, 40);
+    caixa.replaceChildren(...(lista.length ? lista.map(o => el('button', { type: 'button', class: 'ag-linha', onclick: async () => {
+      fecharDialogos();
+      moverOcorrencia(o, v.data, v.hora); salvarCadastro(o.c); await salvarAgora();
+      indicarStatus(`${primeiroNome(o.c.nome)} remarcado para ${DIAS[diaDaSemana(v.data)]}, ${horaCurta(v.hora)}`); render(history.state);
+    } }, el('span', { class: 'ag-hora', text: horaCurta(o.hora) }), avatar(o.c),
+      el('span', { class: 'ag-nome' }, el('strong', { text: o.c.nome }), el('small', { class: 'suave', text: `${DIAS[diaDaSemana(o.data)]}, ${dataCurta(o.data).slice(0, 5)}` })), icone('seguinte')))
+      : [el('p', { class: 'suave', text: 'Nenhuma sessão encontrada.' })]));
+  };
+  busca.addEventListener('input', desenhar); desenhar();
+  await janela(`Trazer para ${DIAS[diaDaSemana(v.data)]}, ${dataCurta(v.data).slice(0, 5)} às ${horaCurta(v.hora)}`,
+    [el('p', { class: 'suave pequeno', text: 'Escolha a sessão que vai mudar para este horário (desta semana e da próxima).' }), busca, caixa], [{ rotulo: 'Cancelar', valor: null }]);
+}
 // Versão 134: horários livres da semana (expediente − sessões marcadas − compromissos − feriados)
 function horariosLivres(seg) {
   const ocupados = new Set();
