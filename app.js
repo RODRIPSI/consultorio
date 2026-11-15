@@ -4,10 +4,29 @@
    Administrativa (admin.js): agenda, atendimentos, pagamentos, comprovantes, nota fiscal, mensagens e declarações. */
 
 const app = document.getElementById('app');
-const mostrar = (...nos) => app.replaceChildren(...nos.flat().filter(n => n != null && n !== false));
-const VERSAO = 'versão 128';
+// versão 129: barra de navegação fixa embaixo (Início, Pacientes, Agenda, Pagamentos, Recibos, Configurações)
+const mostrar = (...nos) => { app.replaceChildren(...nos.flat().filter(n => n != null && n !== false)); try { barraInferior(); } catch { } };
+function barraInferior() {
+  document.getElementById('barra-inferior')?.remove();
+  const aberto = typeof Cofre !== 'undefined' && Cofre.aberto?.() && typeof modo !== 'undefined' && (modo === 'dono' || modo === 'adm');
+  document.body.classList.toggle('com-barra', !!aberto);
+  if (!aberto) return;
+  const t = history.state?.tela || 'lista', adm = modo === 'adm';
+  const itens = [
+    ['inicio', 'Início', adm ? { tela: 'admInicio' } : { tela: 'lista' }, ['lista', 'admInicio'], 'casa'],
+    ['pessoa', 'Pacientes', adm ? { tela: 'admPacientes' } : { tela: 'pacientes' }, ['pacientes', 'admPacientes', 'ficha', 'adm'], 'pessoa'],
+    ['calendario', 'Agenda', { tela: 'agenda' }, ['agenda'], 'calendario'],
+    ['moeda', 'Pagamentos', { tela: 'mes' }, ['mes', 'devendo', 'detalheFin', 'pagar'], 'moeda'],
+    ['arquivo', 'Recibos', { tela: 'recibos', ym: hojeISO().slice(0, 7) }, ['recibos'], 'arquivo'],
+    ['ajustes', 'Configurações', { tela: 'config' }, ['config', 'drive'], 'ajustes']];
+  const nav = el('nav', { id: 'barra-inferior', class: 'barra-inferior', 'aria-label': 'Navegação' },
+    itens.map(([, rot, destino, telas, ic]) => el('button', { type: 'button', class: 'barra-item' + (telas.includes(t) ? ' ativo' : ''), onclick: () => ir(destino) },
+      icone(ic), el('span', { text: rot }))));
+  document.body.append(nav);
+}
+const VERSAO = 'versão 129';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
-const PALETAS = [['entrelacos', 'Entrelaços: natureza e ouro (escuro)', '#E8BC52', '#011816'], ['', 'Granada', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
+const PALETAS = [['claro', 'Entrelaços claro (creme e verde)', '#0F4A3C', '#F6F2EA'], ['entrelacos', 'Entrelaços: natureza e ouro (escuro)', '#E8BC52', '#011816'], ['', 'Granada', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
 function aplicarPaleta(k) {
   const pal = PALETAS.find(x => x[0] === k) || PALETAS[0];
@@ -17,7 +36,9 @@ function aplicarPaleta(k) {
 }
 // versão 100: a paleta Entrelaços passa a ser a padrão (uma vez só; depois vale a escolha em Configurações → Aparência)
 try { if (!localStorage.getItem('consultorio-paleta-v100')) { localStorage.setItem('consultorio-paleta-v100', '1'); if ((localStorage.getItem('consultorio-paleta') ?? 'noite') === 'noite') localStorage.setItem('consultorio-paleta', 'entrelacos'); } } catch { }
-try { aplicarPaleta(localStorage.getItem('consultorio-paleta') ?? 'entrelacos'); } catch { aplicarPaleta('entrelacos'); }
+// versão 129: o visual claro (creme e verde) passa a ser o padrão, uma vez só
+try { if (!localStorage.getItem('consultorio-paleta-v129')) { localStorage.setItem('consultorio-paleta-v129', '1'); if (['entrelacos', 'noite', null].includes(localStorage.getItem('consultorio-paleta'))) localStorage.setItem('consultorio-paleta', 'claro'); } } catch { }
+try { aplicarPaleta(localStorage.getItem('consultorio-paleta') ?? 'claro'); } catch { aplicarPaleta('claro'); }
 function linhaAparencia(linha) {
   let atual = 'entrelacos'; try { atual = localStorage.getItem('consultorio-paleta') ?? 'entrelacos'; } catch { }
   const sel = el('select', { 'aria-label': 'Cores do app' }, PALETAS.map(([k, nome]) => el('option', { value: k, text: nome })));
@@ -81,6 +102,7 @@ const ICONES = {
   voltar: [['path', { d: 'M15 18l-6-6 6-6' }]],
   seguinte: [['path', { d: 'M9 18l6-6-6-6' }]],
   cadeado: [['rect', { x: 5, y: 11, width: 14, height: 9, rx: 2 }], ['path', { d: 'M8 11V8a4 4 0 0 1 8 0v3' }]],
+  casa: [['path', { d: 'M3 11l9-7 9 7' }], ['path', { d: 'M5 10v10h5v-6h4v6h5V10' }]],
   ajustes: [['path', { d: 'M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1' }],
     ['circle', { cx: 15, cy: 6, r: 2 }], ['circle', { cx: 9, cy: 12, r: 2 }], ['circle', { cx: 17, cy: 18, r: 2 }]],
   mais: [['path', { d: 'M12 5v14M5 12h14' }]],
@@ -580,7 +602,7 @@ function telaLista(todos = false) {
   };
   busca.addEventListener('input', desenhar);
 
-  const ent = !todos && document.documentElement.dataset.paleta === 'entrelacos';
+  const ent = !todos && ['entrelacos', 'claro'].includes(document.documentElement.dataset.paleta);
   mostrar(
     ent ? topoEntrelacos(ativos) :
     todos ? cabecalho(verArquivados ? 'Arquivados' : 'Todos os pacientes', { voltar: true, sub: verArquivados ? null : `${ativos} em acompanhamento` }) : cabecalho('Consultório', {

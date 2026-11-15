@@ -4336,9 +4336,9 @@ function telaPagamentos(ym) {
       el('div', { class: 'resumo-fin tres' },
         // versão 125: sem previsão. Pago | Falta receber deste mês | Dívidas de meses anteriores (abre outra tela)
         // versão 127: os mesmos números que aparecem ao tocar em cada cartão
-        numero(`Pago referente a ${mesNome.toLowerCase()}`, todosG.reduce((t, x) => t + x.pago, 0), `${todosG.filter(x => x.pago > 0.005).length} pacientes · toque para ver`, 'ok', () => verListaMes(todosG, ym, 'pago')),
-        numero(`Falta receber de ${mesNome.toLowerCase()}`, faltaT, `${todosG.filter(x => x.falta > 0.005).length} pacientes · toque para ver`, faltaT ? 'alerta' : 'ok', () => verListaMes(todosG, ym, 'falta')),
-        numero('Dívidas de meses anteriores', anteriores, 'toque para ver e lançar dívidas', anteriores ? 'alerta' : '', () => ir({ tela: 'devendo', filtro: 'anteriores' }))),
+        numero(`💰 Pago referente a ${mesNome.toLowerCase()}`, todosG.reduce((t, x) => t + x.pago, 0), `${todosG.filter(x => x.pago > 0.005).length} pacientes · toque para ver`, 'ok', () => verListaMes(todosG, ym, 'pago')),
+        numero(`🕒 Falta receber de ${mesNome.toLowerCase()}`, faltaT, `${todosG.filter(x => x.falta > 0.005).length} pacientes · toque para ver`, faltaT ? 'alerta' : 'ok', () => verListaMes(todosG, ym, 'falta')),
+        numero('📚 Dívidas de meses anteriores', anteriores, 'toque para ver e lançar dívidas', anteriores ? 'alerta' : '', () => ir({ tela: 'devendo', filtro: 'anteriores' }))),
       el('div', { class: 'botoes-linha acoes-pag' },
         el('button', { type: 'button', class: 'primario com-icone', onclick: conferirExtrato }, el('span', { text: '🏦 Conferir Pix do extrato' })),
         el('button', { type: 'button', class: 'secundario com-icone', onclick: importarListaPagamentos }, el('span', { text: '📥 Importar lista de pagamentos' })),
@@ -4949,10 +4949,17 @@ function linhaGrupo(x, ym) {
       if (r === 'corrigir') corrigirPagamentoMes(c, ym);
       if (r === 'desfazer') desfazerPagamentoMes(c, ym);
     } }));
-  return el('div', { class: 'linha-grupo' },
-    el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => ir({ tela: 'adm', id: c.id, aba: 'pagamentos' }) },
+  // versão 129: linha em colunas — Paciente | Valor | Vencimento | Situação e ações
+  const diaV = x.grupo === 'adiantado' ? `${String(Math.min(28, Number(c.diaPagamento) || DIA_LIMITE_ADIANTADO)).padStart(2, '0')}/${ym.slice(5, 7)}`
+    : x.grupo === 'fim' ? `${String(Math.min(28, Number(c.diaPagamento) || DIA_LIMITE_FIM)).padStart(2, '0')}/${somarMeses(ym, 1).slice(5, 7)}`
+    : x.pend?.length ? ddmm(x.pend[0].data) : '—';
+  const valorCol = x.falta > 0.005 ? x.falta : (x.pago || x.previsto);
+  return el('div', { class: 'linha-grupo linha-tabela' },
+    el('button', { type: 'button', class: 'pag-linha linha-botao col-paciente', onclick: () => ir({ tela: 'adm', id: c.id, aba: 'pagamentos' }) },
       avatar(c), el('span', { class: 'pag-info' }, el('strong', { text: c.nome }), el('span', { class: 'suave pequeno', text: sub }))),
-    el('div', { class: 'linha-grupo-acoes' }, selo, ...acoes));
+    el('span', { class: 'col-valor', text: valorCol ? 'R$ ' + reais(valorCol) : '—' }),
+    el('span', { class: 'col-venc' }, icone('calendario'), el('span', { text: diaV })),
+    el('div', { class: 'linha-grupo-acoes col-status' }, selo, ...acoes));
 }
 // Versão 108: marcar de uma vez quem já pagou o mês (com o valor de cada um, que pode ser corrigido)
 async function marcarPagosMes(lista, ym) {
@@ -5022,7 +5029,9 @@ function cartaoGrupo(chave, titulo, lista, ym) {
   return el('section', { class: 'cartao grupo-pag' },
     el('div', { class: 'grupo-pag-topo' }, el('h3', { class: 'cartao-titulo', text: `${titulo} (${lista.length})` }),
       el('span', { class: 'grupo-pag-nums' }, `recebido `, el('b', { text: 'R$ ' + reais(rec) }), ` · ${porSessao ? 'devendo' : 'falta'} `, el('b', { class: falta > 0.005 ? 'texto-alerta' : '', text: 'R$ ' + reais(falta) }))),
+    el('span', { class: 'pct-grupo', text: `${pct}%` }),
     barra,
+    el('div', { class: 'linha-tabela cabeca-tabela' }, el('span', { class: 'col-paciente', text: 'Paciente' }), el('span', { class: 'col-valor', text: 'Valor' }), el('span', { class: 'col-venc', text: 'Vencimento' }), el('span', { class: 'col-status', text: 'Situação' })),
     !porSessao && falta > 0.005 && el('button', { type: 'button', class: 'secundario compacto', text: '✅ Marcar quem já pagou (de uma vez)', onclick: () => marcarPagosMes(lista, ym) }),
     // versão 117: quem falta pagar fica aberto; quem já pagou ou está em dia fica guardado num "ver" para a página não repetir nomes à toa
     ...(() => { const abertos = mostrar.filter(x => x.falta > 0.005), resolvidos = mostrar.filter(x => x.falta <= 0.005);
