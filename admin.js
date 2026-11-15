@@ -4334,8 +4334,9 @@ function telaPagamentos(ym) {
       nav,
       el('div', { class: 'resumo-fin tres' },
         // versão 125: sem previsão. Pago | Falta receber deste mês | Dívidas de meses anteriores (abre outra tela)
-        numero(`Pago referente a ${mesNome.toLowerCase()}`, todosG.reduce((t, x) => t + x.pago, 0), `dinheiro que entrou em ${mesNome.toLowerCase()}: R$ ${reais(recebidoCaixa)}`, 'ok', () => ir({ tela: 'detalheFin', tipo: 'caixa', periodo: ym })),
-        numero(`Falta receber de ${mesNome.toLowerCase()}`, faltaT, 'sessões feitas e não pagas + mensalidades em aberto', faltaT ? 'alerta' : 'ok', () => ir({ tela: 'devendo', filtro: 'mes' })),
+        // versão 127: os mesmos números que aparecem ao tocar em cada cartão
+        numero(`Pago referente a ${mesNome.toLowerCase()}`, todosG.reduce((t, x) => t + x.pago, 0), `${todosG.filter(x => x.pago > 0.005).length} pacientes · toque para ver`, 'ok', () => verListaMes(todosG, ym, 'pago')),
+        numero(`Falta receber de ${mesNome.toLowerCase()}`, faltaT, `${todosG.filter(x => x.falta > 0.005).length} pacientes · toque para ver`, faltaT ? 'alerta' : 'ok', () => verListaMes(todosG, ym, 'falta')),
         numero('Dívidas de meses anteriores', anteriores, 'toque para ver e lançar dívidas', anteriores ? 'alerta' : '', () => ir({ tela: 'devendo', filtro: 'anteriores' }))),
       el('div', { class: 'botoes-linha acoes-pag' },
         el('button', { type: 'button', class: 'primario com-icone', onclick: conferirExtrato }, el('span', { text: '🏦 Conferir Pix do extrato' })),
@@ -4857,13 +4858,14 @@ function contaPagamentoMes(c, ym) {
       else { status = 'atrasado'; dias = Math.round((paraData(hoje) - paraData(venc)) / 864e5); }
       if (ym > hojeYm) status = grupo === 'adiantado' ? 'aguardando' : 'areceber';
     }
-    return { c, grupo, previsto, pago: Math.min(pago, previsto || pago), falta, status, dias, mesDeInicio, semMensal: !temMensal && !mesDeInicio, pend, sessoes: ats.filter(cobravel).length };
+    return { c, grupo, previsto, pago, falta, status, dias, mesDeInicio, semMensal: !temMensal && !mesDeInicio, pend, sessoes: ats.filter(cobravel).length };
   }
   // por sessão, semanal e quinzenal
   const feitas = ats.filter(cobravel);
   const futuras = [];   // versão 125: sem previsão pela agenda
   const previsto = feitas.reduce((t, a) => t + valorDe(a), 0) + futuras.reduce((t, o) => t + valorNum(valorPadrao(c, o.data)), 0);
-  const recebido = feitas.filter(a => a.pagamento === 'pago').reduce((t, a) => t + valorDe(a), 0);
+  // versão 127: pago = o que foi pago referente a este mês (valor real dos pagamentos), igual em todo o app
+  const recebido = pagosRef.reduce((t, g) => t + valorNum(g.valor), 0) || feitas.filter(a => a.pagamento === 'pago').reduce((t, a) => t + valorDe(a), 0);
   const devendo = pend.reduce((t, a) => t + valorDe(a), 0);
   if (!previsto && !devendo && !naBase) return null;
   return { c, grupo, previsto, pago: recebido, falta: devendo, status: devendo > 0.005 ? 'devendo' : 'emdia', pend, sessoes: feitas.length + futuras.length, semAgenda: !ocs.length && !ats.length };
@@ -4982,6 +4984,20 @@ async function marcarPagosMes(lista, ym) {
   await salvarAgora();
   indicarStatus(`${n} ${n === 1 ? 'pagamento registrado' : 'pagamentos registrados'} · R$ ${reais(total)}`);
   render(history.state);
+}
+// versão 127: lista que forma o número de cada cartão (soma igual ao cartão)
+function verListaMes(lista, ym, tipo) {
+  const itens = lista.filter(x => x[tipo] > 0.005).sort((a, b) => b[tipo] - a[tipo]);
+  const total = itens.reduce((t, x) => t + x[tipo], 0);
+  const motivo = x => tipo === 'pago'
+    ? pagamentos.filter(g => g.pid === x.c.id && refDe(g) === ym).map(g => `R$ ${reais(valorNum(g.valor))} em ${dataCurta(g.data).slice(0, 5)}`).join(' · ') || 'sessões pagas'
+    : x.pend?.length && !(x.grupo === 'adiantado' || x.grupo === 'fim') ? `sessões sem pagar: ${x.pend.map(a => ddmm(a.data)).join(', ')}` : temMensalidadeFixa(x.c) || valorNum(x.c.valorMensal) ? 'mensalidade do mês' : `${x.sessoes} ${x.sessoes === 1 ? 'sessão feita' : 'sessões feitas'}`;
+  return janela(`${tipo === 'pago' ? 'Pago' : 'Falta receber'} · ${nomeMes(ym)} · R$ ${reais(total)}`, [
+    el('p', { class: 'suave pequeno', text: `${itens.length} ${itens.length === 1 ? 'paciente' : 'pacientes'}. Toque no nome para abrir a página do paciente.` }),
+    el('div', { class: 'pilha-pequena lista-importar' }, itens.map(x => el('button', { type: 'button', class: 'linha-importar linha-botao', onclick: () => { fecharDialogos(); ir({ tela: 'adm', id: x.c.id, aba: 'pagamentos' }); } },
+      el('span', { class: 'pag-info' }, el('strong', { text: x.c.nome }), el('span', { class: 'suave pequeno', text: motivo(x) })),
+      el('strong', { text: 'R$ ' + reais(x[tipo]) }))))],
+    [{ rotulo: 'Fechar', valor: null, estilo: 'primario' }]);
 }
 // versão 123: de onde sai o "Previsto no mês", paciente por paciente
 function verContaPrevisto(lista, ym) {
