@@ -889,6 +889,34 @@ function desligarComprovante(d) {
   for (const g of pagamentos.filter(x => x.comprovanteId === d.id)) { g.comprovanteId = null; salvarPag(g); }
 }
 
+// Versão 113: corrigir valor ou data de um pagamento marcado errado. As sessões ligadas são refeitas pelo novo valor.
+async function editarPagamento(c, g) {
+  const r = await dialogo({ titulo: `Corrigir pagamento · ${c.nome}`, texto: 'Mude o valor ou a data. As sessões quitadas por este pagamento são refeitas com o novo valor; o que sobrar vira crédito.',
+    campos: [{ rotulo: 'Valor (R$)', valor: reais(valorNum(g.valor)) }, { rotulo: 'Data', tipo: 'date', valor: g.data }],
+    botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }] });
+  if (!r) return;
+  const v = valorNum(r[0]);
+  if (!v) return aviso('Falta o valor', 'Digite o valor pago. Para apagar o pagamento, use "Excluir".');
+  for (const a of atendimentos.filter(x => x.pagamentoId === g.id)) { a.pagamento = a.presenca === 'realizada' || !a.presenca ? 'areceber' : 'naocobrar'; a.pagoEm = null; a.pagamentoId = null; a.atualizadoEm = agoraISO(); salvarAt(a); }
+  g.valor = reais(v); g.data = r[1] || g.data; g.atendimentos = []; g.atualizadoEm = agoraISO();
+  let resta = v;
+  for (const a of atendimentos.filter(x => x.pid === c.id && emAberto(x)).sort((x, y) => x.data.localeCompare(y.data))) {
+    const va = valorDe(a); if (!va || va > resta + 0.005) continue;
+    a.pagamento = 'pago'; a.pagoEm = g.data; a.pagamentoId = g.id; a.atualizadoEm = agoraISO(); salvarAt(a); g.atendimentos.push(a.id); resta -= va;
+  }
+  salvarPag(g); await salvarAgora();
+  indicarStatus(`Pagamento corrigido: R$ ${reais(v)} em ${dataCurta(g.data).slice(0, 5)}`);
+  render(history.state);
+}
+// Escolhe qual pagamento do mês corrigir (quando há mais de um)
+async function corrigirPagamentosDoMes(c, ym) {
+  const gs = pagamentos.filter(g => g.pid === c.id && g.data.slice(0, 7) >= ym && g.data <= somarMeses(ym, 1) + '-05').sort((a, b) => a.data.localeCompare(b.data));
+  if (!gs.length) return aviso('Sem pagamento', 'Não há pagamento registrado neste mês.');
+  if (gs.length === 1) return dialogoPagamento(c, gs[0]);
+  const r = await janela(`Pagamentos · ${c.nome}`, [el('p', { class: 'suave pequeno', text: 'Qual pagamento você quer corrigir ou excluir?' })],
+    [{ rotulo: 'Cancelar', valor: null }, ...gs.map((g, i) => ({ rotulo: `${dataCurta(g.data).slice(0, 5)} · R$ ${reais(valorNum(g.valor))}`, valor: String(i) }))]);
+  if (r != null) return dialogoPagamento(c, gs[Number(r)]);
+}
 async function dialogoPagamento(c, g) {
   const ats = atendimentos.filter(a => (g.atendimentos || []).includes(a.id)).sort((a, b) => a.data.localeCompare(b.data));
   const doc = documentos.find(d => d.id === g.comprovanteId);
@@ -910,9 +938,11 @@ async function dialogoPagamento(c, g) {
       el('input', { type: 'checkbox', checked: !!g.nf.emitida, onchange: e => { g.nf.emitida = e.target.checked; salvarPag(g); } }),
       el('span', { text: 'Nota fiscal emitida' })),
     numero];
-  const acao = await janela('Pagamento', conteudo, [
+  const acao = await janela(`Pagamento · ${c.nome}`, conteudo, [
     { rotulo: 'Excluir', valor: 'excluir', estilo: 'secundario perigo-texto' },
+    { rotulo: '✏️ Corrigir valor ou data', valor: 'editar' },
     { rotulo: 'Fechar', valor: null, estilo: 'primario' }]);
+  if (acao === 'editar') return editarPagamento(c, g);
   if (acao === 'excluir') {
     const ok = await dialogo({ titulo: 'Excluir este pagamento?', texto: 'Os atendimentos voltam a ficar "a receber" e o comprovante é apagado.', botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Excluir', valor: true, estilo: 'perigo' }] });
     if (ok) await excluirPagamento(g);
@@ -4279,7 +4309,14 @@ function telaPagamentos(ym) {
       ...GRUPOS_PAG.map(([k, t]) => cartaoGrupo(k, t, grupos[k], ym)),
       !todosG.length && el('p', { class: 'suave centro', text: 'Nenhum paciente com sessão ou mensalidade neste mês.' }),
       (() => { const d = el('details', { class: 'cartao' }, el('summary', {}, el('strong', { text: `✅ Pagamentos recebidos em ${mesNome.toLowerCase()} (${pagos.length})` })),
-        pagos.length ? ordenar(pagos).map(x => linhaPac(x.c, 'R$ ' + reais(x.v), `pago em ${x.datas}`)) : el('p', { class: 'suave', text: 'Nenhum pagamento registrado neste mês.' })); return d; })(),
+        pagos.length ? pagamentos.filter(g => g.data.startsWith(ym) && cadastroDe(g.pid)).sort((a, b) => cadastroDe(a.pid).nome.localeCompare(cadastroDe(b.pid).nome, 'pt-BR') || a.data.localeCompare(b.data)).map(g => {
+          const c = cadastroDe(g.pid);
+          return el('div', { class: 'linha-grupo' }, el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => dialogoPagamento(c, g) }, avatar(c),
+            el('span', { class: 'pag-info' }, el('strong', { text: c.nome }), el('span', { class: 'suave pequeno', text: `pago em ${dataCurta(g.data).slice(0, 5)} · R$ ${reais(valorNum(g.valor))}` }))),
+            el('div', { class: 'linha-grupo-acoes' }, el('button', { type: 'button', class: 'chip acao', text: '✏️ Corrigir', onclick: () => editarPagamento(c, g) }),
+              el('button', { type: 'button', class: 'chip acao', text: '🗑️ Excluir', onclick: async () => {
+                if (await dialogo({ titulo: 'Excluir este pagamento?', texto: `${c.nome} · R$ ${reais(valorNum(g.valor))} em ${dataCurta(g.data).slice(0, 5)}. As sessões voltam a ficar "a receber".`, botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Excluir', valor: true, estilo: 'perigo' }] })) { await excluirPagamento(g); render(history.state); } } })));
+        }) : el('p', { class: 'suave', text: 'Nenhum pagamento registrado neste mês.' })); d.open = true; return d; })(),
       el('p', { class: 'suave pequeno', text: `Mensal adiantado: vence no dia ${DIA_LIMITE_ADIANTADO} (ou no dia combinado de cada um). Mensal no fim do mês: paga até o dia ${DIA_LIMITE_FIM} do mês seguinte. Por sessão, semanal e quinzenal: previsto = sessões do mês na agenda × valor; a lista mostra só quem fez sessão e não pagou. Mês de início: só as sessões a partir da primeira.` })];
   } else if (abaMes === 'devendo') {
     // agrupa tudo que está em aberto pelo mês da sessão (ou da dívida lançada)
@@ -4831,6 +4868,7 @@ function linhaGrupo(x, ym) {
     : `${x.pend.length} ${x.pend.length === 1 ? 'sessão' : 'sessões'} sem pagar: ${x.pend.map(a => ddmm(a.data)).join(', ')}`;
   const selo = el('span', { class: 'selo-status ' + cls, text: x.status === 'atrasado' ? `${rot} ${x.dias} ${x.dias === 1 ? 'dia' : 'dias'}` : x.status === 'devendo' ? `Devendo R$ ${reais(x.falta)}` : rot });
   const acoes = [];
+  if (x.pago > 0.005) acoes.push(el('button', { type: 'button', class: 'chip acao', text: '✏️ Pagamento', title: 'Corrigir ou excluir o pagamento', onclick: () => corrigirPagamentosDoMes(c, ym) }));
   if (mensal && x.semMensal) acoes.push(el('button', { type: 'button', class: 'chip acao', text: 'Definir mensalidade', onclick: () => editarFormaPagamento(c) }));
   if (mensal && x.falta > 0.005) {
     acoes.push(el('button', { type: 'button', class: 'chip acao', text: x.status === 'atrasado' ? '💬 Cobrar' : '💬 Lembrar', onclick: () => avisoMensalidade(c, x, ym, x.status === 'atrasado') }));
