@@ -4842,7 +4842,12 @@ function gruposDoMes(ym) {
 }
 // "Pagou" de um mensal: registra o valor e quita o que estiver em aberto do mês; o que sobrar vira crédito.
 async function pagouMensal(c, x, ym) {
-  const r = await dialogo({ titulo: `Pagamento · ${c.nome}`, texto: `${nomeMes(ym)}: falta R$ ${reais(x.falta)}. Se pagou outro valor, corrija.`,
+  // versão 119: mostra de onde sai o valor sugerido (previsto − o que já foi registrado para este mês)
+  const jaPagos = pagamentos.filter(g => g.pid === c.id && refDe(g) === ym);
+  const conta = x.pago > 0.005
+    ? `${nomeMes(ym)}: previsto R$ ${reais(x.previsto)} − já registrado R$ ${reais(x.pago)}${jaPagos.length ? ` (pago em ${jaPagos.map(g => dataCurta(g.data).slice(0, 5)).join(', ')})` : ''} = falta R$ ${reais(x.falta)}. Se o que já foi registrado era de outro mês, cancele e use o ✏️ para mudar o "referente ao mês".`
+    : `${nomeMes(ym)}: falta R$ ${reais(x.falta)}. Se pagou outro valor, corrija.`;
+  const r = await dialogo({ titulo: `Pagamento · ${c.nome}`, texto: conta,
     campos: [{ rotulo: 'Valor pago (R$)', valor: reais(x.falta || x.previsto), inputmode: 'decimal' }, { rotulo: 'Data do pagamento', tipo: 'date', valor: hojeISO() },
       { rotulo: 'Referente ao mês', tipo: 'month', valor: ym }],
     botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Registrar', valor: true, estilo: 'primario' }] });
