@@ -17,14 +17,14 @@ function barraInferior() {
     ['pessoa', 'Pacientes', adm ? { tela: 'admPacientes' } : { tela: 'pacientes' }, ['pacientes', 'admPacientes', 'ficha', 'adm'], 'pessoa'],
     ['calendario', 'Agenda', { tela: 'agenda' }, ['agenda'], 'calendario'],
     ['moeda', 'Pagamentos', { tela: 'mes' }, ['mes', 'devendo', 'detalheFin', 'pagar'], 'moeda'],
-    ['arquivo', 'Recibos', { tela: 'recibos', ym: hojeISO().slice(0, 7) }, ['recibos'], 'arquivo'],
+    ['arquivo', 'Recibos', { tela: 'emitir' }, ['recibos', 'emitir'], 'arquivo'],
     ['ajustes', 'Configurações', { tela: 'config' }, ['config', 'drive'], 'ajustes']];
   const nav = el('nav', { id: 'barra-inferior', class: 'barra-inferior', 'aria-label': 'Navegação' },
     itens.map(([, rot, destino, telas, ic]) => el('button', { type: 'button', class: 'barra-item' + (telas.includes(t) ? ' ativo' : ''), onclick: () => ir(destino) },
       icone(ic), el('span', { text: rot }))));
   document.body.append(nav);
 }
-const VERSAO = 'versão 131';
+const VERSAO = 'versão 132';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['claro', 'Entrelaços claro (creme e verde)', '#0F4A3C', '#F6F2EA'], ['entrelacos', 'Entrelaços: natureza e ouro (escuro)', '#E8BC52', '#011816'], ['', 'Granada', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -552,6 +552,43 @@ function cartaoPacienteClaro(p, ult) {
     el('button', { type: 'button', class: 'link pequeno pc-encerrar', text: c.encerradoEm && !atual ? `Encerrado em ${dataCurta(c.encerradoEm)} — retomar` : atual ? 'Encerrar atendimento' : 'Colocar em "Atendendo agora"',
       onclick: e => { e.stopPropagation(); (c.encerradoEm && !atual ? retomarAtendimento(c, () => telaLista(true)) : atual ? encerrarAtendimento(c, () => telaLista(true)) : incluirEmAtendimento(p, () => telaLista(true))); } }));
 }
+// versão 132: "Atenção necessária" no Início e a Central de Atenção
+function contagensAtencao() {
+  const lembretes = pacientes.filter(p => !p.arquivado).reduce((t, p) => t + lembretesPendentes(p).length, 0);
+  const recados = typeof lembretesAdmPendentes === 'function' ? lembretesAdmPendentes().length + (typeof enviadosPendentes === 'function' ? enviadosPendentes().length : 0) : 0;
+  const recibos = typeof pendenciasComprovante === 'function' ? pendenciasComprovante().length : 0;
+  return { lembretes, recados, recibos };
+}
+function cartaoAtencao() {
+  const n = contagensAtencao();
+  if (!n.lembretes && !n.recados && !n.recibos) return null;
+  const linha = (ic, titulo, sub, qtd, destino) => qtd > 0 && el('button', { type: 'button', class: 'atencao-linha', onclick: () => ir(destino) },
+    el('span', { class: 'ic-bolha' }, icone(ic)), el('span', { class: 'pag-info' }, el('strong', { text: titulo }), el('span', { class: 'suave pequeno', text: sub })),
+    el('span', { class: 'atencao-qtd', text: String(qtd) }), icone('seguinte'));
+  return el('section', { class: 'cartao atencao' },
+    el('h3', { class: 'cartao-titulo' }, el('span', { text: '🔔 Atenção necessária' })),
+    linha('sino', `${n.lembretes} ${n.lembretes === 1 ? 'lembrete' : 'lembretes'}`, 'Tarefas e alertas pessoais', n.lembretes, { tela: 'atencao' }),
+    linha('mensagem', `${n.recados} ${n.recados === 1 ? 'recado' : 'recados'} com o administrativo`, 'Mensagens e solicitações administrativas', n.recados, { tela: 'atencao' }),
+    linha('arquivo', `${n.recibos} ${n.recibos === 1 ? 'recibo ou nota' : 'recibos ou notas'} a emitir`, 'Documentos pendentes de emissão', n.recibos, { tela: 'emitir' }));
+}
+function topoVerde(titulo, sub) {
+  return el('header', { class: 'topo-verde' },
+    el('button', { type: 'button', class: 'voltar-verde', 'aria-label': 'Voltar', onclick: () => history.length > 1 ? history.back() : ir({ tela: 'lista' }) }, icone('voltar')),
+    el('div', { class: 'titulo' }, el('h1', { id: 'titulo-tela', text: titulo }), sub && el('span', { class: 'sub', text: sub })),
+    el('span', { class: 'marca-verde', text: 'Entrelaços' }));
+}
+function telaAtencao() {
+  const n = contagensAtencao();
+  const secao = (ic, titulo, qtd, cor, conteudo) => { const d = el('details', { class: 'cartao secao-atencao ' + cor, open: true },
+    el('summary', {}, el('span', { class: 'ic-bolha' }, icone(ic)), el('strong', { text: `${titulo} (${qtd})` })), conteudo); return d; };
+  const lemb = cartaoLembretes(), rec = typeof cartaoLembretesAdm === 'function' ? cartaoLembretesAdm(false) : null;
+  mostrar(topoVerde('Central de Atenção', 'Lembretes, recados e pendências'),
+    el('div', { class: 'conteudo pilha' },
+      secao('sino', 'Lembretes pessoais', n.lembretes, 'verde', lemb ? [...lemb.children].slice(1) : el('p', { class: 'suave', text: 'Nenhum lembrete agora.' })),
+      secao('mensagem', 'Recados administrativos', n.recados, 'bege', rec ? [...rec.children].slice(1) : el('p', { class: 'suave', text: 'Nenhum recado.' })),
+      secao('moeda', 'Pendências financeiras', n.recibos, 'rosa', el('button', { type: 'button', class: 'atencao-linha', onclick: () => ir({ tela: 'emitir' }) },
+        el('span', { class: 'pag-info' }, el('strong', { text: 'Recibos e notas fiscais a emitir' })), el('span', { class: 'atencao-qtd', text: `${n.recibos} ${n.recibos === 1 ? 'documento' : 'documentos'}` }), icone('seguinte')))));
+}
 function topoBanner(ic, titulo, sub, extra) {
   return el('header', { class: 'topo-pag' },
     el('div', { class: 'topo-pag-arte' }, el('img', { src: 'topo-entrelacos.jpg', alt: 'Entrelaços · Consultório' }),
@@ -642,6 +679,7 @@ function telaLista(todos = false) {
   busca.addEventListener('input', desenhar);
 
   const ent = !todos && ['entrelacos', 'claro'].includes(document.documentElement.dataset.paleta);
+  const claroInicio = !todos && document.documentElement.dataset.paleta === 'claro';
   mostrar(
     ent ? topoEntrelacos(ativos) :
     todos && document.documentElement.dataset.paleta === 'claro' ? topoBanner('pessoa', verArquivados ? 'Arquivados' : 'Todos os pacientes', 'Controle de atendimentos e histórico do consultório') :
@@ -656,18 +694,20 @@ function telaLista(todos = false) {
         { atuais: `👥 Atendendo agora (${pacientes.filter(atendendoAgora).length})`, todos: `Todos (${ativos}) · inclui pacientes antigos` }, filtroPacientes,
         k => { filtroPacientes = k; telaLista(true); }, 'dois'),
       todos && !verArquivados && filtroPacientes === 'atuais' && el('p', { class: 'suave pequeno', text: 'Quem tem horário fixo na agenda, sessão marcada ou foi atendido nos últimos 45 dias.' }),
-      !todos && atalhosInicio(),
-      !todos && cartaoLembretes(),
-      !todos && typeof cartaoLembretesAdm === 'function' && cartaoLembretesAdm(true),
+      !todos && claroInicio && resumoInicio(),
+      !todos && !claroInicio && atalhosInicio(),
+      !todos && !claroInicio && cartaoLembretes(),
+      !todos && !claroInicio && typeof cartaoLembretesAdm === 'function' && cartaoLembretesAdm(true),
       !todos && cartaoAvisosAgenda(),
       !todos && avisoBackup(),
       !todos && cartaoEntrada(),
       !todos && cartaoAniversarios(),
       !todos && cartaoAgenda(),
-      !todos && resumoInicio(),
-      !todos && el('button', { type: 'button', class: 'cartao linha-recados', onclick: () => ir({ tela: 'admInicio' }) },
+      !todos && claroInicio && cartaoAtencao(),
+      !todos && !claroInicio && resumoInicio(),
+      !todos && !claroInicio && el('button', { type: 'button', class: 'cartao linha-recados', onclick: () => ir({ tela: 'admInicio' }) },
         el('span', { class: 'ic-bolha' }, icone('mensagem')), el('span', { class: 'nome', text: 'Recados e pendências' }), icone('seguinte')),
-      el('label', { class: 'campo-busca' }, icone('busca'), busca),
+      !(claroInicio) && el('label', { class: 'campo-busca' }, icone('busca'), busca),
       lista,
       !todos && !ent && el('button', { type: 'button', class: 'cartao paciente todos-pacientes', onclick: () => ir({ tela: 'pacientes' }) },
         el('span', { class: 'ic-bolha' }, icone('pessoa')),

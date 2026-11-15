@@ -124,6 +124,8 @@ function renderAdm(s) {
   if (s.tela === 'adm') { telaAdm(s.id, s.aba || 'atendimentos'); return true; }
   if (s.tela === 'admInicio') { telaInicioAdm(); return true; }
   if (s.tela === 'admPacientes') { telaInicioAdm(true); return true; }
+  if (s.tela === 'atencao') { telaAtencao(); return true; }
+  if (s.tela === 'emitir') { telaEmitir(s.filtro || 'pendentes'); return true; }
   if (s.tela === 'recibos') { abaMes = 'recibos'; telaMesAba(s.ym || hojeISO().slice(0, 7)); return true; }   // versão 88: tela própria (o voltar volta para Pagamentos)
   // versão 89: cada visão de Pagamentos é um passo do histórico, então o "voltar" volta para a tela anterior
   if (s.tela === 'detalheFin') { telaDetalheFin(s.tipo, s.periodo || hojeISO().slice(0, 7)); return true; }
@@ -5289,4 +5291,40 @@ async function limparOutubroUmaVez() {
     indicarStatus(`Outubro apagado: ${gs.length + divs.length} lançamentos`);
     render(history.state);
   } finally { limpandoOutubro = false; }
+}
+
+// =====================================================================
+// Versão 132: "Recibos e notas a emitir" — tabela com Pendentes / Emitidos / Todos e busca
+// =====================================================================
+function telaEmitir(filtro = 'pendentes') {
+  const busca = el('input', { type: 'search', placeholder: 'Buscar paciente', 'aria-label': 'Buscar paciente' });
+  const corpo = el('div', { class: 'tabela-emitir' });
+  const limite = somarMeses(hojeISO().slice(0, 7), -3) + '-01';
+  const todosItens = [];
+  for (const c of cadastros) if (pedeRecibo(c) && !c.excluido) for (const g of pagamentosDe(c.id)) if (g.data >= limite) todosItens.push({ c, g, pend: comprovantePendente(c, g) });
+  todosItens.sort((a, b) => b.pend - a.pend || a.g.data.localeCompare(b.g.data));
+  const desenhar = () => {
+    const q = semAcento(busca.value.trim());
+    const itens = todosItens.filter(x => (filtro === 'todos' || (filtro === 'pendentes') === x.pend) && (!q || semAcento(x.c.nome).includes(q)));
+    corpo.replaceChildren(
+      el('div', { class: 'linha-emitir cabeca' }, ...['Paciente', 'Data', 'Valor', 'Documento', 'Situação', 'Ação'].map(t => el('span', { text: t }))),
+      ...itens.map(x => el('div', { class: 'linha-emitir' },
+        el('button', { type: 'button', class: 'pag-linha linha-botao', onclick: () => ir({ tela: 'adm', id: x.c.id, aba: 'documentos' }) }, avatar(x.c), el('strong', { text: x.c.nome })),
+        el('span', { text: ddmm(x.g.data) }), el('span', { text: 'R$ ' + reais(valorNum(x.g.valor)) }), el('span', { text: x.c.nf ? 'Nota fiscal' : 'Recibo' }),
+        el('span', { class: 'selo-status ' + (x.pend ? 'aguarda' : 'ok'), text: x.pend ? 'Pendente' : 'Emitido' }),
+        x.pend ? el('span', { class: 'acoes-emitir' }, el('button', { type: 'button', class: 'primario compacto', text: 'Emitir', onclick: () => emitirPendencia(x.c, x.g) }),
+            el('button', { type: 'button', class: 'link pequeno', text: 'Já foi feito', onclick: () => marcarComprovanteFeito(x.c, x.g) }))
+          : el('button', { type: 'button', class: 'secundario compacto', text: 'Ver', onclick: () => ir({ tela: 'adm', id: x.c.id, aba: 'documentos' }) }))),
+      ...(itens.length ? [] : [el('p', { class: 'suave centro', text: filtro === 'pendentes' ? 'Nenhum recibo ou nota pendente. 🎉' : 'Nada encontrado.' })]));
+  };
+  busca.addEventListener('input', desenhar);
+  const nPend = todosItens.filter(x => x.pend).length;
+  mostrar(topoVerde('Recibos e notas a emitir', `Documentos pendentes (${nPend})`),
+    el('div', { class: 'conteudo pilha' },
+      el('div', { class: 'filtros-emitir' },
+        segmentoEscolha({ pendentes: `Pendentes (${nPend})`, emitidos: 'Emitidos', todos: 'Todos' }, filtro, k => ir({ tela: 'emitir', filtro: k }, false)),
+        el('label', { class: 'campo-busca' }, icone('busca'), busca)),
+      el('section', { class: 'cartao' }, corpo),
+      el('button', { type: 'button', class: 'link', text: 'Marcar quem pede recibo ou nota', onclick: () => ir({ tela: 'recibos', ym: hojeISO().slice(0, 7) }) })));
+  desenhar();
 }

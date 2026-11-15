@@ -757,3 +757,30 @@ body.com-barra .fab { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
   .pc-celula:nth-child(2) { border-right: 0; }
   .pc-situacao { justify-self: start; }
 }
+
+/* versão 132: Atenção necessária, Central de Atenção, Recibos a emitir */
+.cartao.atencao { padding: .6rem 1rem; }
+.atencao-linha { display: flex; align-items: center; gap: .8rem; width: 100%; background: none; border: 0; border-top: 1px solid var(--linha); padding: .7rem 0; text-align: left; color: inherit; font: inherit; }
+.atencao-linha .pag-info { flex: 1; }
+.atencao-qtd { background: #F7EBD6; color: #8A5A12; border-radius: 999px; padding: .25rem .75rem; font-weight: 700; }
+.topo-verde { display: flex; align-items: center; gap: .8rem; background: linear-gradient(180deg, #0F4A3C, #0C3D32); color: #fff; padding: 1rem 1.2rem; margin: 0 0 .6rem; }
+.topo-verde h1 { margin: 0; font: 700 1.6rem var(--serifa); color: #fff; }
+.topo-verde .sub { color: rgba(255,255,255,.85); font-size: .92rem; }
+.topo-verde .titulo { flex: 1; display: flex; flex-direction: column; }
+.voltar-verde { background: none; border: 0; color: #fff; padding: .3rem; }
+.voltar-verde .ic { width: 26px; height: 26px; }
+.marca-verde { font: italic 600 1.4rem var(--serifa); color: #E8BC52; }
+.secao-atencao summary { display: flex; align-items: center; gap: .7rem; cursor: pointer; font-size: 1.15rem; font-family: var(--serifa); padding: .3rem 0; }
+.secao-atencao.verde { background: #EAF2EC; } .secao-atencao.bege { background: #FBF0DF; } .secao-atencao.rosa { background: #F8E9E6; }
+.filtros-emitir { display: flex; gap: .8rem; flex-wrap: wrap; align-items: center; }
+.filtros-emitir .segmento { flex: 1 1 320px; }
+.filtros-emitir .campo-busca { flex: 1 1 220px; margin: 0; }
+.linha-emitir { display: grid; grid-template-columns: minmax(0, 2.2fr) .7fr 1fr 1fr 1fr 1.3fr; align-items: center; gap: .5rem; padding: .55rem 0; border-top: 1px solid var(--linha); }
+.linha-emitir.cabeca { font-size: .85rem; color: var(--suave); border-top: 0; font-weight: 600; }
+.linha-emitir .pag-linha { gap: .6rem; }
+.acoes-emitir { display: flex; flex-direction: column; align-items: flex-start; gap: .1rem; }
+@media (max-width: 760px) {
+  .linha-emitir { grid-template-columns: 1fr auto; }
+  .linha-emitir.cabeca { display: none; }
+  .linha-emitir > span:nth-child(4) { display: none; }
+}
