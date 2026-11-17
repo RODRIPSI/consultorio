@@ -2606,7 +2606,7 @@ function telaAgenda(inicio) {
         el('span', { text: `${DIAS[diaDaSemana(d)]}, ${dataCurta(d).slice(0, 5)}${d === hoje ? ' (hoje)' : ''}` }),
         el('span', { class: 'dia-mais', 'aria-hidden': 'true', text: '+' })),
       sem && el('p', { class: 'faixa', text: `${sem.feriado ? 'Feriado' : 'Sem atendimento'}: ${sem.nome}` }),
-      claroAg && (doDia.length || livresDia.length) ? linhasDiaClaro(doDia, d, livresDia) :
+      ...(claroAg && (doDia.length || livresDia.length) ? linhasDiaClaro(doDia, d, livresDia) :
       doDia.length ? doDia.map(o => {
         const riscado = o.feriado || o.cancelada;
         // versão 136: quando a sessão sai do dia, o horário aparece como livre (e para onde foi, se foi remarcada)
@@ -2616,7 +2616,8 @@ function telaAgenda(inicio) {
           el('span', { class: 'pag-info' },
             el('strong', { style: riscado ? 'text-decoration:line-through;opacity:.6' : null, text: `${horaCurta(o.hora) || '—'}  ${o.c.nome}` }),
             el('span', { class: o.cancelada ? 'texto-livre' : o.feriadoAviso && !riscado ? 'texto-alerta' : 'suave', text: etiqueta + (o.feriadoAviso && !riscado ? ` · ⚠️ ${o.feriadoAviso}: toque para remarcar ou tirar` : '') + (!riscado && estadoConfirmacao(o.c, o.data, o.hora) ? ' · ' + ROTULO_CONF[estadoConfirmacao(o.c, o.data, o.hora)] : '') })));
-      }) : el('button', { type: 'button', class: 'link', text: 'Nenhum atendimento. Toque para agendar neste dia.', onclick: () => acoesDiaAgenda(d) }));
+      }) : [el('button', { type: 'button', class: 'link', text: 'Nenhum atendimento. Toque para agendar neste dia.', onclick: () => acoesDiaAgenda(d) })]),
+      rodapeDia(d, doDia));
   });
   const vista = el('select', { class: 'sel-vista', 'aria-label': 'Ver como' }, el('option', { value: 'semana', text: 'Semana' }), el('option', { value: 'lista', text: 'Lista' }), el('option', { value: 'mes', text: 'Mês' }));
   vista.addEventListener('change', () => { if (vista.value === 'mes') ir({ tela: 'agendaMes', ym: seg.slice(0, 7) }, false); if (vista.value === 'lista') ir({ tela: 'listaSemana', semana: seg }, false); });
@@ -2639,6 +2640,35 @@ function telaAgenda(inicio) {
     el('button', { type: 'button', class: 'fab estendido', onclick: () => { agendamentoRasc = null; ir({ tela: 'agendar' }); } }, icone('mais'), el('span', { text: 'Novo agendamento' })));
 }
 
+// versão 142: rodapé de cada dia — pacientes marcados, vagas e consultas feitas
+function vagasDoDia(d, doDia) {
+  const dia = diaDaSemana(d), g = gradeDia(dia);
+  if (!g || diaSemAtendimento(d)) return 0;
+  const ocupadas = new Set(doDia.filter(o => !o.cancelada && !o.feriado).map(o => parseInt(o.hora) || 0));
+  for (const x of cadastros) if (!x.arquivado) for (const o of ocorrenciasNoPeriodo(x, d, d)) if (!o.cancelada && !o.feriado) ocupadas.add(parseInt(o.hora) || 0);
+  let n = 0;
+  for (let h = g.de; h < g.ate; h++) {
+    if (ocupadas.has(h)) continue;
+    if (fixosSemPaciente().some(f => Number(f.dia) === dia && h >= f.de && h < f.ate)) continue;
+    if (bloqueiosDia().some(b => b.data === d && Number(b.h) === h)) continue;
+    n++;
+  }
+  return n;
+}
+function rodapeDia(d, doDia) {
+  const marcados = doDia.filter(o => !o.cancelada && !o.feriado);
+  const pres = o => atDaOcorrencia(o.c, o.data, o.hora)?.presenca;
+  const feitas = marcados.filter(o => pres(o) === 'realizada').length;
+  const faltas = marcados.filter(o => ['falta', 'tardia'].includes(pres(o))).length;
+  const vagas = vagasDoDia(d, doDia);
+  if (!marcados.length && !vagas) return null;
+  const item = (n, um, varios, cls) => el('span', { class: 'rd-item ' + cls }, el('strong', { text: String(n) }), el('span', { text: n === 1 ? um : varios }));
+  return el('div', { class: 'rodape-dia' },
+    item(marcados.length, 'paciente', 'pacientes', 'rd-pac'),
+    item(vagas, 'vaga', 'vagas', 'rd-vaga'),
+    item(feitas, `feita de ${marcados.length}`, `feitas de ${marcados.length}`, 'rd-feita'),
+    faltas ? item(faltas, 'falta', 'faltas', 'rd-falta') : null);
+}
 // versão 137: linhas da agenda no visual claro — hora | iniciais | nome | ›; horário que ficou vago vira "Horário disponível"
 function ocupadoPorOutro(o) {
   return cadastros.some(x => x !== o.c && !x.arquivado && ocorrenciasNoPeriodo(x, o.data, o.data).some(y => !y.cancelada && !y.feriado && (parseInt(y.hora) || 0) === (parseInt(o.hora) || 0)));

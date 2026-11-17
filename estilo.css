@@ -817,3 +817,13 @@ button.ag-nota.ag-nota-botao { width: 100%; text-align: left; border: 0; font: i
 .rem-topo { display: flex; align-items: center; gap: .6rem; font-variant-numeric: tabular-nums; }
 .rem-topo input { width: 1.2rem; height: 1.2rem; flex: none; }
 .rem-aviso { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex-wrap: wrap; }
+/* versão 142: rodapé do dia na agenda + nomes sempre legíveis no visual claro (mesmo com o celular no modo escuro) */
+:root[data-paleta="claro"] { color-scheme: light; }
+:root[data-paleta="claro"] .ag-linha:not(.livre), :root[data-paleta="claro"] .ag-nota, :root[data-paleta="claro"] .rem-linha { color: var(--tinta); }
+:root[data-paleta="claro"] .ag-nome strong { color: var(--tinta); }
+.rodape-dia { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--linha); }
+.rd-item { display: inline-flex; align-items: baseline; gap: .3rem; padding: .3rem .7rem; border-radius: 999px; font-size: .9rem; background: #F1ECE2; color: var(--tinta); }
+.rd-item strong { font-size: 1.05rem; }
+.rd-vaga { background: #E3EFE6; color: #1E6B4F; }
+.rd-feita { background: #E8EEF7; color: #2C4A7A; }
+.rd-falta { background: #F8E4E0; color: #A33A30; }
