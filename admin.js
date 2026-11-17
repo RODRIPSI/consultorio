@@ -2448,7 +2448,7 @@ function ocorrenciasNoPeriodo(c, de, ate) {
   horariosDe(c).forEach((h, hi) => {
     if (h.inicio) { for (const o of datasSerie(c, h, hi)) if (o.data >= de && o.data <= ate) out.push(o); return; }
     if (h.dia === undefined || h.dia === '') return;
-    for (let d = primeiroDiaNaSemana(de, h.dia); d <= ate; d = somarDias(d, 7)) {
+    for (let d = primeiroDiaNaSemana(h.desde && h.desde > de ? h.desde : de, h.dia); d <= ate; d = somarDias(d, 7)) {   // versão 141: horário fixo novo vale a partir de "desde"
       if (h.fim && d >= h.fim) break;
       out.push({ c, data: d, hora: h.hora || '', hi, fixo: true, feriado: null, feriadoAviso: diaSemAtendimento(d)?.nome || null, cancelada: cancelado(c, d, h.hora) });   // versão 134: no feriado o horário fixo continua na lista; o Rodrigo decide
     }
@@ -2741,7 +2741,7 @@ async function acoesOcorrencia(o) {
   if (r === 'remarcar') {
     const v = await escolherHorarioLivre(c, o);
     if (!v || !v[0]) return;
-    moverOcorrencia(o, v[0], v[1] || o.hora);
+    return remarcarVarias(o, v[0], v[1] || o.hora);
   }
   salvarCadastro(c); render(history.state);
 }
@@ -2758,6 +2758,87 @@ function moverOcorrencia(o, data, hNova) {
   else if (!(c.avulsos || []).some(a => a.data === data && mesmaHora(a.hora, hNova)))
     (c.avulsos ||= []).push({ id: crypto.randomUUID(), data, hora: hNova, remarcadaDe: origem });
   c.atualizadoEm = agoraISO();
+}
+// versão 141: remarcar uma ou várias semanas seguidas (30 dias, 60 dias...) ou mudar o horário fixo,
+// mostrando quem já está no novo horário em cada semana
+const mesmaHoraH = (a, b) => (parseInt(a) || 0) === (parseInt(b) || 0);
+function quemOcupa(c, data, hora) {
+  for (const x of cadastros) { if (x === c || x.arquivado) continue;
+    const y = ocorrenciasNoPeriodo(x, data, data).find(y => !y.cancelada && !y.feriado && mesmaHoraH(y.hora, hora));
+    if (y) return y; }
+  return null;
+}
+function planoRemarcar(o, data, hora, semanas) {
+  const plano = [];
+  for (let k = 0; k < semanas; k++) {
+    const od = somarDias(o.data, 7 * k), td = somarDias(data, 7 * k);
+    const orig = k === 0 ? o : ocorrenciasNoPeriodo(o.c, od, od).find(y => !y.cancelada && !y.feriado && mesmaHoraH(y.hora, o.hora));
+    if (!orig) continue;
+    plano.push({ orig, data: td, hora, ocupa: quemOcupa(o.c, td, hora), feriado: diaSemAtendimento(td)?.nome || null });
+  }
+  return plano;
+}
+async function remarcarVarias(o, data, hora) {
+  const c = o.c, h = o.hi !== undefined ? horariosDe(c)[o.hi] : null, serie = !!h;
+  let semanas = 1, sempre = false;
+  if (serie) {
+    const r = await dialogo({ titulo: `Remarcar ${primeiroNome(c.nome)}`, texto: `De ${DIAS[diaDaSemana(o.data)]}, ${dataCurta(o.data).slice(0, 5)} às ${horaCurta(o.hora)} para ${DIAS[diaDaSemana(data)]}, ${dataCurta(data).slice(0, 5)} às ${horaCurta(hora)}. Quantas semanas?`,
+      botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Só esta sessão', valor: '1', estilo: 'primario' }, { rotulo: '4 semanas seguidas (30 dias)', valor: '4' }, { rotulo: '8 semanas seguidas (60 dias)', valor: '8' }, { rotulo: 'Outro número de semanas', valor: 'outro' },
+        ...(o.fixo ? [{ rotulo: 'Mudar o horário fixo daqui para frente', valor: 'sempre' }] : [])] });
+    if (!r) return;
+    if (r === 'outro') {
+      const n = await dialogo({ titulo: 'Quantas semanas seguidas?', campos: [{ rotulo: 'Número de semanas', tipo: 'number', valor: '6' }], botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Continuar', valor: true, estilo: 'primario' }] });
+      if (!n) return; semanas = Math.max(1, Math.min(52, parseInt(Array.isArray(n) ? n[0] : n) || 1));
+    } else if (r === 'sempre') { sempre = true; semanas = 8; }
+    else semanas = Number(r);
+  }
+  return revisarRemarcacao(o, data, hora, semanas, sempre, null);
+}
+async function revisarRemarcacao(o, data, hora, semanas, sempre, pular) {
+  const c = o.c, plano = planoRemarcar(o, data, hora, semanas);
+  pular ||= new Set(plano.filter(p => p.ocupa).map(p => p.data));   // semana com conflito começa desmarcada
+  const conflitos = plano.filter(p => p.ocupa).length;
+  if (plano.length === 1 && !conflitos && !sempre) { moverOcorrencia(o, data, hora); salvarCadastro(c); await salvarAgora(); render(history.state); return; }
+  const fmt = (d, hh) => `${DIAS[diaDaSemana(d)].slice(0, 3)} ${dataCurta(d).slice(0, 5)} ${horaCurta(hh)}`;
+  let acao = null, sair;
+  const saida = new Promise(res => { sair = res; });
+  const linhas = plano.map(p => {
+    const marca = el('input', { type: 'checkbox', 'aria-label': `Remarcar ${fmt(p.orig.data, p.orig.hora)}` });
+    marca.checked = !pular.has(p.data);
+    marca.addEventListener('change', () => { if (marca.checked) pular.delete(p.data); else pular.add(p.data); });
+    return el('div', { class: 'rem-linha' + (p.ocupa ? ' conflito' : '') },
+      el('label', { class: 'rem-topo' }, marca, el('span', { text: `${fmt(p.orig.data, p.orig.hora)}  →  ${fmt(p.data, p.hora)}` })),
+      p.feriado && el('small', { class: 'texto-alerta', text: `⚠️ Feriado: ${p.feriado}` }),
+      p.ocupa && el('div', { class: 'rem-aviso' },
+        el('small', { class: 'texto-alerta', text: `⚠️ ${p.ocupa.c.nome} já está marcado neste horário` }),
+        el('button', { type: 'button', class: 'secundario compacto', text: `Mexer em ${primeiroNome(p.ocupa.c.nome)}`, onclick: () => { acao = p.ocupa; fecharDialogos(); sair(null); } })));
+  });
+  const r = await Promise.race([saida, janela(sempre ? `Novo horário fixo de ${primeiroNome(c.nome)}` : `Remarcar ${primeiroNome(c.nome)}`, [
+    el('p', { class: 'suave pequeno', text: sempre ? `A partir de ${dataCurta(data)}, toda ${DIAS_LONGO[diaDaSemana(data)].toLowerCase()} às ${horaCurta(hora)}. Abaixo, as próximas 8 semanas.` : 'Desmarque a semana que não deve mudar.' }),
+    conflitos ? el('p', { class: 'faixa', text: `⚠️ Em ${conflitos} ${conflitos === 1 ? 'semana já tem' : 'semanas já tem'} outro paciente no novo horário. Essas semanas ficam desmarcadas — toque em "Mexer em…" para remarcar ou tirar o outro paciente.` }) : null,
+    ...linhas], [{ rotulo: 'Cancelar', valor: null }, { rotulo: sempre ? 'Mudar horário fixo' : 'Remarcar', valor: true, estilo: 'primario' }])]);
+  if (acao) {
+    const antes = new Set(plano.filter(p => p.ocupa).map(p => p.data));
+    await acoesOcorrencia(acao);
+    // semana que ficou livre depois de mexer no outro paciente volta a ficar marcada
+    for (const p of planoRemarcar(o, data, hora, semanas)) if (antes.has(p.data) && !p.ocupa) pular.delete(p.data);
+    return revisarRemarcacao(o, data, hora, semanas, sempre, pular);
+  }
+  if (!r) return;
+  if (sempre) {
+    const h = horariosDe(c)[o.hi], novo = { ...h, dia: diaDaSemana(data), hora, desde: data };
+    delete novo.fim; delete novo.fimAntes;
+    h.fim = o.data;
+    (c.horarios ||= []).push(novo);
+    // semanas desmarcadas (conflito): o paciente fica fora desse dia no horário novo
+    for (const d of pular) (c.excecoes ||= []).push({ data: d, hora });
+  } else {
+    for (const p of plano) if (!pular.has(p.data)) moverOcorrencia(p.orig, p.data, p.hora);
+  }
+  c.atualizadoEm = agoraISO(); salvarCadastro(c); await salvarAgora();
+  const n = plano.filter(p => !pular.has(p.data)).length;
+  indicarStatus(sempre ? `Horário fixo de ${primeiroNome(c.nome)} mudado` : `${n} ${n === 1 ? 'sessão remarcada' : 'sessões remarcadas'}`);
+  render(history.state);
 }
 // versão 139: toque num horário vago da agenda — agendar alguém ou trazer uma sessão de outro dia
 async function dialogoVago(v) {

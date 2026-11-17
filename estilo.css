@@ -811,3 +811,9 @@ body.com-barra .fab { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
 /* versão 140: faixa "saiu deste dia" é tocável para voltar a sessão */
 button.ag-nota.ag-nota-botao { width: 100%; text-align: left; border: 0; font: inherit; color: inherit; cursor: pointer; }
 .ag-nota-dica { display: block; font-size: .8rem; opacity: .7; margin-top: 2px; }
+/* versão 141: revisão de remarcação em várias semanas */
+.rem-linha { border-top: 1px solid rgba(0,0,0,.08); padding: .5rem 0; display: flex; flex-direction: column; gap: .25rem; }
+.rem-linha.conflito { background: #FBEDE8; border-radius: 10px; padding: .5rem .6rem; }
+.rem-topo { display: flex; align-items: center; gap: .6rem; font-variant-numeric: tabular-nums; }
+.rem-topo input { width: 1.2rem; height: 1.2rem; flex: none; }
+.rem-aviso { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex-wrap: wrap; }
