@@ -858,3 +858,18 @@ button.ag-nota.ag-nota-botao { width: 100%; text-align: left; border: 0; font: i
 .nota-linha.feita strong { text-decoration: line-through; opacity: .6; }
 .nota-corpo { flex: 1; display: flex; flex-direction: column; gap: .2rem; text-align: left; background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
 .nota-obs { font-size: .92rem; white-space: pre-wrap; }
+/* versão 145: recados como conversa, com lido e resposta */
+.recado { border: 1px solid var(--linha); border-radius: 14px; padding: .7rem .8rem; margin-top: .6rem; color: var(--tinta); background: #fff; display: flex; flex-direction: column; gap: .35rem; }
+.recado.meu { background: #F6F3EC; }
+.recado.novo { border: 2px solid #C62828; background: #FDF1EF; }
+.rc-cab { display: flex; justify-content: space-between; gap: .5rem; align-items: baseline; }
+.rc-pac { font-weight: 600; font-size: .9rem; }
+.rc-texto { margin: 0; white-space: pre-wrap; }
+.rc-resp { margin-left: .8rem; padding: .4rem .6rem; border-left: 3px solid #B9C9BF; background: rgba(0,0,0,.025); border-radius: 0 10px 10px 0; }
+.rc-resp.minha { border-left-color: #D9B98A; }
+.rc-resp p { margin: .1rem 0 0; white-space: pre-wrap; }
+.rc-status { font-size: .85rem; opacity: .8; }
+.rc-status.lido { color: #1E6B4F; opacity: 1; }
+.rc-status.novo { color: #B3261E; font-weight: 600; opacity: 1; }
+.rc-botoes { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.recado-citado { margin: 0 0 .5rem; padding: .5rem .7rem; border-left: 3px solid var(--linha); background: rgba(0,0,0,.03); white-space: pre-wrap; }

@@ -8,7 +8,8 @@
 
 let cadastros = [];      // x:p:<id>
 let atendimentos = [];   // x:a:<pid>:<id>  (data, hora, presença, pagamento, valor)
-let notas = [];   // versão 144: bloco de notas compartilhado (x:l:<id> com tipoRegistro 'nota')
+let notas = [];
+let recadoExtras = [];   // versão 145: respostas e leituras dos recados (registros próprios, para não brigar na sincronização)   // versão 144: bloco de notas compartilhado (x:l:<id> com tipoRegistro 'nota')
 let lembretesAdm = [];   // x:l:<id>  (versão 58: lembretes do Rodrigo para o administrativo; sem dados clínicos)
 let pagamentos = [];     // x:g:<pid>:<id>  (data, valor, atendimentos pagos, comprovante, nota fiscal)
 const lapides = new Map(); // registros excluídos, guardados só como marca para a troca entre aparelhos
@@ -58,7 +59,7 @@ function atendimentosDe(pid) {
 const pagamentosDe = pid => pagamentos.filter(g => g.pid === pid).sort((x, y) => y.data.localeCompare(x.data) || (y.criadoEm || '').localeCompare(x.criadoEm || ''));
 
 function limparAdm() {
-  cadastros = []; atendimentos = []; pagamentos = []; lembretesAdm = []; notas = []; lapides.clear();
+  cadastros = []; atendimentos = []; pagamentos = []; lembretesAdm = []; notas = []; recadoExtras = []; lapides.clear();
   senhaTroca = null; entradaIds = []; pagamentoRasc = null; verTodosAtend = false; tokenGoogle = null; importacaoDrive = null; notaRasc = null;
 }
 
@@ -70,7 +71,10 @@ async function carregarAdm() {
   cadastros = cs;
   atendimentos = separar(as, chaveAt);
   pagamentos = separar(gs, chavePag);
-  lembretesAdm = ls.filter(l => !l.excluido && l.tipoRegistro !== 'nota');
+  const EXTRAS = ['resposta', 'leitura'];
+  lembretesAdm = ls.filter(l => !l.excluido && l.tipoRegistro !== 'nota' && !EXTRAS.includes(l.tipoRegistro));
+  recadoExtras = ls.filter(l => !l.excluido && EXTRAS.includes(l.tipoRegistro));
+  for (const l of ls) if (l.excluido && l.tipoRegistro !== 'nota') lapides.set(chaveLem(l), l);   // apagar um recado vale nos dois aparelhos
   notas = ls.filter(l => l.tipoRegistro === 'nota' && !l.excluido);
   for (const n of ls) if (n.tipoRegistro === 'nota' && n.excluido) lapides.set(chaveLem(n), n);
   perfil = Object.assign(PERFIL_PADRAO(), (await Cofre.ler('x:perfil')) || {});
@@ -1634,6 +1638,7 @@ async function registrosAdm(paraBackup) {
   pagamentos.forEach(g => { r[chavePag(g)] = g; });
   lembretesAdm.forEach(l => { r[chaveLem(l)] = l; });
   notas.forEach(n => { r[chaveLem(n)] = n; });
+  recadoExtras.forEach(x => { r[chaveLem(x)] = x; });
   for (const [k, o] of lapides) r[k] = o;
   r['x:perfil'] = perfil.atualizadoEm ? perfil : { ...perfil, atualizadoEm: '2000-01-01T00:00:00.000Z' }; // vai sempre (sem data, não passa por cima do outro lado)
   for (const d of documentos.filter(x => x.adm)) {
@@ -4103,9 +4108,51 @@ async function pagarSessao(c, a) {
 // =====================================================================
 // Versão 67: recados nos dois sentidos. l.para = 'adm' (do Rodrigo para o assistente) ou 'dono' (do assistente para o Rodrigo).
 const paraMim = l => (l.para || 'adm') === (modo === 'adm' ? 'adm' : 'dono');
-const lembretesAdmPendentes = () => lembretesAdm.filter(l => !l.feito && paraMim(l) && (l.desde || '') <= hojeISO())
-  .sort((a, b) => (a.desde || '').localeCompare(b.desde || '') || (a.criadoEm || '').localeCompare(b.criadoEm || ''));
-const enviadosPendentes = () => lembretesAdm.filter(l => !l.feito && !paraMim(l)).sort((a, b) => (a.criadoEm || '').localeCompare(b.criadoEm || ''));
+// versão 145: conversa em cada recado — respostas, "lido" de cada lado e apagar depois de lido
+const euLado = () => modo === 'adm' ? 'adm' : 'dono';
+const ladoOutro = () => modo === 'adm' ? 'dono' : 'adm';
+const autorRecado = l => (l.para || 'adm') === 'adm' ? 'dono' : 'adm';
+const respostasDe = l => recadoExtras.filter(x => x.tipoRegistro === 'resposta' && x.recado === l.id).sort((a, b) => (a.criadoEm || '').localeCompare(b.criadoEm || ''));
+function ultimaDoRecado(l) {
+  const rs = respostasDe(l), u = rs[rs.length - 1];
+  return u ? { de: u.de, em: u.criadoEm } : { de: autorRecado(l), em: l.criadoEm || '' };
+}
+function lidoEm(l, lado) {
+  const x = recadoExtras.find(x => x.tipoRegistro === 'leitura' && x.recado === l.id && x.lado === lado);
+  const antigo = l.feito && (l.feitoPor || (l.para || 'adm')) === lado ? l.feitoEm : '';   // recados antigos: "Feito" valia como lido
+  return [x?.em || '', antigo || ''].sort().pop();
+}
+const naoLidoPorMim = l => { const u = ultimaDoRecado(l); return u.de !== euLado() && (lidoEm(l, euLado()) || '') < u.em; };
+const outroLeu = l => { const u = ultimaDoRecado(l); return u.de === euLado() && (lidoEm(l, ladoOutro()) || '') >= u.em; };
+const lembretesAdmPendentes = () => lembretesAdm.filter(l => naoLidoPorMim(l) && (l.desde || '') <= hojeISO())
+  .sort((a, b) => ultimaDoRecado(a).em.localeCompare(ultimaDoRecado(b).em));
+const enviadosPendentes = () => lembretesAdm.filter(l => ultimaDoRecado(l).de === euLado() && !outroLeu(l));
+function marcarRecadoLido(l, silencioso = false) {
+  const id = `leitura-${l.id}-${euLado()}`;
+  let x = recadoExtras.find(y => y.id === id);
+  if (!x) { x = { id, tipoRegistro: 'leitura', recado: l.id, lado: euLado(), criadoEm: agoraISO() }; recadoExtras.push(x); }
+  x.em = agoraISO(); salvarLem(x);
+  if (!silencioso) { indicarStatus('Marcado como lido.'); try { if (typeof sincronizarSozinho === 'function') sincronizarSozinho(); } catch { } render(history.state); }
+}
+async function responderRecado(l) {
+  const texto = el('textarea', { rows: '3', placeholder: 'Sua resposta' });
+  const cx = el('input', { type: 'checkbox' });
+  const r = await janela('Responder', [el('p', { class: 'recado-citado', text: l.texto }),
+    el('label', { class: 'campo' }, el('span', { text: 'Resposta' }), texto),
+    el('label', { class: 'marcar' }, cx, el('span', { text: `Mandar também pelo WhatsApp de ${nomeDestino()}` })),
+    euLado() === 'dono' && el('p', { class: 'faixa', text: 'O assistente vai ler. Não escreva nada clínico.' })],
+    [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Enviar resposta', valor: true, estilo: 'primario' }]);
+  if (!r || !texto.value.trim()) return;
+  const agora = agoraISO();
+  const x = { id: crypto.randomUUID(), tipoRegistro: 'resposta', recado: l.id, de: euLado(), texto: texto.value.trim(), criadoEm: agora };
+  recadoExtras.push(x); salvarLem(x);
+  marcarRecadoLido(l, true);   // quem responde já leu
+  await salvarAgora();
+  if (cx.checked) { const n = numeroDestino(); if (n) abrirExterno(`https://wa.me/${n}?text=${encodeURIComponent(`↩️ Resposta: ${x.texto}\n(sobre: ${l.texto.slice(0, 80)})`)}`); }
+  indicarStatus('Resposta enviada.');
+  try { if (typeof sincronizarSozinho === 'function') sincronizarSozinho(); } catch { }
+  render(history.state);
+}
 const campoWhatsDestino = () => modo === 'adm' ? 'whatsDono' : 'whatsAdm';
 const nomeDestino = () => modo === 'adm' ? 'o Rodrigo' : 'o assistente';
 function numeroDestino() {
@@ -4152,47 +4199,57 @@ async function novoLembreteAdm(pid = null, textoInicial = '', depois = null) {
   try { if (typeof sincronizarSozinho === 'function') sincronizarSozinho(); } catch { /* sincroniza na próxima vez */ }
   render(history.state);
 }
-function concluirLembreteAdm(l) {
-  l.feito = true; l.feitoEm = agoraISO(); l.feitoPor = modo; salvarLem(l);
-  render(history.state);
-}
+function concluirLembreteAdm(l) { marcarRecadoLido(l); }
 async function apagarLembreteAdm(l) {
-  const ok = await dialogo({ titulo: 'Apagar?', texto: l.texto, botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Apagar', valor: true, estilo: 'perigo' }] });
+  const ok = await dialogo({ titulo: 'Apagar este recado?', texto: `${l.texto}\n\nSome nos dois aparelhos, com as respostas.`, botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Apagar', valor: true, estilo: 'perigo' }] });
   if (!ok) return;
-  l.excluido = true; salvarLem(l);
+  l.excluido = true; salvarLem(l); lapides.set(chaveLem(l), l);
   lembretesAdm = lembretesAdm.filter(x => x !== l);
+  for (const x of recadoExtras.filter(x => x.recado === l.id)) { x.excluido = true; salvarLem(x); lapides.set(chaveLem(x), x); }
+  recadoExtras = recadoExtras.filter(x => x.recado !== l.id);
+  await salvarAgora();
+  try { if (typeof sincronizarSozinho === 'function') sincronizarSozinho(); } catch { }
   render(history.state);
 }
-// Cartão "Recados": o que chegou para mim (com Feito), o que mandei e ainda espera, e o que o outro lado concluiu nos últimos 3 dias.
+// Cartão "Recados": cada recado é uma conversa curta. Mostra quem escreveu, as respostas, se o outro lado já leu,
+// e os botões Marcar como lida / Responder / Apagar.
 function cartaoLembretesAdm(naTelaClinica = false) {
-  const recebidos = lembretesAdmPendentes(), enviados = enviadosPendentes();
-  const concluidos = lembretesAdm.filter(l => l.feito && !paraMim(l) && l.feitoEm && (Date.now() - new Date(l.feitoEm)) < 3 * 864e5);
-  if (naTelaClinica && !recebidos.length && !enviados.length && !concluidos.length) return null;
-  const outro = modo === 'adm' ? 'Rodrigo' : 'assistente';
-  const nomePac = l => { const c = l.pid ? cadastroDe(l.pid) : null; return c && el('strong', { text: c.nome }); };
-  const linhaRecebido = l => el('div', { class: 'pag-linha' },
-    el('span', { class: 'pag-info' }, nomePac(l), el('span', { text: l.texto }),
-      el('span', { class: 'suave pequeno', text: `${modo === 'adm' ? 'Do Rodrigo' : 'Do assistente'} · ${dataCurta((l.criadoEm || '').slice(0, 10) || hojeISO())}` })),
-    el('button', { type: 'button', class: 'secundario compacto', text: 'Feito', onclick: () => concluirLembreteAdm(l) }));
-  const linhaEnviado = l => el('div', { class: 'pag-linha' },
-    el('span', { class: 'pag-info' }, nomePac(l), el('span', { text: l.texto }), el('span', { class: 'suave pequeno', text: `⏳ Aguardando o ${outro}` })),
-    botaoIcone('Mandar de novo pelo WhatsApp', 'mensagem', () => enviarLembreteWhats(l)),
-    botaoIcone('Apagar', 'lixeira', () => apagarLembreteAdm(l)));
-  const linhaConcluido = l => el('div', { class: 'pag-linha' },
-    el('span', { class: 'pag-info' }, el('span', { class: 'suave', text: `✅ ${l.texto}` }), el('span', { class: 'suave pequeno', text: `Feito pelo ${outro}` })),
-    botaoIcone('Apagar', 'lixeira', () => apagarLembreteAdm(l)));
-  const sub = t => el('p', { class: 'suave pequeno', text: t });
+  const todos = lembretesAdm.filter(l => (l.desde || '') <= hojeISO() || autorRecado(l) === euLado())
+    .sort((a, b) => (naoLidoPorMim(b) - naoLidoPorMim(a)) || ultimaDoRecado(b).em.localeCompare(ultimaDoRecado(a).em));
+  if (naTelaClinica && !todos.length) return null;
+  const nomeLado = lado => lado === euLado() ? 'Você' : lado === 'adm' ? 'Assistente' : 'Rodrigo';
+  const quando = iso => iso ? `${dataCurta(iso.slice(0, 10)).slice(0, 5)} ${new Date(iso).toTimeString().slice(0, 5)}` : '';
+  const outroNome = modo === 'adm' ? 'Rodrigo' : 'assistente';
+  const novos = todos.filter(naoLidoPorMim).length;
+  const linha = l => {
+    const c = l.pid ? cadastroDe(l.pid) : null, novo = naoLidoPorMim(l), u = ultimaDoRecado(l);
+    const lidoOutro = lidoEm(l, ladoOutro());
+    const status = u.de === euLado()
+      ? (outroLeu(l) ? el('span', { class: 'rc-status lido', text: `✓✓ Lido pelo ${outroNome} · ${quando(lidoOutro)}` }) : el('span', { class: 'rc-status', text: `✓ Enviado · o ${outroNome} ainda não leu` }))
+      : novo ? el('span', { class: 'rc-status novo', text: '● Novo · ainda não lido por você' })
+        : el('span', { class: 'rc-status lido', text: `✓ Lido por você · ${quando(lidoEm(l, euLado()))}` });
+    return el('div', { class: 'recado' + (novo ? ' novo' : '') + (autorRecado(l) === euLado() ? ' meu' : '') },
+      el('div', { class: 'rc-cab' }, el('strong', { text: autorRecado(l) === euLado() ? `Você → ${outroNome}` : `${nomeLado(autorRecado(l))} → você` }),
+        el('small', { class: 'suave', text: quando(l.criadoEm) })),
+      c && el('span', { class: 'rc-pac', text: c.nome }),
+      el('p', { class: 'rc-texto', text: l.texto }),
+      ...respostasDe(l).map(x => el('div', { class: 'rc-resp' + (x.de === euLado() ? ' minha' : '') },
+        el('small', { class: 'suave', text: `↩️ ${nomeLado(x.de)} · ${quando(x.criadoEm)}` }), el('p', { text: x.texto }))),
+      status,
+      el('div', { class: 'rc-botoes' },
+        novo && el('button', { type: 'button', class: 'primario compacto', text: '✓ Marcar como lida', onclick: () => marcarRecadoLido(l) }),
+        el('button', { type: 'button', class: 'secundario compacto', text: '↩️ Responder', onclick: () => responderRecado(l) }),
+        botaoIcone('Mandar pelo WhatsApp', 'mensagem', () => enviarLembreteWhats(l)),
+        botaoIcone('Apagar', 'lixeira', () => apagarLembreteAdm(l))));
+  };
   return el('section', { class: 'cartao lembretes-adm' },
-    el('h3', { class: 'cartao-titulo' }, el('span', { class: 'ic-bolha' }, icone('sino')),
-      el('span', { text: `Recados ${modo === 'adm' ? 'com o Rodrigo' : 'com o administrativo'}${recebidos.length ? ` (${recebidos.length} para você)` : ''}` })),
-    recebidos.length > 0 && sub(modo === 'adm' ? 'Do Rodrigo para você' : 'Do assistente para você'), ...recebidos.map(linhaRecebido),
-    enviados.length > 0 && sub('Você mandou'), ...enviados.map(linhaEnviado),
-    ...concluidos.map(linhaConcluido),
-    !recebidos.length && !enviados.length && !concluidos.length && sub('Nenhum recado agora.'),
-    el('button', { type: 'button', class: 'secundario com-icone centralizado', onclick: () => novoLembreteAdm() }, icone('mais'),
-      el('span', { text: modo === 'adm' ? 'Novo recado para o Rodrigo' : 'Novo lembrete para o administrativo' })));
+    el('h3', { class: 'cartao-titulo' }, el('span', { class: 'ic-bolha' }, icone('mensagem')),
+      el('span', { text: `Recados ${modo === 'adm' ? 'com o Rodrigo' : 'com o administrativo'}${novos ? ` (${novos} ${novos === 1 ? 'novo' : 'novos'})` : ''}` })),
+    el('button', { type: 'button', class: 'primario com-icone centralizado largo', onclick: () => novoLembreteAdm() }, icone('mais'),
+      el('span', { text: modo === 'adm' ? 'Novo recado para o Rodrigo' : 'Novo recado para o administrativo' })),
+    ...(todos.length ? todos.map(linha) : [el('p', { class: 'suave', text: 'Nenhum recado agora.' })]),
+    el('p', { class: 'suave pequeno', text: `Quem recebe toca em "Marcar como lida". Quem mandou vê "✓✓ Lido" e pode apagar. Apagar some nos dois aparelhos.` }));
 }
-
 
 // =====================================================================
 // Versão 60: avisos no celular (notificações) quando a sincronização traz novidade do outro aparelho.
@@ -4200,23 +4257,23 @@ function cartaoLembretesAdm(naTelaClinica = false) {
 // diz só o que chegou; o detalhe fica dentro do app, atrás da senha. Com tudo fechado, o WhatsApp faz esse papel.
 // =====================================================================
 function fotoParaAvisos() {
-  return { lemPend: new Set(lembretesAdm.filter(l => !l.feito).map(l => l.id)), lemFeito: new Set(lembretesAdm.filter(l => l.feito).map(l => l.id)),
+  return { naoLidos: new Set(lembretesAdm.filter(naoLidoPorMim).map(l => l.id + ultimaDoRecado(l).em)), lidosOutro: new Set(lembretesAdm.filter(outroLeu).map(l => l.id + ultimaDoRecado(l).em)),
     pags: new Set(pagamentos.map(g => g.id)), ats: new Map(atendimentos.map(a => [a.id, a.presenca || ''])) };
 }
 function avisarNovidades(antes) {
   const partes = [];
   if (modo === 'adm') {
-    const novos = lembretesAdm.filter(l => !l.feito && paraMim(l) && !antes.lemPend.has(l.id) && !antes.lemFeito.has(l.id)).length;
-    if (novos) partes.push(novos === 1 ? '1 lembrete novo do Rodrigo' : `${novos} lembretes novos do Rodrigo`);
-    const feitosR = lembretesAdm.filter(l => l.feito && !paraMim(l) && !antes.lemFeito.has(l.id)).length;
-    if (feitosR) partes.push(feitosR === 1 ? '1 recado visto pelo Rodrigo' : `${feitosR} recados vistos pelo Rodrigo`);
+    const novos = lembretesAdm.filter(l => naoLidoPorMim(l) && !antes.naoLidos.has(l.id + ultimaDoRecado(l).em)).length;
+    if (novos) partes.push(novos === 1 ? '1 recado novo do Rodrigo' : `${novos} recados novos do Rodrigo`);
+    const feitosR = lembretesAdm.filter(l => outroLeu(l) && !antes.lidosOutro.has(l.id + ultimaDoRecado(l).em)).length;
+    if (feitosR) partes.push(feitosR === 1 ? '1 recado lido pelo Rodrigo' : `${feitosR} recados lidos pelo Rodrigo`);
     const pres = atendimentos.filter(a => a.presenca && antes.ats.has(a.id) && antes.ats.get(a.id) !== a.presenca).length;
     if (pres) partes.push(pres === 1 ? '1 presença marcada' : `${pres} presenças marcadas`);
   } else {
-    const recados = lembretesAdm.filter(l => !l.feito && paraMim(l) && !antes.lemPend.has(l.id) && !antes.lemFeito.has(l.id)).length;
+    const recados = lembretesAdm.filter(l => naoLidoPorMim(l) && !antes.naoLidos.has(l.id + ultimaDoRecado(l).em)).length;
     if (recados) partes.push(recados === 1 ? '1 recado do assistente' : `${recados} recados do assistente`);
-    const feitos = lembretesAdm.filter(l => l.feito && l.feitoPor === 'adm' && !paraMim(l) && !antes.lemFeito.has(l.id)).length;
-    if (feitos) partes.push(feitos === 1 ? '1 lembrete feito pelo assistente' : `${feitos} lembretes feitos pelo assistente`);
+    const feitos = lembretesAdm.filter(l => outroLeu(l) && !antes.lidosOutro.has(l.id + ultimaDoRecado(l).em)).length;
+    if (feitos) partes.push(feitos === 1 ? '1 recado lido pelo assistente' : `${feitos} recados lidos pelo assistente`);
     const pags = pagamentos.filter(g => !antes.pags.has(g.id)).length;
     if (pags) partes.push(pags === 1 ? '1 pagamento registrado' : `${pags} pagamentos registrados`);
   }
@@ -5752,7 +5809,7 @@ function caixasNotasAvisos() {
     el('strong', { text: titulo }), el('span', { class: 'caixa-na-sub', text: sub }));
   return el('div', { class: 'caixas-na' },
     caixa('nota', 'Anotações', nLem ? `${nLem} para lembrar hoje` : abertas ? `${abertas} ${abertas === 1 ? 'pendente' : 'pendentes'}` : 'Nada pendente', nLem > 0, nLem || 0, { tela: 'notas' }),
-    caixa('sino', 'Avisos', nAv ? [nRec && `${nRec} ${nRec === 1 ? 'recado novo' : 'recados novos'}`, nAg && `${nAg} da agenda`].filter(Boolean).join(' · ') : 'Nenhum aviso novo', nAv > 0, nAv || 0, { tela: 'avisos' }));
+    caixa('sino', 'Avisos', nAv ? [nRec && `${nRec} ${nRec === 1 ? 'recado não lido' : 'recados não lidos'}`, nAg && `${nAg} da agenda`].filter(Boolean).join(' · ') : 'Nenhum aviso novo', nAv > 0, nAv || 0, { tela: 'avisos' }));
 }
 function telaAvisos() {
   const rec = cartaoLembretesAdm(false), ag = cartaoAvisosAgenda();

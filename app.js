@@ -24,7 +24,7 @@ function barraInferior() {
       icone(ic), el('span', { text: rot }))));
   document.body.append(nav);
 }
-const VERSAO = 'versão 144';
+const VERSAO = 'versão 145';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['claro', 'Entrelaços claro (creme e verde)', '#0F4A3C', '#F6F2EA'], ['entrelacos', 'Entrelaços: natureza e ouro (escuro)', '#E8BC52', '#011816'], ['', 'Granada', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -3333,7 +3333,7 @@ async function janelaLembretes(p) {
   desenhar();
   const texto = el('textarea', { rows: '3', placeholder: 'Escreva o lembrete e escolha abaixo para quem é' });
   const tel = numeroWhats(telefoneDoPaciente(p));
-  const lAdm = typeof lembretesAdm !== 'undefined' ? lembretesAdm.filter(l => l.pid === p.id && !l.feito) : [];
+  const lAdm = typeof lembretesAdm !== 'undefined' ? lembretesAdm.filter(l => l.pid === p.id && (naoLidoPorMim(l) || (ultimaDoRecado(l).de === euLado() && !outroLeu(l)))) : [];
   const r = await janela(`Lembretes · ${p.nome}`, [
     lista,
     lAdm.length > 0 && el('div', { class: 'pilha-pequena' }, el('strong', { text: '📋 Para o administrativo' }),
