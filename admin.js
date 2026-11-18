@@ -2606,6 +2606,7 @@ function telaAgenda(inicio) {
         el('span', { text: `${DIAS[diaDaSemana(d)]}, ${dataCurta(d).slice(0, 5)}${d === hoje ? ' (hoje)' : ''}` }),
         el('span', { class: 'dia-mais', 'aria-hidden': 'true', text: '+' })),
       sem && el('p', { class: 'faixa', text: `${sem.feriado ? 'Feriado' : 'Sem atendimento'}: ${sem.nome}` }),
+      valoresDia(doDia),
       ...(claroAg && (doDia.length || livresDia.length) ? linhasDiaClaro(doDia, d, livresDia) :
       doDia.length ? doDia.map(o => {
         const riscado = o.feriado || o.cancelada;
@@ -2635,11 +2636,55 @@ function telaAgenda(inicio) {
         el('button', { type: 'button', class: 'secundario compacto', text: '‹ Semana anterior', onclick: () => ir({ tela: 'agenda', semana: somarDias(seg, -7) }, false) }),
         el('button', { type: 'button', class: 'secundario compacto', text: 'Hoje', onclick: () => ir({ tela: 'agenda' }, false) }),
         el('button', { type: 'button', class: 'secundario compacto', text: 'Próxima ›', onclick: () => ir({ tela: 'agenda', semana: somarDias(seg, 7) }, false) })),
+      resumoSemanaAgenda(seg, dias, ocs),
       ...blocos,
       el('button', { type: 'button', class: 'link', text: 'Feriados, expediente e dias sem atendimento', onclick: () => ir({ tela: 'feriados' }) })),
     el('button', { type: 'button', class: 'fab estendido', onclick: () => { agendamentoRasc = null; ir({ tela: 'agendar' }); } }, icone('mais'), el('span', { text: 'Novo agendamento' })));
 }
 
+// versão 143: valores no início de cada dia e da semana
+function valorOcorrencia(o) {
+  const c = o.c;
+  if (c.semCobrancaDesde && o.data >= c.semCobrancaDesde) return 0;
+  if (temMensalidadeFixa(c) && o.data >= (c.mensalidadeDesde || '')) {
+    const ym = o.data.slice(0, 7), n = ocorrenciasNoPeriodo(c, ym + '-01', fimDoMes(ym)).filter(x => !x.cancelada && !x.feriado).length;
+    return valorNum(c.valorMensal) / Math.max(1, n);
+  }
+  const at = atDaOcorrencia(c, o.data, o.hora);
+  return at ? valorDe(at) : valorNum(valorPadrao(c, o.data));
+}
+function contasDia(doDia) {
+  const marcados = doDia.filter(o => !o.cancelada && !o.feriado);
+  const pres = o => atDaOcorrencia(o.c, o.data, o.hora)?.presenca;
+  const feitos = marcados.filter(o => ['realizada', 'falta', 'tardia'].includes(pres(o)));
+  const soma = l => Math.round(l.reduce((t, o) => t + valorOcorrencia(o), 0));
+  return { n: marcados.length, total: soma(marcados), feito: soma(feitos), nFeitos: feitos.length };
+}
+function valoresDia(doDia) {
+  const k = contasDia(doDia);
+  if (!k.n) return null;
+  return el('div', { class: 'valores-dia' },
+    el('span', { class: 'vd-total' }, el('small', { text: 'Valor do dia' }), el('strong', { text: 'R$ ' + reaisCurto(k.total) })),
+    el('span', { class: 'vd-feito' }, el('small', { text: 'Já realizado' }), el('strong', { text: 'R$ ' + reaisCurto(k.feito) })));
+}
+function resumoSemanaAgenda(seg, dias, ocs) {
+  let total = 0, feito = 0, n = 0, vagas = 0;
+  for (const d of dias) {
+    const doDia = ocs.filter(o => o.data === d), k = contasDia(doDia);
+    total += k.total; feito += k.feito; n += k.n; vagas += vagasDoDia(d, doDia);
+  }
+  if (!n && !vagas) return null;
+  const caixa = (rot, val, cls) => el('div', { class: 'rs-caixa ' + cls }, el('small', { text: rot }), el('strong', { text: val }));
+  return el('section', { class: 'cartao resumo-semana' },
+    el('h3', { class: 'rs-titulo', text: 'Resumo da semana' }),
+    el('div', { class: 'rs-grade' },
+      caixa('Valor da semana', 'R$ ' + reaisCurto(total), 'rs-total'),
+      caixa('Já realizado', 'R$ ' + reaisCurto(feito), 'rs-feito'),
+      caixa('Falta realizar', 'R$ ' + reaisCurto(Math.max(0, total - feito)), 'rs-falta'),
+      caixa('Sessões', String(n), 'rs-n'),
+      caixa('Vagas', String(vagas), 'rs-vagas')),
+    el('p', { class: 'suave pequeno', text: 'Valor das sessões marcadas na agenda. "Já realizado" conta as sessões com presença marcada (veio, ou falta cobrada). Mensalidade fixa entra dividida pelas sessões do mês.' }));
+}
 // versão 142: rodapé de cada dia — pacientes marcados, vagas e consultas feitas
 function vagasDoDia(d, doDia) {
   const dia = diaDaSemana(d), g = gradeDia(dia);
@@ -3475,6 +3520,7 @@ function telaConfirmacoes(inicio) {
       el('p', { class: 'suave pequeno', text: `${total} ${total === 1 ? 'sessão' : 'sessões'} · ${confirmadas} ${confirmadas === 1 ? 'confirmada' : 'confirmadas'} · ${enviadas} aguardando resposta · ${total - confirmadas - enviadas} sem mensagem.` }),
       ocs.some(o => estadoConfirmacao(o.c, o.data, o.hora) !== 'confirmada') && el('button', { type: 'button', class: 'primario com-icone centralizado', onclick: () => enviarSemanaInteira(seg, ocs) },
         icone('mensagem'), el('span', { text: 'Enviar confirmações da semana toda' })),
+      resumoSemanaAgenda(seg, [0, 1, 2, 3, 4, 5, 6].map(i => somarDias(seg, i)), ocs),
       ...blocos,
       el('button', { type: 'button', class: 'link', text: 'Editar o texto da mensagem', onclick: editarMsgConfirmacao })));
 }

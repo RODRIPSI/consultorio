@@ -827,3 +827,16 @@ button.ag-nota.ag-nota-botao { width: 100%; text-align: left; border: 0; font: i
 .rd-vaga { background: #E3EFE6; color: #1E6B4F; }
 .rd-feita { background: #E8EEF7; color: #2C4A7A; }
 .rd-falta { background: #F8E4E0; color: #A33A30; }
+/* versão 143: valores do dia e resumo da semana na agenda */
+.valores-dia { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin: .4rem 0 .5rem; }
+.valores-dia > span { display: flex; flex-direction: column; padding: .45rem .7rem; border-radius: 12px; background: #F1ECE2; color: var(--tinta); }
+.valores-dia small { font-size: .78rem; opacity: .75; }
+.valores-dia strong { font-size: 1.1rem; font-family: var(--serifa); }
+.valores-dia .vd-feito { background: #E3EFE6; color: #1E6B4F; }
+.resumo-semana .rs-titulo { margin: 0 0 .5rem; font-family: var(--serifa); color: var(--tinta); }
+.rs-grade { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; }
+.rs-caixa { display: flex; flex-direction: column; padding: .55rem .7rem; border-radius: 14px; background: #F1ECE2; color: var(--tinta); }
+.rs-caixa small { font-size: .78rem; opacity: .75; }
+.rs-caixa strong { font-size: 1.15rem; font-family: var(--serifa); }
+.rs-total { background: #FBEFDD; } .rs-feito { background: #E3EFE6; color: #1E6B4F; } .rs-falta { background: #F8E4E0; color: #A33A30; } .rs-vagas { background: #E3EFE6; color: #1E6B4F; }
+@media (max-width: 480px) { .rs-grade { grid-template-columns: repeat(2, 1fr); } .rs-total { grid-column: 1 / -1; } }
