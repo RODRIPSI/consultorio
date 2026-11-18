@@ -1695,9 +1695,9 @@ async function senhaDosArquivos(texto) {
   return { senha: r, nova: true };
 }
 async function oferecerLembrarSenha(s) {
-  if (!s.nova) return;
-  const ok = await dialogo({ titulo: 'Lembrar esta senha?', texto: 'Ela fica guardada cifrada neste aparelho, e as próximas trocas ficam a um toque. Use a mesma senha nos dois aparelhos.', botoes: [{ rotulo: 'Não', valor: null }, { rotulo: 'Lembrar', valor: true, estilo: 'primario' }] });
-  if (!ok) return;
+  // versão 147: a senha dos arquivos fica guardada (cifrada, dentro do cofre) depois da primeira sincronização que deu certo,
+  // para a sincronização seguir sozinha sem pedir a senha de novo
+  if (!s?.senha || senhaTroca === s.senha) return;
   senhaTroca = s.senha;
   await Cofre.salvar('x:senhatroca', { tipoRegistro: 'senhatroca', senha: s.senha, atualizadoEm: agoraISO() });
 }
@@ -3271,11 +3271,19 @@ async function sincronizarSozinho() {
   setTimeout(() => { if (modo === 'dono') atualizarAgendaGoogle({ silencioso: true }); }, 4000);   // versão 83
   if (!sincronizando && Cofre.aberto() && senhaTroca && !tokenSyncValido()) await renovarTokenPermanente();   // versão 76
   if (sincronizando || !Cofre.aberto() || !senhaTroca || !tokenSyncValido()) return; // versão 60: também com o app minimizado, enquanto o Android deixar
-  if (!driveCfg().pastaSync || !driveCfg().clientId || Date.now() - ultimaSyncAuto < 60000) return;
+  if (!driveCfg().pastaSync || !driveCfg().clientId || Date.now() - ultimaSyncAuto < 15000) return;
   ultimaSyncAuto = Date.now();
   await sincronizarDrive({ silencioso: true });
 }
-setInterval(sincronizarSozinho, 120000);
+setInterval(() => { if (!document.hidden) sincronizarSozinho(); }, 60000);   // versão 147: a cada minuto com o app aberto
+setInterval(() => { if (document.hidden) sincronizarSozinho(); }, 180000);
+// versão 147: sincroniza sozinho alguns segundos depois de qualquer mudança (presença, pagamento, recado, anotação...)
+let timerSyncMudanca = null, fimUltimaSync = 0;
+function aposSalvar() {
+  if (sincronizando || Date.now() - fimUltimaSync < 4000) return;   // gravações da própria sincronização não disparam outra
+  clearTimeout(timerSyncMudanca);
+  timerSyncMudanca = setTimeout(() => { ultimaSyncAuto = 0; sincronizarSozinho(); }, 6000);
+}
 // Versão 75: faixa bem visível quando a sincronização para (a autorização do Google vence em 1 hora).
 // Antes era só um pontinho amarelo no 🔁, fácil de não ver — e aí um aparelho ficava horas sem mandar nada.
 async function atualizarFaixaSync() {
@@ -3286,11 +3294,17 @@ async function atualizarFaixaSync() {
   if (!parada) { faixa?.remove(); return; }
   let ult = ''; try { ult = localStorage.getItem('consultorio-ultima-sync') || ''; } catch { }
   const quando = ult ? (ult.slice(0, 10) === hojeISO() ? 'hoje às ' + new Date(ult).toTimeString().slice(0, 5) : dataCurta(ult.slice(0, 10)) + ' às ' + new Date(ult).toTimeString().slice(0, 5)) : 'ainda não sincronizou';
-  const texto = `⚠️ Sincronização parada — o outro aparelho não está recebendo o que você muda. Última: ${quando}. Toque aqui para reconectar.${driveCfg().clientSecret ? '' : ' (Para não precisar mais: Configurações → Google Drive → Conexão permanente.)'}`;
+  await lerConexaoPermanente();
+  // versão 147: com a chave secreta já no aparelho (vem do tablet pela sincronização), um toque liga a conexão permanente e acaba com os pedidos
+  const umToque = !!driveCfg().clientSecret && !conexaoPermanente.ativa;
+  const texto = umToque
+    ? `⚠️ Sincronização parada (última: ${quando}). Toque aqui UMA VEZ e escolha a conta do Google: depois ela sincroniza sozinha, sem pedir de novo.`
+    : `⚠️ Sincronização parada — o outro aparelho não está recebendo o que você muda. Última: ${quando}. Toque aqui para reconectar.${driveCfg().clientSecret ? '' : ' (Para não precisar mais: Configurações → Google Drive → Conexão permanente.)'}`;
   if (!faixa) {
-    faixa = el('button', { type: 'button', id: 'faixa-sync', class: 'faixa-sync', onclick: async () => { faixa.remove(); await sincronizarDrive(); atualizarFaixaSync(); } });
+    faixa = el('button', { type: 'button', id: 'faixa-sync', class: 'faixa-sync' });
     document.body.append(faixa);
   }
+  faixa.onclick = umToque ? () => { faixa.remove(); ativarConexaoPermanente(); } : async () => { faixa.remove(); await sincronizarDrive(); atualizarFaixaSync(); };
   faixa.textContent = texto;
 }
 setInterval(atualizarFaixaSync, 20000);
@@ -3317,6 +3331,7 @@ async function sincronizarDrive(opcoes = {}) {
     else if (silencioso || !(await escolherPapelAparelho(true))) return;
   }
   sincronizando = true; indicarStatus('Sincronizando…');
+  try { lerConexaoPermanente(); } catch { }
   let mudou = false;
   try {
     const q = encodeURIComponent(`'${pasta}' in parents and trashed = false`);
@@ -3388,7 +3403,7 @@ async function sincronizarDrive(opcoes = {}) {
     }[e.message] || 'Não foi possível sincronizar agora. Verifique a internet e tente de novo.';
     await aviso('Sincronização não concluída', msg);
   } finally {
-    sincronizando = false;
+    sincronizando = false; fimUltimaSync = Date.now();
     // Na sincronização automática, só redesenha a tela se chegou algo novo e a pessoa não está digitando.
     const digitando = document.querySelector('dialog[open]') || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
     if (Cofre.aberto() && (!silencioso || (mudou && !digitando))) render(history.state);
