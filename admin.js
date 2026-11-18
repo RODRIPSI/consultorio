@@ -2753,9 +2753,17 @@ function linhasDiaClaro(doDia, d, livresDia = []) {
     }
     const etiqueta = o.feriado ? 'Feriado: vai para o fim da série' : o.avulsa ? (o.c.avulsos?.find(a => a.id === o.avulsa)?.remarcadaDe ? 'Remarcada' : 'Avulsa') : o.fixo ? 'Horário fixo' : 'Série';
     const conf = estadoConfirmacao(o.c, o.data, o.hora);
-    out.push(el('button', { type: 'button', class: 'ag-linha' + (o.feriadoAviso ? ' aviso' : ''), onclick: () => acoesOcorrencia(o) }, hora, avatar(o.c),
-      el('span', { class: 'ag-nome' }, el('strong', { text: o.c.nome }), el('small', { class: o.feriadoAviso ? 'texto-alerta' : 'suave', text: etiqueta + (o.feriadoAviso ? ` · ⚠️ ${o.feriadoAviso}` : '') + (conf ? ' · ' + ROTULO_CONF[conf] : '') })),
+    // versão 146: a presença aparece também na agenda da semana (e dá para marcar ali mesmo)
+    const pres = marcasDaOcorrencia(o).pres;
+    out.push(el('button', { type: 'button', class: 'ag-linha' + (o.feriadoAviso ? ' aviso' : '') + (pres ? ' com-pres pres-' + pres : ''), onclick: () => acoesOcorrencia(o) }, hora, avatar(o.c),
+      el('span', { class: 'ag-nome' }, el('strong', { text: o.c.nome }), el('small', { class: o.feriadoAviso ? 'texto-alerta' : 'suave', text: etiqueta + (o.feriadoAviso ? ` · ⚠️ ${o.feriadoAviso}` : '') + (conf && !pres ? ' · ' + ROTULO_CONF[conf] : '') }),
+        pres ? el('span', { class: 'ag-pres-chip pres-' + pres, text: CHIP_PRESENCA[pres] || PRESENCA[pres] }) : null),
       icone('seguinte')));
+    if (!pres && o.data <= hojeISO()) out.push(el('div', { class: 'ag-pres-botoes' },
+      el('span', { class: 'suave pequeno', text: 'Presença:' }),
+      el('button', { type: 'button', class: 'compacto pres-veio', text: '✅ Veio', onclick: () => definirPresencaLista(o, 'realizada') }),
+      el('button', { type: 'button', class: 'compacto pres-falta', text: '⭕ Faltou', onclick: () => definirPresencaLista(o, 'falta') }),
+      el('button', { type: 'button', class: 'compacto secundario', text: 'Outras…', onclick: () => acoesListaPaciente(o) })));
   }
   return out;
 }
@@ -5797,6 +5805,14 @@ const OPCOES_AVISO = [
   { k: 'semana', rot: 'No início da semana (segunda)', f: d => segundaDaSemana(d) },
   { k: '7d', rot: '1 semana antes', f: d => somarDias(d, -7) },
 ];
+const REPETIR_NOTA = { nao: 'Só uma vez', semanal: 'Toda semana', quinzenal: 'A cada 15 dias', mensal: 'Todo mês' };
+function proximaDataNota(d, r) {
+  if (r === 'semanal') return somarDias(d, 7);
+  if (r === 'quinzenal') return somarDias(d, 14);
+  if (r === 'mensal') { const [y, m, dd] = d.split('-').map(Number); const ult = new Date(y, m + 1, 0).getDate(); return `${m === 12 ? y + 1 : y}-${String(m === 12 ? 1 : m + 1).padStart(2, '0')}-${String(Math.min(dd, ult)).padStart(2, '0')}`; }
+  return null;
+}
+const avisosDaNota = x => [...new Set([...(x.data ? OPCOES_AVISO.filter(o => (x.opcoesAviso || []).includes(o.k)).map(o => o.f(x.data)) : []), ...(x.avisoExtra ? [x.avisoExtra] : [])])].sort();
 const salvarNota = n => { n.atualizadoEm = agoraISO(); agendarSalvar(chaveLem(n), n); };
 const notaAvisando = n => !n.feito && ((n.avisos || []).some(d => d <= hojeISO()) || (!!n.data && n.data <= hojeISO() && !(n.avisos || []).length));
 const notasALembrar = () => notas.filter(notaAvisando);
@@ -5821,6 +5837,7 @@ function telaAvisos() {
 function textoQuandoNota(n) {
   const p = [];
   if (n.data) p.push(`📅 ${dataComDia(n.data)}`);
+  if (n.repetir && n.repetir !== 'nao') p.push(`🔁 ${REPETIR_NOTA[n.repetir]}`);
   const prox = (n.avisos || []).filter(d => d >= hojeISO()).sort()[0];
   if (!n.feito && notaAvisando(n)) p.push('🔔 lembrar hoje');
   else if (prox) p.push(`🔔 aviso ${dataComDia(prox)}`);
@@ -5832,7 +5849,15 @@ function telaNotas(filtro = 'abertas') {
   const lista = ordenar(notas.filter(n => filtro === 'feitas' ? n.feito : !n.feito));
   const linha = n => {
     const cx = el('input', { type: 'checkbox', 'aria-label': 'Marcar como feito' }); cx.checked = !!n.feito;
-    cx.addEventListener('change', async () => { n.feito = cx.checked; n.feitoEm = cx.checked ? agoraISO() : null; salvarNota(n); await salvarAgora(); render(history.state); });
+    cx.addEventListener('change', async () => {
+      // versão 146: anotação que se repete — ao marcar feita, passa para a próxima data e continua na lista
+      if (cx.checked && n.repetir && n.repetir !== 'nao' && n.data) {
+        let prox = proximaDataNota(n.data, n.repetir);
+        while (prox < hojeISO()) prox = proximaDataNota(prox, n.repetir);
+        n.ultimaFeitaEm = agoraISO(); n.data = prox; n.avisoExtra = null; n.avisos = avisosDaNota(n); n.avisados = [];
+        salvarNota(n); await salvarAgora(); indicarStatus(`Feito. Próxima: ${dataComDia(prox)}`); try { atualizarAgendaGoogle({ silencioso: true }); } catch { } return render(history.state);
+      }
+      n.feito = cx.checked; n.feitoEm = cx.checked ? agoraISO() : null; salvarNota(n); await salvarAgora(); render(history.state); });
     return el('div', { class: 'nota-linha' + (notaAvisando(n) ? ' alerta' : '') + (n.feito ? ' feita' : '') }, cx,
       el('button', { type: 'button', class: 'nota-corpo', onclick: () => editarNota(n) },
         el('strong', { text: n.texto }), n.obs && el('span', { class: 'nota-obs', text: n.obs }),
@@ -5855,11 +5880,15 @@ async function editarNota(n) {
   const hora = el('input', { type: 'time', value: n?.horaAviso || '08:00' });
   const marcas = OPCOES_AVISO.map(o => { const c = el('input', { type: 'checkbox' }); c.checked = (n?.opcoesAviso || (nova ? ['1d'] : [])).includes(o.k); return { o, c }; });
   const outro = el('input', { type: 'date', value: n?.avisoExtra || '' });
+  const repetir = el('select', { 'aria-label': 'Repetir' }, ...Object.entries(REPETIR_NOTA).map(([k, t]) => el('option', { value: k, text: t })));
+  repetir.value = n?.repetir || 'nao';
   const blocoData = el('div', { class: 'pilha-pequena' },
     el('label', { class: 'campo' }, el('span', { text: 'Data' }), data),
+    el('label', { class: 'campo' }, el('span', { text: 'Repetir' }), repetir),
+    el('p', { class: 'suave pequeno', text: 'Ao marcar como feita, uma anotação que se repete passa sozinha para a próxima data.' }),
     el('p', { class: 'suave pequeno', text: 'Me avisar:' }),
     ...marcas.map(({ o, c }) => el('label', { class: 'marcar' }, c, el('span', { text: o.rot }))));
-  const atualizar = () => { blocoData.hidden = !comData.checked; };
+  const atualizar = () => { blocoData.hidden = !comData.checked; if (comData.checked && !data.value) data.value = hojeISO(); };
   comData.addEventListener('change', atualizar); atualizar();
   const r = await janela(nova ? 'Nova anotação' : 'Editar anotação', [
     el('label', { class: 'campo' }, el('span', { text: 'O que é' }), texto),
@@ -5875,10 +5904,11 @@ async function editarNota(n) {
   const x = n || { id: crypto.randomUUID(), tipoRegistro: 'nota', criadoEm: agora, autor: modo === 'dono' || papelAparelho === 'celular' ? 'dono' : 'adm', feito: false };
   x.texto = texto.value.trim(); x.obs = obs.value.trim();
   x.data = comData.checked && data.value ? data.value : null;
+  x.repetir = x.data ? repetir.value : 'nao';
   x.opcoesAviso = x.data ? marcas.filter(m => m.c.checked).map(m => m.o.k) : [];
   x.avisoExtra = outro.value || null;
   x.horaAviso = hora.value || '08:00';
-  x.avisos = [...new Set([...(x.data ? marcas.filter(m => m.c.checked).map(m => m.o.f(x.data)) : []), ...(x.avisoExtra ? [x.avisoExtra] : [])])].sort();
+  x.avisos = avisosDaNota(x);
   x.avisados = (x.avisados || []).filter(d => x.avisos.includes(d));
   if (nova) notas.push(x);
   salvarNota(x); await salvarAgora();

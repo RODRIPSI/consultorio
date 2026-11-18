@@ -873,3 +873,18 @@ button.ag-nota.ag-nota-botao { width: 100%; text-align: left; border: 0; font: i
 .rc-status.novo { color: #B3261E; font-weight: 600; opacity: 1; }
 .rc-botoes { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
 .recado-citado { margin: 0 0 .5rem; padding: .5rem .7rem; border-left: 3px solid var(--linha); background: rgba(0,0,0,.03); white-space: pre-wrap; }
+/* versão 146: horário vago mais chamativo + presença na agenda da semana */
+.ag-linha.livre { background: #2E8B57; color: #fff; border: 2px dashed #A8E6C1; box-shadow: 0 2px 8px rgba(46,139,87,.25); }
+.ag-linha.livre .ag-hora { background: rgba(255,255,255,.22); color: #fff; }
+.ag-linha.livre .ag-nome, .ag-linha.livre strong { color: #fff; }
+.ag-linha.livre svg, .ag-linha.livre .ic { color: #fff; stroke: #fff; }
+.ag-pres-chip { display: inline-block; margin-top: .25rem; padding: .15rem .6rem; border-radius: 999px; font-size: .82rem; font-weight: 600; background: #EEE; color: #333; width: fit-content; }
+.ag-pres-chip.pres-realizada { background: #DDF1E4; color: #17603F; }
+.ag-pres-chip.pres-falta, .ag-pres-chip.pres-tardia { background: #FBE3DF; color: #A33A30; }
+.ag-pres-chip.pres-cancelada, .ag-pres-chip.pres-remarcada { background: #EEE8F7; color: #5A3E8C; }
+.ag-linha.com-pres.pres-realizada { box-shadow: inset 4px 0 0 #2E8B57; }
+.ag-linha.com-pres.pres-falta, .ag-linha.com-pres.pres-tardia { box-shadow: inset 4px 0 0 #C62828; }
+.ag-pres-botoes { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; padding: 0 0 .6rem 4.2rem; }
+.ag-pres-botoes button { border-radius: 999px; padding: .35rem .8rem; font: inherit; font-size: .88rem; border: 1px solid var(--linha); background: #fff; color: var(--tinta); cursor: pointer; }
+.ag-pres-botoes .pres-veio { background: #DDF1E4; color: #17603F; border-color: #A9D8BA; }
+.ag-pres-botoes .pres-falta { background: #FBE3DF; color: #A33A30; border-color: #EDB3AA; }
