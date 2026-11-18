@@ -24,7 +24,7 @@ function barraInferior() {
       icone(ic), el('span', { text: rot }))));
   document.body.append(nav);
 }
-const VERSAO = 'versão 143';
+const VERSAO = 'versão 144';
 // Paletas de cores (Configurações → Aparência). Fica neste aparelho, e vale já na tela de senha.
 const PALETAS = [['claro', 'Entrelaços claro (creme e verde)', '#0F4A3C', '#F6F2EA'], ['entrelacos', 'Entrelaços: natureza e ouro (escuro)', '#E8BC52', '#011816'], ['', 'Granada', '#5B2333', '#ECEEEA'], ['marinho', 'Azul-marinho e dourado', '#1B2A4A', '#EDF0F5'], ['dourado', 'Dourado', '#8E6A22', '#F5F0E6'],
   ['esmeralda', 'Esmeralda e dourado', '#1E4D3F', '#ECF1EE'], ['noite', 'Noite e ouro (escuro)', '#D6B25E', '#0D1527'], ['vinho', 'Vinho e ouro (escuro)', '#D9B46A', '#1A1214']];
@@ -560,14 +560,13 @@ function contagensAtencao() {
 }
 function cartaoAtencao() {
   const n = contagensAtencao();
-  if (!n.lembretes && !n.recados && !n.recibos) return null;
+  if (!n.lembretes && !n.recibos) return null;   // versão 144: recados ficam no retângulo "Avisos"
   const linha = (ic, titulo, sub, qtd, destino) => qtd > 0 && el('button', { type: 'button', class: 'atencao-linha', onclick: () => ir(destino) },
     el('span', { class: 'ic-bolha' }, icone(ic)), el('span', { class: 'pag-info' }, el('strong', { text: titulo }), el('span', { class: 'suave pequeno', text: sub })),
     el('span', { class: 'atencao-qtd', text: String(qtd) }), icone('seguinte'));
   return el('section', { class: 'cartao atencao' },
     el('h3', { class: 'cartao-titulo' }, el('span', { text: '🔔 Atenção necessária' })),
     linha('sino', `${n.lembretes} ${n.lembretes === 1 ? 'lembrete' : 'lembretes'}`, 'Tarefas e alertas pessoais', n.lembretes, { tela: 'atencao' }),
-    linha('mensagem', `${n.recados} ${n.recados === 1 ? 'recado' : 'recados'} com o administrativo`, 'Mensagens e solicitações administrativas', n.recados, { tela: 'atencao' }),
     linha('arquivo', `${n.recibos} ${n.recibos === 1 ? 'recibo ou nota' : 'recibos ou notas'} a emitir`, 'Documentos pendentes de emissão', n.recibos, { tela: 'emitir' }));
 }
 function topoVerde(titulo, sub) {
@@ -692,11 +691,11 @@ function telaLista(todos = false) {
         { atuais: `👥 Atendendo agora (${pacientes.filter(atendendoAgora).length})`, todos: `Todos (${ativos}) · inclui pacientes antigos` }, filtroPacientes,
         k => { filtroPacientes = k; telaLista(true); }, 'dois'),
       todos && !verArquivados && filtroPacientes === 'atuais' && el('p', { class: 'suave pequeno', text: 'Quem tem horário fixo na agenda, sessão marcada ou foi atendido nos últimos 45 dias.' }),
+      !todos && typeof caixasNotasAvisos === 'function' && caixasNotasAvisos(),
       !todos && claroInicio && resumoInicio(),
       !todos && !claroInicio && atalhosInicio(),
       !todos && !claroInicio && cartaoLembretes(),
-      !todos && !claroInicio && typeof cartaoLembretesAdm === 'function' && cartaoLembretesAdm(true),
-      !todos && cartaoAvisosAgenda(),
+
       !todos && avisoBackup(),
       !todos && cartaoEntrada(),
       !todos && cartaoAniversarios(),

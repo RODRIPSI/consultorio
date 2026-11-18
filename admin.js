@@ -8,6 +8,7 @@
 
 let cadastros = [];      // x:p:<id>
 let atendimentos = [];   // x:a:<pid>:<id>  (data, hora, presença, pagamento, valor)
+let notas = [];   // versão 144: bloco de notas compartilhado (x:l:<id> com tipoRegistro 'nota')
 let lembretesAdm = [];   // x:l:<id>  (versão 58: lembretes do Rodrigo para o administrativo; sem dados clínicos)
 let pagamentos = [];     // x:g:<pid>:<id>  (data, valor, atendimentos pagos, comprovante, nota fiscal)
 const lapides = new Map(); // registros excluídos, guardados só como marca para a troca entre aparelhos
@@ -57,7 +58,7 @@ function atendimentosDe(pid) {
 const pagamentosDe = pid => pagamentos.filter(g => g.pid === pid).sort((x, y) => y.data.localeCompare(x.data) || (y.criadoEm || '').localeCompare(x.criadoEm || ''));
 
 function limparAdm() {
-  cadastros = []; atendimentos = []; pagamentos = []; lembretesAdm = []; lapides.clear();
+  cadastros = []; atendimentos = []; pagamentos = []; lembretesAdm = []; notas = []; lapides.clear();
   senhaTroca = null; entradaIds = []; pagamentoRasc = null; verTodosAtend = false; tokenGoogle = null; importacaoDrive = null; notaRasc = null;
 }
 
@@ -69,7 +70,9 @@ async function carregarAdm() {
   cadastros = cs;
   atendimentos = separar(as, chaveAt);
   pagamentos = separar(gs, chavePag);
-  lembretesAdm = ls.filter(l => !l.excluido);
+  lembretesAdm = ls.filter(l => !l.excluido && l.tipoRegistro !== 'nota');
+  notas = ls.filter(l => l.tipoRegistro === 'nota' && !l.excluido);
+  for (const n of ls) if (n.tipoRegistro === 'nota' && n.excluido) lapides.set(chaveLem(n), n);
   perfil = Object.assign(PERFIL_PADRAO(), (await Cofre.ler('x:perfil')) || {});
   if (modo === 'adm') assinatura = await Cofre.ler('x:assinatura');
   senhaTroca = (await Cofre.ler('x:senhatroca'))?.senha || null;
@@ -83,7 +86,7 @@ async function entrarAdm() {
   modo = 'adm';
   aparelhoComClinica = await Cofre.temClinica();
   await Cofre.garantirChavesEntrada();
-  await carregarAdm();
+  await carregarAdm(); setTimeout(() => { try { verificarAvisosNotas(); } catch { } }, 1500);
   history.replaceState({ tela: 'lista' }, '');
   if (!(await abrirEntradaSePendente())) telaInicioAdm();
 }
@@ -125,6 +128,8 @@ function renderAdm(s) {
   if (s.tela === 'admInicio') { telaInicioAdm(); return true; }
   if (s.tela === 'admPacientes') { telaInicioAdm(true); return true; }
   if (s.tela === 'atencao') { telaAtencao(); return true; }
+  if (s.tela === 'notas') { telaNotas(s.filtro || 'abertas'); return true; }
+  if (s.tela === 'avisos') { telaAvisos(); return true; }
   if (s.tela === 'emitir') { telaEmitir(s.filtro || 'pendentes'); return true; }
   if (s.tela === 'recibos') { abaMes = 'recibos'; telaMesAba(s.ym || hojeISO().slice(0, 7)); return true; }   // versão 88: tela própria (o voltar volta para Pagamentos)
   // versão 89: cada visão de Pagamentos é um passo do histórico, então o "voltar" volta para a tela anterior
@@ -543,8 +548,7 @@ function telaInicioAdm(todos = false) {
         botaoIcone('Bloquear agora', 'cadeado', trancar), botaoIcone('Configurações', 'ajustes', () => ir({ tela: 'config' }))]
     }),
     el('div', { class: 'conteudo' },
-      !todos && cartaoLembretesAdm(),
-      !todos && cartaoAvisosAgenda(),
+      !todos && caixasNotasAvisos(),
       !todos && cartaoEntrada(),
       !todos && cartaoAniversarios(),
       !todos && cartaoVencidos(),
@@ -1629,6 +1633,7 @@ async function registrosAdm(paraBackup) {
   atendimentos.forEach(a => { r[chaveAt(a)] = a; });
   pagamentos.forEach(g => { r[chavePag(g)] = g; });
   lembretesAdm.forEach(l => { r[chaveLem(l)] = l; });
+  notas.forEach(n => { r[chaveLem(n)] = n; });
   for (const [k, o] of lapides) r[k] = o;
   r['x:perfil'] = perfil.atualizadoEm ? perfil : { ...perfil, atualizadoEm: '2000-01-01T00:00:00.000Z' }; // vai sempre (sem data, não passa por cima do outro lado)
   for (const d of documentos.filter(x => x.adm)) {
@@ -4957,6 +4962,19 @@ function eventosDesejados() {
         extendedProperties: { private: { consultorio: '1' } }, reminders: { useDefault: true } });
     }
   }
+  // versão 144: lembretes das Anotações viram aviso no celular pela Agenda do Google — sem o texto, por sigilo
+  for (const n of notas) {
+    if (n.feito) continue;
+    for (const d of n.avisos || []) {
+      if (d < hojeISO() || d > somarDias(hojeISO(), 55)) continue;
+      const hora = n.horaAviso || '08:00';
+      const ini = new Date(`${d}T${hora}:00-03:00`), fim = new Date(ini.getTime() + 15 * 60000);
+      const fmt = x => new Date(x.getTime() - 3 * 3600e3).toISOString().slice(0, 19);
+      const id = idEventoAgenda('nota-' + n.id, d, hora);
+      mapa.set(id, { id, summary: '📝 Lembrete – abrir Anotações do Consultório', start: { dateTime: fmt(ini), timeZone: 'America/Sao_Paulo' }, end: { dateTime: fmt(fim), timeZone: 'America/Sao_Paulo' },
+        extendedProperties: { private: { consultorio: '1' } }, reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 0 }] } });
+    }
+  }
   return mapa;
 }
 async function atualizarAgendaGoogle({ silencioso = false } = {}) {
@@ -5704,3 +5722,137 @@ function situacaoPaciente(c) {
   if (x && x.pago > 0.005) return { texto: `✓ Pago ${nomeMes(ym).split(' ')[0].toLowerCase()}`, cls: 'ok' };
   return { texto: '✓ Em dia', cls: 'ok' };
 }
+
+
+// =====================================================================
+// Versão 144: Anotações (bloco de notas com lista de afazeres) e Avisos.
+// Na tela inicial ficam só dois retângulos lado a lado: "Anotações" e "Avisos".
+// Ficam vermelhos quando há algo a lembrar (anotação no dia do aviso) ou aviso novo.
+// As anotações vão para os dois aparelhos (Rodrigo e administrativo) pela sincronização. Nada clínico.
+// O lembrete chega como notificação do app (aberto ou minimizado) e, se a Agenda do Google estiver
+// conectada no tablet, como evento "Lembrete" sem o texto — assim avisa mesmo com o app fechado.
+// =====================================================================
+const OPCOES_AVISO = [
+  { k: 'dia', rot: 'No próprio dia', f: d => d },
+  { k: '1d', rot: '1 dia antes', f: d => somarDias(d, -1) },
+  { k: '2d', rot: '2 dias antes', f: d => somarDias(d, -2) },
+  { k: '3d', rot: '3 dias antes', f: d => somarDias(d, -3) },
+  { k: 'semana', rot: 'No início da semana (segunda)', f: d => segundaDaSemana(d) },
+  { k: '7d', rot: '1 semana antes', f: d => somarDias(d, -7) },
+];
+const salvarNota = n => { n.atualizadoEm = agoraISO(); agendarSalvar(chaveLem(n), n); };
+const notaAvisando = n => !n.feito && ((n.avisos || []).some(d => d <= hojeISO()) || (!!n.data && n.data <= hojeISO() && !(n.avisos || []).length));
+const notasALembrar = () => notas.filter(notaAvisando);
+const avisosAgendaQtd = () => { try { return feriadosProximos().length + seriesTerminando().length + combinarPendentes().length; } catch { return 0; } };
+function caixasNotasAvisos() {
+  const nLem = notasALembrar().length, abertas = notas.filter(n => !n.feito).length;
+  const nRec = lembretesAdmPendentes().length, nAg = avisosAgendaQtd(), nAv = nRec + nAg;
+  const caixa = (ic, titulo, sub, alerta, qtd, destino) => el('button', { type: 'button', class: 'caixa-na' + (alerta ? ' alerta' : ''), onclick: () => ir(destino) },
+    el('span', { class: 'caixa-na-topo' }, el('span', { class: 'ic-bolha' }, icone(ic)), qtd ? el('span', { class: 'caixa-na-qtd', text: String(qtd) }) : null),
+    el('strong', { text: titulo }), el('span', { class: 'caixa-na-sub', text: sub }));
+  return el('div', { class: 'caixas-na' },
+    caixa('nota', 'Anotações', nLem ? `${nLem} para lembrar hoje` : abertas ? `${abertas} ${abertas === 1 ? 'pendente' : 'pendentes'}` : 'Nada pendente', nLem > 0, nLem || 0, { tela: 'notas' }),
+    caixa('sino', 'Avisos', nAv ? [nRec && `${nRec} ${nRec === 1 ? 'recado novo' : 'recados novos'}`, nAg && `${nAg} da agenda`].filter(Boolean).join(' · ') : 'Nenhum aviso novo', nAv > 0, nAv || 0, { tela: 'avisos' }));
+}
+function telaAvisos() {
+  const rec = cartaoLembretesAdm(false), ag = cartaoAvisosAgenda();
+  mostrar(topoVerde('Avisos', modo === 'adm' ? 'Recados com o Rodrigo e avisos da agenda' : 'Recados com o administrativo e avisos da agenda'),
+    el('div', { class: 'conteudo pilha' }, rec,
+      ag ? el('section', { class: 'cartao' }, el('h3', { class: 'cartao-titulo' }, el('span', { class: 'ic-bolha' }, icone('calendario')), el('span', { text: 'Avisos da agenda' })), ag)
+        : el('p', { class: 'suave', text: 'Nenhum aviso da agenda (feriados, séries terminando).' })));
+}
+function textoQuandoNota(n) {
+  const p = [];
+  if (n.data) p.push(`📅 ${dataComDia(n.data)}`);
+  const prox = (n.avisos || []).filter(d => d >= hojeISO()).sort()[0];
+  if (!n.feito && notaAvisando(n)) p.push('🔔 lembrar hoje');
+  else if (prox) p.push(`🔔 aviso ${dataComDia(prox)}`);
+  return p.join(' · ');
+}
+function telaNotas(filtro = 'abertas') {
+  const autor = n => n.autor === 'adm' ? 'assistente' : 'Rodrigo';
+  const ordenar = l => l.slice().sort((a, b) => (notaAvisando(b) - notaAvisando(a)) || (a.data || '9999').localeCompare(b.data || '9999') || (b.criadoEm || '').localeCompare(a.criadoEm || ''));
+  const lista = ordenar(notas.filter(n => filtro === 'feitas' ? n.feito : !n.feito));
+  const linha = n => {
+    const cx = el('input', { type: 'checkbox', 'aria-label': 'Marcar como feito' }); cx.checked = !!n.feito;
+    cx.addEventListener('change', async () => { n.feito = cx.checked; n.feitoEm = cx.checked ? agoraISO() : null; salvarNota(n); await salvarAgora(); render(history.state); });
+    return el('div', { class: 'nota-linha' + (notaAvisando(n) ? ' alerta' : '') + (n.feito ? ' feita' : '') }, cx,
+      el('button', { type: 'button', class: 'nota-corpo', onclick: () => editarNota(n) },
+        el('strong', { text: n.texto }), n.obs && el('span', { class: 'nota-obs', text: n.obs }),
+        el('small', { class: 'suave', text: [textoQuandoNota(n), `por ${autor(n)}`].filter(Boolean).join(' · ') })),
+      botaoIcone('Apagar', 'lixeira', () => apagarNota(n)));
+  };
+  mostrar(topoVerde('Anotações', 'Afazeres e lembretes · o Rodrigo e o administrativo veem'),
+    el('div', { class: 'conteudo pilha' },
+      segmentoEscolha({ abertas: `A fazer (${notas.filter(n => !n.feito).length})`, feitas: `Feitas (${notas.filter(n => n.feito).length})` }, filtro, k => ir({ tela: 'notas', filtro: k }, false)),
+      el('button', { type: 'button', class: 'primario com-icone centralizado largo', onclick: () => editarNota(null) }, icone('mais'), el('span', { text: 'Nova anotação' })),
+      el('section', { class: 'cartao' }, ...(lista.length ? lista.map(linha) : [el('p', { class: 'suave', text: filtro === 'feitas' ? 'Nada feito ainda.' : 'Nenhuma anotação. Toque em "Nova anotação".' })])),
+      el('p', { class: 'suave pequeno', text: 'Não escreva nada clínico: o administrativo também vê. O aviso aparece no aparelho quando o app está aberto ou minimizado' + (modo === 'dono' ? ' e, com a Agenda do Google conectada, chega como lembrete no celular mesmo com o app fechado (sem o texto da anotação).' : '.') })));
+}
+async function editarNota(n) {
+  const nova = !n;
+  const texto = el('input', { type: 'text', value: n?.texto || '', placeholder: 'Ex.: Fulano avisou que não vem dia 20' });
+  const obs = el('textarea', { rows: '3', placeholder: 'Observações (opcional)' }); obs.value = n?.obs || '';
+  const comData = el('input', { type: 'checkbox' }); comData.checked = !!n?.data;
+  const data = el('input', { type: 'date', value: n?.data || '' });
+  const hora = el('input', { type: 'time', value: n?.horaAviso || '08:00' });
+  const marcas = OPCOES_AVISO.map(o => { const c = el('input', { type: 'checkbox' }); c.checked = (n?.opcoesAviso || (nova ? ['1d'] : [])).includes(o.k); return { o, c }; });
+  const outro = el('input', { type: 'date', value: n?.avisoExtra || '' });
+  const blocoData = el('div', { class: 'pilha-pequena' },
+    el('label', { class: 'campo' }, el('span', { text: 'Data' }), data),
+    el('p', { class: 'suave pequeno', text: 'Me avisar:' }),
+    ...marcas.map(({ o, c }) => el('label', { class: 'marcar' }, c, el('span', { text: o.rot }))));
+  const atualizar = () => { blocoData.hidden = !comData.checked; };
+  comData.addEventListener('change', atualizar); atualizar();
+  const r = await janela(nova ? 'Nova anotação' : 'Editar anotação', [
+    el('label', { class: 'campo' }, el('span', { text: 'O que é' }), texto),
+    el('label', { class: 'campo' }, el('span', { text: 'Observações' }), obs),
+    el('label', { class: 'marcar' }, comData, el('span', { text: 'Tem data' })),
+    blocoData,
+    el('label', { class: 'campo' }, el('span', { text: 'Avisar também em outro dia (opcional)' }), outro),
+    el('label', { class: 'campo' }, el('span', { text: 'Hora do aviso' }), hora),
+    el('p', { class: 'faixa', text: 'O administrativo também vê. Não escreva nada clínico.' })
+  ], [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Salvar', valor: true, estilo: 'primario' }]);
+  if (!r || !texto.value.trim()) return;
+  const agora = agoraISO();
+  const x = n || { id: crypto.randomUUID(), tipoRegistro: 'nota', criadoEm: agora, autor: modo === 'dono' || papelAparelho === 'celular' ? 'dono' : 'adm', feito: false };
+  x.texto = texto.value.trim(); x.obs = obs.value.trim();
+  x.data = comData.checked && data.value ? data.value : null;
+  x.opcoesAviso = x.data ? marcas.filter(m => m.c.checked).map(m => m.o.k) : [];
+  x.avisoExtra = outro.value || null;
+  x.horaAviso = hora.value || '08:00';
+  x.avisos = [...new Set([...(x.data ? marcas.filter(m => m.c.checked).map(m => m.o.f(x.data)) : []), ...(x.avisoExtra ? [x.avisoExtra] : [])])].sort();
+  x.avisados = (x.avisados || []).filter(d => x.avisos.includes(d));
+  if (nova) notas.push(x);
+  salvarNota(x); await salvarAgora();
+  indicarStatus(nova ? 'Anotação salva.' : 'Anotação alterada.');
+  try { if (typeof sincronizarSozinho === 'function') sincronizarSozinho(); } catch { }
+  try { if (modo === 'dono') atualizarAgendaGoogle({ silencioso: false }); } catch { }
+  render(history.state);
+}
+async function apagarNota(n) {
+  const ok = await dialogo({ titulo: 'Apagar anotação?', texto: n.texto, botoes: [{ rotulo: 'Cancelar', valor: null }, { rotulo: 'Apagar', valor: true, estilo: 'perigo' }] });
+  if (!ok) return;
+  n.excluido = true; salvarNota(n); lapides.set(chaveLem(n), n);
+  notas = notas.filter(x => x !== n);
+  await salvarAgora(); render(history.state);
+}
+// notificação do aparelho no dia do aviso (a partir da hora escolhida), uma vez por aviso e por aparelho
+function verificarAvisosNotas() {
+  if (!Cofre.aberto?.()) return;
+  let vistos = {};
+  try { vistos = JSON.parse(localStorage.getItem('consultorio-notas-avisadas') || '{}'); } catch { }
+  const agora = new Date(), hhmm = agora.toTimeString().slice(0, 5), hoje = hojeISO();
+  let qtd = 0;
+  for (const n of notas) {
+    if (n.feito) continue;
+    const d = (n.avisos || []).find(d => d < hoje || (d === hoje && hhmm >= (n.horaAviso || '08:00')));
+    if (!d || vistos[n.id + d]) continue;
+    vistos[n.id + d] = 1; qtd++;
+  }
+  if (!qtd) return;
+  try { localStorage.setItem('consultorio-notas-avisadas', JSON.stringify(vistos)); } catch { }
+  mostrarNotificacao('Consultório', qtd === 1 ? '1 lembrete nas Anotações' : `${qtd} lembretes nas Anotações`);
+  indicarStatus(qtd === 1 ? '🔔 1 lembrete nas Anotações' : `🔔 ${qtd} lembretes nas Anotações`);
+}
+setInterval(() => { try { verificarAvisosNotas(); } catch { } }, 5 * 60000);
